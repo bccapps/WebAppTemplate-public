@@ -164,7 +164,7 @@ node scripts/add-module.mjs --remove voice      # refused when another linked mo
 | `scripts/add-module.mjs <id>... [--remove]` | Add / remove shared modules in an existing project |
 | `scripts/update_common.sh [--push-only\|--pull-only]` | For each mounted library: commit local changes of the back mount, fetch, rebase on `origin/main`, push; then the same on the front mount; both end on the same SHA; the parent repo gets a `chore: bump <lib>` commit. Then symlinks, `package.json` regeneration. Refuses a legacy app (run the migration first) |
 | `scripts/migrate-to-webapptemplate.sh` | One-shot, idempotent migration of a legacy app (`nestcommon`/`reactcommon`/`apptemplate` submodules). Does not commit |
-| `scripts/deploy-full.sh` | Deploys the version of the libraries **pinned by the app commit** (`git submodule update --init`); warns when a pinned ref is behind `origin/main` |
+| `scripts/deploy-full.sh` | Deploys with the **latest `main`** of the libraries (`git submodule update --init --remote`), not the refs pinned by the app commit |
 
 ## DB SSL Connection
 

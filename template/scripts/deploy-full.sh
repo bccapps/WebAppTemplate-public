@@ -675,22 +675,7 @@ require_cmd git
 # a fresh checkout those submodules are empty → dangling symlinks → the build fails.
 # Idempotent. No-op for projects without .gitmodules.
 # Works for monorepos (one .gitmodules at root) and split back/front repos.
-#
-# The deploy uses the version PINNED by the app's commit (`git submodule update --init`,
-# no `--remote`): what you tested is what ships. If a pinned ref is behind origin/main of
-# its library, a warning says so (run ./scripts/update_common.sh to take the update).
-__warn_submodules_behind() {
-  local top="$1" sub_path sub_dir behind
-  while IFS= read -r sub_path; do
-    sub_dir="${top}/${sub_path}"
-    { [[ -d "${sub_dir}/.git" ]] || [[ -f "${sub_dir}/.git" ]]; } || continue
-    git -C "${sub_dir}" fetch --quiet origin main 2>/dev/null || continue
-    behind="$(git -C "${sub_dir}" rev-list --count HEAD..origin/main 2>/dev/null || echo 0)"
-    if [[ "${behind}" != "0" ]]; then
-      warn "${sub_path}: pinned ref is ${behind} commit(s) behind origin/main — deploying the pinned version (run ./scripts/update_common.sh to update)."
-    fi
-  done < <(git -C "${top}" config -f .gitmodules --get-regexp 'submodule\..*\.path' 2>/dev/null | awk '{print $2}')
-}
+
 __seen_submodule_tops=""
 for __side in back front; do
   [[ -d "./${__side}" ]] || continue
@@ -699,9 +684,8 @@ for __side in back front; do
   case " ${__seen_submodule_tops} " in *" ${__top} "*) continue ;; esac
   __seen_submodule_tops="${__seen_submodule_tops} ${__top}"
   info "Initialisation des submodules (.libs) — ${__top}"
-  git -C "${__top}" submodule update --init \
+  git -C "${__top}" submodule update --init --remote \
     || warn "git submodule update a échoué pour ${__top} (build risque d'échouer sur modules_shared)."
-  __warn_submodules_behind "${__top}"
 done
 unset __seen_submodule_tops __side __top
 
