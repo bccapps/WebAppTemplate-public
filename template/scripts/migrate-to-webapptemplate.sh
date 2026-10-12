@@ -56,7 +56,6 @@ cd "${ROOT}"
 [[ -d back && -d front ]] || die "${ROOT} has no back/ and front/ directories."
 
 OLD_SUBMODULES=(back/.libs/nestcommon front/.libs/reactcommon back/.libs/apptemplate front/.libs/apptemplate)
-GIT_COMMON_DIR="$(git rev-parse --git-common-dir)"
 
 already_migrated() { vx_submodule_declared back/.libs/vx-public && vx_submodule_declared front/.libs/vx-public; }
 
@@ -94,7 +93,9 @@ remove_legacy_submodules() {
       git submodule deinit -f -- "${sm}" >/dev/null 2>&1 || true
       git rm -f -q "${sm}"
     fi
-    rm -rf "${GIT_COMMON_DIR}/modules/${sm}"
+    # --git-path resolves to THIS checkout's submodule gitdir (.git/worktrees/<wt>/modules/... in a
+    # linked worktree). --git-common-dir would point at the main checkout and wipe ITS submodules.
+    rm -rf "$(git rev-parse --git-path "modules/${sm}")"
   done
   # Leftover real directories of a half-done previous run (not tracked any more).
   for sm in "${OLD_SUBMODULES[@]}"; do
