@@ -30,6 +30,8 @@ describe('LocaleService — lang-scoped fetch (§1.3) + idempotent init (§1.4)'
 
   beforeEach(async () => {
     vi.resetModules();
+    // Node >= 21 exposes `navigator.language` from the machine locale: pin it so the "en" fallback is deterministic.
+    vi.stubGlobal('navigator', { language: 'en-US' });
     const httpModule = await import('../core/http/HttpService');
     httpServiceMock = httpModule.httpService as unknown as { get: ReturnType<typeof vi.fn>; gets: ReturnType<typeof vi.fn> };
     httpServiceMock.get.mockClear();
@@ -37,6 +39,8 @@ describe('LocaleService — lang-scoped fetch (§1.3) + idempotent init (§1.4)'
     fakeResult = new FakeHttpResult();
     httpServiceMock.get.mockReturnValue(fakeResult);
     i18nMod = await import('../core/i18n/I18n');
+    // No stored preference and no app default: the app's `localeDefault` must not leak into these tests.
+    i18nMod.i18n.setLang('', false);
     const mod = await import('./LocaleService');
     service = new mod.LocaleService();
   });
