@@ -1,0 +1,55 @@
+# Load environment variables for docker-compose variable substitution
+# Variables in this file will be used for ${VARIABLE} substitution in this file
+# For container environment variables, see env_file in each service
+x-env-file: &env-file ../back/.env.dev
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: always
+    profiles:
+      - localdb
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c pg_stat_statements.max=10000
+    env_file: *env-file
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_HOST_AUTH_METHOD: md5
+      POSTGRES_INITDB_ARGS: --auth-host=md5
+    container_name: ${PROJECT_NAME}_postgres
+    volumes:
+      - ../.db/datafront:/var/lib/postgresql/data
+    ports:
+      - '${INFRA_BIND:-0.0.0.0}:${DB_PORT}:5432'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    container_name: ${PROJECT_NAME}_redis
+    profiles:
+      - redis
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    ports:
+      - '${INFRA_BIND:-0.0.0.0}:${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  redis_data:

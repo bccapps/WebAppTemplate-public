@@ -1,0 +1,209 @@
+services:
+  # API-role replicas: serve HTTP only (behind the LB). NODE_ROLE=api disables all background
+  # work (schedulers, trading engines, run workers) so request serving is never blocked by
+  # compute. Run launches/controls are forwarded to back-worker via Redis RPC.
+  back:
+    # Explicit tag shared with back-worker: the two services are byte-identical images that
+    # differ only by NODE_ROLE (runtime env). Without it Compose derives one image name per
+    # service, so BuildKit exports and unpacks the same content twice (~95 s and 1,2 Go per
+    # deploy). PROJECT_NAME keeps the tag unique when several projects share a host.
+    image: ${PROJECT_NAME}_back:latest
+    build:
+      context: ../back
+      dockerfile: Dockerfile
+      # Pre-creates /app/shared (chowned to node:node) in the image — no longer mounted onto
+      # a volume (see the shared_directory: removal note at the bottom of this file), but left
+      # here: build.args plumbing for it stays wired in case a future feature needs a
+      # container-local scratch dir at this exact path.
+      args:
+        APP_RUNTIME_DIR: shared
+    restart: unless-stopped
+    user: "1000:1000"
+    env_file:
+      - ../back/.env
+    environment:
+      NODE_ROLE: api
+    expose:
+      - '${NODE_PORT}'
+    deploy:
+      replicas: ${BACK_REPLICAS:-1}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${NODE_PORT}/api/v1/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  # Worker-role instance: runs ALL background work (schedulers, trading engines, run workers),
+  # owns runs and heartbeats to the WorkerRegistry. Deliberately NOT in the back-lb upstream so
+  # its compute never blocks public API serving. Single instance (singleton crons are still
+  # guarded by CronLockService for the brief old/new overlap during rolling deploys).
+  back-worker:
+    # Reuses the image built by the `back` service — no build: section on purpose.
+    image: ${PROJECT_NAME}_back:latest
+    restart: unless-stopped
+    hostname: ${PROJECT_NAME}-worker
+    user: "1000:1000"
+    env_file:
+      - ../back/.env
+    environment:
+      NODE_ROLE: worker
+    expose:
+      - '${NODE_PORT}'
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${NODE_PORT}/api/v1/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  back-lb:
+    image: nginx:alpine
+    restart: unless-stopped
+    container_name: ${PROJECT_NAME}_back_lb
+    depends_on:
+      back:
+        condition: service_healthy
+    ports:
+      - '${NODE_PORT}:${NODE_PORT}'
+    environment:
+      NODE_PORT: ${NODE_PORT}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        cat > /etc/nginx/conf.d/default.conf <<NGINX
+        upstream backend { server back:$${NODE_PORT} max_fails=3 fail_timeout=10s; }
+        server {
+            listen $${NODE_PORT};
+            location / {
+                # Maintenance mode: deploy-full.sh (deploy_back_host) touches this file
+                # before stopping the old back/back-worker containers and removes it once
+                # the new ones are healthy — back-lb itself is never stopped/recreated for
+                # a back redeploy, so NODE_PORT never actually closes. No reload needed:
+                # nginx re-checks whether the file exists on every single request.
+                if (-f /etc/nginx/maintenance.flag) {
+                    return 503;
+                }
+                proxy_pass http://backend;
+                proxy_http_version 1.1;
+                proxy_set_header Host \$$host;
+                proxy_set_header X-Real-IP \$$remote_addr;
+                proxy_set_header X-Forwarded-For \$$proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto \$$scheme;
+                proxy_set_header Upgrade \$$http_upgrade;
+                proxy_set_header Connection "upgrade";
+                proxy_buffering off;
+                proxy_read_timeout 3600s;
+                proxy_send_timeout 3600s;
+                client_max_body_size 50m;
+                # Failover: if one replica is busy/unreachable and returns an error or 5xx,
+                # retry the request on the other replica instead of surfacing a 502 to the
+                # browser (which would also appear as a misleading CORS error). Only safe/
+                # idempotent methods are retried by default (non_idempotent NOT enabled).
+                proxy_next_upstream error timeout http_502 http_503 http_504;
+                proxy_next_upstream_tries 2;
+                proxy_next_upstream_timeout 10s;
+            }
+            error_page 503 @maintenance;
+            location @maintenance {
+                default_type application/json;
+                add_header X-Maintenance "true" always;
+                return 503 '{"maintenance":true}';
+            }
+        }
+        NGINX
+        nginx -g 'daemon off;'
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    container_name: ${PROJECT_NAME}_redis
+    command: >
+      redis-server
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+      ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
+    ports:
+      - '${INFRA_BIND:-127.0.0.1}:${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ${REDIS_PASSWORD:+-a ${REDIS_PASSWORD}} ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  front:
+    build:
+      context: ../front
+      dockerfile: Dockerfile
+      args:
+        NODE_PORT: ${NODE_PORT}
+        VITE_API_URL: /api/v1
+        VITE_REOWN_PROJECT_ID: ${VITE_REOWN_PROJECT_ID}
+        VITE_AUTH_CHAIN_POLICY: ${VITE_AUTH_CHAIN_POLICY}
+        VITE_AUTH_EXPECTED_CHAIN_ID: ${VITE_AUTH_EXPECTED_CHAIN_ID}
+    restart: unless-stopped
+    container_name: ${PROJECT_NAME}_front
+    env_file:
+      - ../front/.env
+    depends_on:
+      back:
+        condition: service_healthy
+    ports:
+      - '${VITE_PORT}:80'
+
+  # Metrics agent: scrapes every back/back-worker container individually via Docker socket,
+  # then pushes to the external Prometheus server via remote_write.
+  # Not started by default — activate with:  docker compose --profile metrics up -d
+  # See PROMETHEUS.md for full setup instructions.
+  vmagent:
+    image: victoriametrics/vmagent:latest
+    restart: unless-stopped
+    container_name: ${PROJECT_NAME}_vmagent
+    profiles: [metrics]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - vmagent_data:/vmagentdata
+    configs:
+      - source: vmagent_config
+        target: /etc/vmagent/config.yml
+        mode: 0444
+    environment:
+      METRICS_TOKEN: ${METRICS_TOKEN}
+      PROJECT_NAME: ${PROJECT_NAME}
+      NODE_PORT: ${NODE_PORT}
+      # Destinations remote_write passées par VARIABLES et non en flags CLI :
+      # `-remoteWrite.url` est répétable (vmagent réplique les séries vers
+      # chaque destination), et avec `-envflag.enable` un flag répétable devient
+      # une variable à valeurs séparées par des virgules. Une ligne `command:`
+      # de compose ne peut pas boucler ; c'est donc le seul moyen de viser N
+      # serveurs Prometheus sans réécrire le fichier à chaque ajout.
+      #
+      # Les identifiants s'apparient aux URL par POSITION : une seule valeur
+      # pour deux URL n'authentifierait que la première. deploy-full.sh réplique
+      # une valeur unique autant de fois qu'il y a d'URL.
+      VM_remoteWrite_url: ${PROMETHEUS_REMOTE_WRITE_URLS}
+      VM_remoteWrite_basicAuth_username: ${PROMETHEUS_BASIC_AUTH_USER}
+      VM_remoteWrite_basicAuth_password: ${PROMETHEUS_BASIC_AUTH_PASSWORD}
+    command:
+      - -promscrape.config=/etc/vmagent/config.yml
+      - -envflag.enable=true
+      - -envflag.prefix=VM_
+      - -loggerFormat=json
+    depends_on:
+      back:
+        condition: service_healthy
+
+volumes:
+  redis_data:
+  vmagent_data:
+
+configs:
+  vmagent_config:
+    file: ${VMAGENT_CONFIG_PATH:-./vmagent.yml}
+

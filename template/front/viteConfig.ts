@@ -1,0 +1,177 @@
+/**
+ * VXFramework
+ *
+ * Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
+ * SPDX-License-Identifier: MIT
+ *
+ * Licensed under the MIT License. See LICENSE in the project root.
+ */
+
+/**
+ * Shared Vite config factory for all front projects. Lives in the app-template
+ * submodule and is consumed by each project's thin `vite.config.ts`:
+ *
+ *   import { createViteConfig } from './viteConfig'
+ *   import { Configuration } from './src/config/config'
+ *   export default createViteConfig({ configuration: Configuration })
+ *
+ * Project-relative paths use `process.cwd()` (the project's front/ dir when Vite
+ * runs) so this file is fully relocatable — it never references its own location.
+ * Per-project values are passed as options by the thin wrapper (explicit and
+ * version-controlled); matching VITE_* env vars override them when present.
+ * `Configuration['apiUrl']` is the final fallback dev API proxy path.
+ *
+ * Precedence for each tunable: env var > wrapper option > default.
+ *   VITE_PORT             dev/preview port (default 8080)
+ *   VITE_API_PORT         backend port for the dev proxy target
+ *   VITE_ALLOWED_HOSTS    comma-separated; overrides opts.allowedHosts
+ *   VITE_API_PROXY_PATH   dev proxy path key; overrides opts.apiProxyPath
+ *   VITE_STRICT_PORT      "true"/"false"; overrides opts.strictPort
+ *   VITE_REOWN_PROJECT_ID injected into import.meta.env
+ */
+
+import { defineConfig, loadEnv, type PluginOption, type UserConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import path from 'path'
+import { libRoots } from './libRoots'
+
+export interface ViteConfigOptions {
+  /** Project Configuration object (from ./src/config/config), read for the dev proxy path. */
+  configuration?: Record<string, unknown>
+  /** Dev server allowedHosts (default ["localhost", "127.0.0.1"]). */
+  allowedHosts?: string[]
+  /** Dev proxy path key (default Configuration.apiUrl || "/api"). */
+  apiProxyPath?: string
+  /** Fail instead of auto-incrementing when the port is taken (default false). */
+  strictPort?: boolean
+  /**
+   * Extra Vite plugins appended after react(). Use to add app-specific plugins
+   * (e.g. VitePWA) without modifying this shared factory.
+   * @example extraPlugins: [VitePWA({ ... })]
+   */
+  extraPlugins?: PluginOption[]
+  /**
+   * Vite's resolved mode, from the config function form: `defineConfig(({ mode }) => ...)`.
+   * Passed through explicitly rather than re-derived here (see `dropConsoleInProduction`
+   * below) — this factory's own `loadEnv(process.env.MODE || 'development', ...)` call a few
+   * lines down does NOT track the real `--mode` flag (nothing sets `process.env.MODE` for
+   * `vite build --mode preprod`), so re-deriving mode internally would silently treat a
+   * preprod build as production.
+   */
+  mode?: string
+}
+
+export function createViteConfig(opts: ViteConfigOptions = {}): UserConfig {
+  const cwd = process.cwd()
+  const env = loadEnv(process.env.MODE || 'development', cwd, 'VITE_')
+
+  const allowedHosts = env.VITE_ALLOWED_HOSTS
+    ? env.VITE_ALLOWED_HOSTS.split(',').map((host) => host.trim()).filter(Boolean)
+    : opts.allowedHosts ?? ['localhost', '127.0.0.1']
+  const apiProxyPath =
+    env.VITE_API_PROXY_PATH ||
+    opts.apiProxyPath ||
+    (opts.configuration?.['apiUrl'] as string | undefined) ||
+    '/api'
+  const strictPort = env.VITE_STRICT_PORT
+    ? env.VITE_STRICT_PORT === 'true'
+    : opts.strictPort ?? false
+  const port = parseInt(env.VITE_PORT, 10) || 8080
+
+  // Strip console.*/debugger from the bundle for the real production build ONLY — dev and
+  // preprod (and any other named mode) keep full console output. Build-time removal (esbuild
+  // `drop`, not a runtime console shim) means nothing to silently re-enable and a smaller
+  // bundle, at the cost of needing a rebuild to see logs again — acceptable since prod logs
+  // are meant to stay off. Guarded on the caller-supplied `mode`, not on env vars read inside
+  // this factory (see the `mode` option doc above).
+  const dropConsoleInProduction = opts.mode === 'production'
+
+  return defineConfig({
+    esbuild: dropConsoleInProduction ? { drop: ['console', 'debugger'] } : undefined,
+    define: {
+      global: 'window',
+      'process.env': {},
+      'import.meta.env.VITE_REOWN_PROJECT_ID': JSON.stringify(env.VITE_REOWN_PROJECT_ID || ''),
+    },
+    server: {
+      port,
+      strictPort,
+      allowedHosts,
+      fs: {
+        allow: [cwd, ...libRoots(cwd)],
+      },
+      proxy: {
+        [apiProxyPath]: {
+          target: 'http://localhost:' + env.VITE_API_PORT,
+          changeOrigin: true,
+          ws: true,
+        },
+      },
+    },
+    preview: {
+      port,
+    },
+    plugins: [react(), ...(opts.extraPlugins ?? [])],
+    build: {
+      minify: 'esbuild',
+      // Vendor chunks like the web3 stack are legitimately large; lift the warn
+      // threshold so it only fires on genuinely oversized chunks, not expected ones.
+      chunkSizeWarningLimit: 1200,
+      rollupOptions: {
+        maxParallelFileOps: 2,
+        output: {
+          // Split heavy third-party libraries out of the single app bundle so
+          // each is cached independently and downloaded in parallel. Grouped by
+          // dependency family rather than per-package to avoid a swarm of tiny
+          // chunks. Conditions that don't match a given project are simply inert
+          // (this factory is shared across all front projects). Returning
+          // `undefined` keeps react/router/app code in the entry chunk so module
+          // init order stays correct — every vendor chunk imports react, so
+          // rollup loads the entry chunk before them.
+          manualChunks(id: string) {
+            if (!id.includes('node_modules')) return undefined
+            const p = id.replace(/\\/g, '/')
+            // The web3 / wallet stack (viem, wagmi, @reown, @walletconnect, @solana)
+            // is deliberately NOT manually chunked: it is reached only through the
+            // lazy-loaded WalletAuthIsland (dynamic import), so rollup already emits
+            // it as an on-demand async chunk. Forcing it into a named vendor chunk
+            // turned that chunk into a shared hub — rollup folded the Vite preload
+            // helper and the Buffer polyfill into it, which the entry imports
+            // eagerly, dragging the whole 4.5 MB back onto the critical path.
+            // Charting libraries.
+            if (/node_modules\/(chart\.js|chartjs-|react-chartjs|lightweight-charts)/.test(p)) {
+              return 'vendor-charts'
+            }
+            // Code editor (CodeMirror + Lezer grammars).
+            if (/node_modules\/(@codemirror|@uiw|@lezer|codemirror)\b/.test(p)) {
+              return 'vendor-editor'
+            }
+            // Markdown / HTML rendering pipeline.
+            if (
+              /node_modules\/(react-markdown|remark|rehype|micromark|mdast|hast|unified|unist|html-react-parser|dompurify|property-information|space-separated-tokens|comma-separated-tokens)/.test(
+                p,
+              )
+            ) {
+              return 'vendor-markdown'
+            }
+            // MUI + Emotion design system.
+            if (/node_modules\/(@mui|@emotion)\b/.test(p)) {
+              return 'vendor-mui'
+            }
+            return undefined
+          },
+        },
+      },
+    },
+    resolve: {
+      preserveSymlinks: true,
+      alias: {
+        '@': path.resolve(cwd, './src'),
+        buffer: 'buffer',
+      },
+    },
+    optimizeDeps: {
+      include: ['buffer'],
+    },
+  }) as UserConfig
+}

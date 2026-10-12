@@ -1,0 +1,58 @@
+/**
+ * VXFramework
+ *
+ * Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
+ * SPDX-License-Identifier: MIT
+ *
+ * Licensed under the MIT License. See LICENSE in the project root.
+ */
+
+import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import ConfigurationEntity from '../entities/ConfigurationEntity';
+import { ModuleConfigSchema } from '../types/ModuleConfigSchema';
+
+@Injectable()
+export class ModuleConfigSeederService {
+  private readonly logger = new Logger(ModuleConfigSeederService.name);
+
+  constructor(
+    @InjectRepository(ConfigurationEntity)
+    private readonly configRepo: Repository<ConfigurationEntity>,
+  ) {}
+
+  async seedSchema(schema: ModuleConfigSchema): Promise<void> {
+    let seededCount = 0;
+    for (const field of schema.fields) {
+      if (field.defaultValue === undefined) continue;
+      const exists = await this.configRepo.findOne({ where: { name: field.key } });
+      if (exists) continue;
+      const entity = this.configRepo.create({
+        name: field.key,
+        value: this.serializeValue(field.defaultValue, field.type),
+        description: field.description ?? '',
+      });
+      await this.configRepo.save(entity);
+      seededCount++;
+    }
+    if (seededCount > 0) {
+      this.logger.log(`Seeded ${seededCount} config entries for module "${schema.moduleId}"`);
+    }
+  }
+
+  private serializeValue(value: any, type: string): string {
+    if (value === null || value === undefined) return '';
+    switch (type) {
+      case 'boolean':
+        return value ? 'true' : 'false';
+      case 'number':
+        return String(value);
+      case 'json':
+      case 'multiselect':
+        return JSON.stringify(value);
+      default:
+        return String(value);
+    }
+  }
+}

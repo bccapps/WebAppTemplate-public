@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/images/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{SITE_NAME}}</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Ensure Node-like globals for some browser bundles
+      (function(){
+        var g = (typeof globalThis !== 'undefined') ? globalThis : window;
+        g.global = g.global || g;
+        g.process = g.process || { env: {} };
+      })();
+    </script>
+    <script type="module">
+      import { Buffer } from 'buffer';
+      const g = (typeof globalThis !== 'undefined') ? globalThis : window;
+      if (!g.Buffer) g.Buffer = Buffer;
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

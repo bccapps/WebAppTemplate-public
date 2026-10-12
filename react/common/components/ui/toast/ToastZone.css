@@ -1,0 +1,76 @@
+/**
+ * VXFramework
+ *
+ * Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
+ * SPDX-License-Identifier: MIT
+ *
+ * Licensed under the MIT License. See LICENSE in the project root.
+ */
+
+/**
+ * Dark scheme for react-toastify.
+ *
+ * The light appearance is the library default and is left untouched: every rule
+ * here is scoped to [data-color-scheme='dark'], the attribute ThemeModeProvider
+ * sets on <html>. An app that never sets it keeps the light toasts as they are.
+ *
+ * Toasts always carry the `--light` theme classes (ToastContainer's default
+ * theme), so the dark scheme re-paints those classes instead of switching the
+ * library theme: the toast keeps its structure and only its colours move — to
+ * the global tokens (--card, --border, --destructive…) rather than to
+ * react-toastify's own dark palette, which knows nothing of the brand. Each
+ * var() keeps a literal fallback so the file degrades gracefully in an app that
+ * does not define those tokens.
+ */
+
+[data-color-scheme='dark'] .Toastify__toast-theme--light,
+[data-color-scheme='dark'] .Toastify__toast-theme--colored.Toastify__toast--default {
+  background: var(--card, #262626);
+  color: var(--card-foreground, #ebebeb);
+  border: 1px solid var(--border, #383838);
+  /* The library shadow (black at 10 %) vanishes against a dark backdrop. */
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.55);
+}
+
+/* The surface stays neutral in dark mode, so the icon carries the severity. */
+[data-color-scheme='dark'] .Toastify__toast-theme--light {
+  --toastify-icon-color-success: var(--metric-green, #4ade80);
+  --toastify-icon-color-error: var(--destructive, #ef4444);
+  --toastify-icon-color-warning: var(--metric-orange, #fbbf24);
+  --toastify-icon-color-info: var(--accent, #38bdf8);
+}
+
+/* Default bar is a rainbow gradient — unreadable over a dark surface. Typed
+   bars get the matching severity colour. */
+[data-color-scheme='dark'] .Toastify__progress-bar-theme--light,
+[data-color-scheme='dark'] .Toastify__progress-bar--info {
+  background: var(--accent, #38bdf8);
+}
+
+[data-color-scheme='dark'] .Toastify__progress-bar--success {
+  background: var(--metric-green, #4ade80);
+}
+
+[data-color-scheme='dark'] .Toastify__progress-bar--error {
+  background: var(--destructive, #ef4444);
+}
+
+[data-color-scheme='dark'] .Toastify__progress-bar--warning {
+  background: var(--metric-orange, #fbbf24);
+}
+
+/* Default is black at 0.3 opacity — invisible on a dark surface. */
+[data-color-scheme='dark'] .Toastify__close-button--light {
+  color: var(--card-foreground, #ebebeb);
+  opacity: 0.5;
+}
+
+[data-color-scheme='dark'] .Toastify__close-button--light:hover,
+[data-color-scheme='dark'] .Toastify__close-button--light:focus {
+  opacity: 1;
+}
+
+[data-color-scheme='dark'] .Toastify__spinner {
+  border-color: var(--border, #383838);
+  border-right-color: var(--accent, #38bdf8);
+}

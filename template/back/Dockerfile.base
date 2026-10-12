@@ -1,0 +1,10 @@
+# One-time base image: node:22-alpine + NestJS CLI pre-installed.
+# Used for manual base-image builds; the automated deploy (deploy-full.sh)
+# generates its own equivalent inline from $NESTJS_CLI_VERSION.
+# Rebuild manually when upgrading node or @nestjs/cli:
+#   docker build -f back/Dockerfile.base --build-arg NESTCLI_VERSION=11.0.16 \
+#     -t <project>-nestcli:22-11.0.16 back/
+ARG NESTCLI_VERSION=11.0.16
+FROM node:22-alpine
+ARG NESTCLI_VERSION
+RUN npm -g install @nestjs/cli@${NESTCLI_VERSION} --omit=dev

@@ -1,0 +1,33 @@
+# OS / editor
+.DS_Store
+*.swp
+*.log
+.vscode/
+.idea/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.npm/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+
+# Cache
+.cache/
+.turbo/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Python bytecode
+__pycache__/
+*.pyc

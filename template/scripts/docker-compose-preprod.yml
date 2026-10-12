@@ -1,0 +1,41 @@
+services:
+  back:
+    build:
+      context: ../back
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    container_name: ${PROJECT_NAME}_preprod_back
+    env_file:
+      - ../back/.env.preprod
+    ports:
+      - '${NODE_PORT}:${NODE_PORT}'
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${NODE_PORT}/api/v1/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  front:
+    build:
+      context: ../front
+      dockerfile: Dockerfile
+      args:
+        NODE_PORT: ${NODE_PORT}
+        VITE_API_BASE_URL: /api
+        VITE_REOWN_PROJECT_ID: ${VITE_REOWN_PROJECT_ID}
+        VITE_AUTH_CHAIN_POLICY: ${VITE_AUTH_CHAIN_POLICY}
+        VITE_AUTH_EXPECTED_CHAIN_ID: ${VITE_AUTH_EXPECTED_CHAIN_ID}
+    restart: unless-stopped
+    container_name: ${PROJECT_NAME}_preprod_front
+    depends_on:
+      back:
+        condition: service_healthy
+    ports:
+      - '${VITE_PORT}:80'
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

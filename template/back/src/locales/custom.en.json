@@ -1,0 +1,18 @@
+{
+  "custom.app.name": "{{SITE_NAME}}",
+  "custom.app.footer": "© {{ENTITY_NAME}}",
+  "custom.landing.hero.eyebrow": "Welcome",
+  "custom.landing.hero.title": "{{SITE_NAME}}",
+  "custom.landing.hero.subtitle": "Replace this placeholder with your product's value proposition.",
+  "custom.landing.hero.cta": "Launch app",
+  "custom.landing.feature.1.title": "Feature one",
+  "custom.landing.feature.1.description": "Describe the first key capability of your product here.",
+  "custom.landing.feature.2.title": "Feature two",
+  "custom.landing.feature.2.description": "Describe the second key capability of your product here.",
+  "custom.landing.feature.3.title": "Feature three",
+  "custom.landing.feature.3.description": "Describe the third key capability of your product here.",
+  "custom.landing.footer.tagline": "Replace this placeholder with a short tagline.",
+  "custom.legal.confidentiality.placeholder": "To be completed — contact {{ENTITY_NAME}} at {{CONTACT_EMAIL}}.",
+  "custom.legal.mentions.placeholder": "To be completed — contact {{ENTITY_NAME}} at {{CONTACT_EMAIL}}.",
+  "custom.legal.usageConditions.placeholder": "To be completed — contact {{ENTITY_NAME}} at {{CONTACT_EMAIL}}."
+}

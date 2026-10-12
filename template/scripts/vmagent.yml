@@ -1,0 +1,74 @@
+global:
+  scrape_interval: 30s
+  external_labels:
+    project: "%{PROJECT_NAME}"
+
+# Remote write : destination et auth configurées via flags CLI dans docker-compose.yml
+# (vmagent n'utilise pas de section remote_write dans ce fichier — c'est spécifique à Prometheus)
+#   -remoteWrite.url             → PROMETHEUS_REMOTE_WRITE_URL
+#   -remoteWrite.bearerToken     → PROMETHEUS_REMOTE_WRITE_TOKEN  (Bearer token, Option A)
+#
+# Option B — Basic Auth à la place du Bearer token :
+#   Remplacer dans docker-compose.yml :
+#     -remoteWrite.basicAuth.username=${PROMETHEUS_BASIC_AUTH_USER}
+#     -remoteWrite.basicAuth.password=${PROMETHEUS_BASIC_AUTH_PASSWORD}
+#
+# Note syntaxe : vmagent utilise %{VAR} pour l'expansion des variables d'env dans ce fichier.
+# ${1} dans les champs replacement est une backreference regex (pas une variable d'env).
+
+scrape_configs:
+  # API replicas (NODE_ROLE=api) — one target per container, individually addressed
+  - job_name: "%{PROJECT_NAME}_api"
+    # Bearer token envoyé à chaque scrape GET /metrics — doit correspondre à METRICS_TOKEN dans back/.env
+    authorization:
+      credentials: "%{METRICS_TOKEN}"
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        filters:
+          - name: label
+            values: ["com.docker.compose.service=back"]
+    relabel_configs:
+      # Only scrape containers belonging to this compose project.
+      # The Docker Compose project name is "%{PROJECT_NAME}-back-<host>" (deploy-full.sh appends
+      # a role+host suffix), so we match any project name that starts with PROJECT_NAME.
+      - source_labels: [__meta_docker_container_label_com_docker_compose_project]
+        regex: "%{PROJECT_NAME}.*"
+        action: keep
+      # Use container name as instance label (drops the leading slash)
+      - source_labels: [__meta_docker_container_name]
+        regex: "/?(.*)"
+        target_label: instance
+      # Force metrics port — Docker SD may set address without port for expose-only containers
+      - source_labels: [__address__]
+        regex: "([^:]+)(?::.*)?$"
+        replacement: "${1}:%{NODE_PORT}"
+        target_label: __address__
+      - target_label: __metrics_path__
+        replacement: /metrics
+      - target_label: role
+        replacement: api
+
+  # Worker instance (NODE_ROLE=worker) — single container
+  - job_name: "%{PROJECT_NAME}_worker"
+    authorization:
+      credentials: "%{METRICS_TOKEN}"
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        filters:
+          - name: label
+            values: ["com.docker.compose.service=back-worker"]
+    relabel_configs:
+      - source_labels: [__meta_docker_container_label_com_docker_compose_project]
+        regex: "%{PROJECT_NAME}.*"
+        action: keep
+      - source_labels: [__meta_docker_container_name]
+        regex: "/?(.*)"
+        target_label: instance
+      - source_labels: [__address__]
+        regex: "([^:]+)(?::.*)?$"
+        replacement: "${1}:%{NODE_PORT}"
+        target_label: __address__
+      - target_label: __metrics_path__
+        replacement: /metrics
+      - target_label: role
+        replacement: worker

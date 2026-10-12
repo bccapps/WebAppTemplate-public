@@ -1,0 +1,18 @@
+{
+  "custom.app.name": "{{SITE_NAME}}",
+  "custom.app.footer": "© {{ENTITY_NAME}}",
+  "custom.landing.hero.eyebrow": "Bienvenue",
+  "custom.landing.hero.title": "{{SITE_NAME}}",
+  "custom.landing.hero.subtitle": "Remplacez ce texte par la proposition de valeur de votre produit.",
+  "custom.landing.hero.cta": "Lancer l'application",
+  "custom.landing.feature.1.title": "Fonctionnalité une",
+  "custom.landing.feature.1.description": "Décrivez ici la première capacité clé de votre produit.",
+  "custom.landing.feature.2.title": "Fonctionnalité deux",
+  "custom.landing.feature.2.description": "Décrivez ici la deuxième capacité clé de votre produit.",
+  "custom.landing.feature.3.title": "Fonctionnalité trois",
+  "custom.landing.feature.3.description": "Décrivez ici la troisième capacité clé de votre produit.",
+  "custom.landing.footer.tagline": "Remplacez ce texte par un slogan court.",
+  "custom.legal.confidentiality.placeholder": "À compléter — contactez {{ENTITY_NAME}} à {{CONTACT_EMAIL}}.",
+  "custom.legal.mentions.placeholder": "À compléter — contactez {{ENTITY_NAME}} à {{CONTACT_EMAIL}}.",
+  "custom.legal.usageConditions.placeholder": "À compléter — contactez {{ENTITY_NAME}} à {{CONTACT_EMAIL}}."
+}

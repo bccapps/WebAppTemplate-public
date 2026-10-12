@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tooling tests
+        run: node --test template/scripts/*.test.mjs template/tools/*.test.mjs
+      - name: Module boundaries
+        run: node tools/check-boundaries.mjs --root . --stack-dirs nest,react --allowed tools/allowed.json
+      - name: License headers
+        run: node tools/license-headers.mjs --root . --license mit --check
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  sandbox:
+    runs-on: ubuntu-latest
+    needs: checks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build an anonymous project (back + front) and run back tests
+        run: tools/ci-sandbox.sh

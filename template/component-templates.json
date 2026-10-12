@@ -1,0 +1,40 @@
+{
+  "_doc": "Manifest consumed ONLY by scripts/create-project.sh, at project creation time. Unlike config-links.json (symlink, resynced on every link-config.mjs run, real-file override skips it), this manifest COPIES each source file once into a brand-new project and substitutes {{SITE_NAME}}, {{ENTITY_NAME}}, {{CONTACT_EMAIL}} and {{PROJECT_NAME}} with the values collected by the create-project.sh prompts. The resulting files are plain, project-owned files from that point on — no tool ever re-copies or re-links them after creation, so they are safe to customize freely (Header, Footer, PageLayout, Router, Title, landing page, legal placeholder pages, minimal front/back bootstrap). Paths are relative to this submodule root (source) and to the new project root (target).",
+  "front": {
+    "front/index.html": "front/index.html",
+    "front/vite.config.ts": "front/vite.config.ts",
+    "front/src/components/Title.tsx": "front/src/components/Title.tsx",
+    "front/src/components/Footer.tsx": "front/src/components/Footer.tsx",
+    "front/src/components/Router.tsx": "front/src/components/Router.tsx",
+    "front/src/components/Header.tsx": "front/src/components/Header.tsx",
+    "front/src/components/PageLayout.tsx": "front/src/components/PageLayout.tsx",
+    "front/src/components/AdminSidebar.tsx": "front/src/components/AdminSidebar.tsx",
+    "front/src/components/landingpage/LandingPage.tsx": "front/src/components/landingpage/LandingPage.tsx",
+    "front/src/components/landingpage/HeroVisual.tsx": "front/src/components/landingpage/HeroVisual.tsx",
+    "front/src/components/landingpage/LandingPage.css": "front/src/components/landingpage/LandingPage.css",
+    "front/src/components/pages/Home.tsx": "front/src/components/pages/Home.tsx",
+    "front/src/components/pages/Confidentiality.tsx": "front/src/components/pages/Confidentiality.tsx",
+    "front/src/components/pages/LegalMentions.tsx": "front/src/components/pages/LegalMentions.tsx",
+    "front/src/components/pages/UsageConditions.tsx": "front/src/components/pages/UsageConditions.tsx",
+    "front/src/App.tsx": "front/src/App.tsx",
+    "front/src/plugins.ts": "front/src/plugins.ts",
+    "front/src/main.tsx": "front/src/main.tsx",
+    "front/src/theme.ts": "front/src/theme.ts",
+    "front/src/index.css": "front/src/index.css",
+    "front/src/vite-env.d.ts": "front/src/vite-env.d.ts",
+    "front/src/config/configApis.ts": "front/src/config/configApis.ts",
+    "front/src/config/config.ts": "front/src/config/config.ts",
+    "front/src/styles/colors.css": "front/src/styles/colors.css",
+    "front/src/styles/theme_default.css": "front/src/styles/theme_default.css",
+    "front/src/themes/index.ts": "front/src/themes/index.ts",
+    "front/src/themes/default/index.ts": "front/src/themes/default/index.ts"
+  },
+  "back": {
+    "back/src/main.ts": "back/src/main.ts",
+    "back/src/modules/app/AppModule.ts": "back/src/modules/app/AppModule.ts",
+    "back/src/config/defaultConfig.ts": "back/src/config/defaultConfig.ts",
+    "back/src/locales/custom.en.json": "back/src/locales/custom.en.json",
+    "back/src/locales/custom.fr.json": "back/src/locales/custom.fr.json",
+    "back/src/migrations/.gitkeep": "back/src/migrations/.gitkeep"
+  }
+}

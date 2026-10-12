@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "declaration": true,
+    "removeComments": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "allowJs": true,
+    "noUnusedParameters": false,
+    "allowSyntheticDefaultImports": true,
+    "target": "ESNext",
+    "sourceMap": true,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "paths": {
+      "src/*": ["./src/*"],
+      "@base-org/account/node": ["./node_modules/@base-org/account/dist/index.node"]
+    },
+    "moduleResolution": "node",
+    "forceConsistentCasingInFileNames": true,
+    "incremental": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "rootDirs": ["src"],
+    "types": ["node"],
+    "lib": ["esnext", "dom"]
+  },
+  "exclude": ["node_modules", "dist", "test", "**/*spec.ts"],
+  "include": ["src/**/*", "src/locales/*.json"]
+}
