@@ -203,9 +203,14 @@ if [[ -n "${tracked_links}" ]]; then
   fi
 fi
 
-# Root CLAUDE.md is a real file (generated, see T41): a legacy symlink is reported, not replaced here.
-if [[ -L CLAUDE.md ]]; then
-  warn "CLAUDE.md is still a symlink — run scripts/migrate-to-webapptemplate.sh (or node scripts/project-docs.mjs) to make it a real file."
+# Root CLAUDE.md = real file of @imports (+ project notes); AGENTS.md = generated, git-ignored.
+if [[ -f back/.libs/apptemplate/scripts/project-docs.mjs ]]; then
+  node back/.libs/apptemplate/scripts/project-docs.mjs ensure "${PROJECT_ROOT}"
+  git add CLAUDE.md .gitignore 2>/dev/null || true
+  if ! git diff --cached --quiet -- CLAUDE.md .gitignore; then
+    git commit -q -m "chore: refresh CLAUDE.md imports" -- CLAUDE.md .gitignore
+    ok "CLAUDE.md imports refreshed"
+  fi
 fi
 
 # Pull new canonical common.* locale keys from the template into the app's own
