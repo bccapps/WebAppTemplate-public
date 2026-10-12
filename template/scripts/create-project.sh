@@ -9,8 +9,10 @@
 # Licensed under the MIT License. See LICENSE in the project root.
 # =============================================================================
 #
-# Scaffolds a brand-new project from AppTemplate: monorepo layout, the 3
-# shared submodules (nestcommon/reactcommon/apptemplate), the infra config
+# Scaffolds a brand-new project from WebAppTemplate: monorepo layout, the shared
+# library submodules (vx-public always, vx-private with --with-private; each mounted
+# in back/.libs and front/.libs, plus the .libs/apptemplate -> vx-public/template
+# symlinks — see lib/libs.sh), the infra config
 # files (via link-config.mjs), a one-shot copy of the base UI components /
 # minimal back skeleton (via apply-component-templates.mjs — NEVER re-run
 # after this), shared-modules.json, AGENTS.md/CLAUDE.md, and an initial commit
@@ -28,14 +30,18 @@
 # back/src/main.ts).
 #
 # Usage:
-#   scripts/create-project.sh <project-name> [parent-dir]
+#   scripts/create-project.sh [--with-private [--with-users]] <project-name> [parent-dir]
 #   (parent-dir defaults to the current directory.)
+#   --with-private  also mount vx-private (needs read access to the private repository)
+#   --with-users    (requires --with-private) enable user management: lists the `user`
+#                   module and what it needs (nest: user, commerce, infra, oauth;
+#                   react: user, commerce, infra) in shared-modules.json
 #
 # Env overrides:
-#   NESTCOMMON_URL   (default https://github.com/bccapps/common-nest.git)
-#   REACTCOMMON_URL  (default https://github.com/bccapps/common-react.git)
-#   APPTEMPLATE_URL  (default https://github.com/bccapps/app-template.git)
+#   VX_PUBLIC_URL    (default https://github.com/bccapps/WebAppTemplate-public.git)
+#   VX_PRIVATE_URL   (default https://github.com/bccapps/WebAppTemplate-private.git)
 #   LIB_BRANCH       (default main)
+#   VX_SKIP_INSTALL=1  skip npm install;  VX_SKIP_GITHUB=1  skip GitHub repo creation/push (tests)
 # =============================================================================
 
 set -euo pipefail
@@ -43,6 +49,26 @@ set -euo pipefail
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m⚠\033[0m  %s\n' "$*" >&2; }
 ok()   { printf '\033[1;32m✓\033[0m  %s\n' "$*"; }
+
+SCRIPT_SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/libs.sh
+source "${SCRIPT_SRC_DIR}/lib/libs.sh"
+
+WITH_PRIVATE=0
+WITH_USERS=0
+POSITIONAL=()
+for arg in "$@"; do
+  case "${arg}" in
+    --with-private) WITH_PRIVATE=1 ;;
+    --with-users) WITH_USERS=1 ;;
+    -*) echo "✖ unknown option: ${arg}" >&2; exit 2 ;;
+    *) POSITIONAL+=("${arg}") ;;
+  esac
+done
+set -- "${POSITIONAL[@]}"
+if [[ "${WITH_USERS}" -eq 1 && "${WITH_PRIVATE}" -eq 0 ]]; then
+  echo "✖ --with-users requires --with-private (the user module is private)." >&2; exit 2
+fi
 
 if ! command -v git >/dev/null 2>&1; then
   echo "git introuvable." >&2; exit 1
@@ -56,7 +82,7 @@ fi
 
 PROJECT_NAME="${1:-}"
 if [[ -z "${PROJECT_NAME}" ]]; then
-  echo "Usage: scripts/create-project.sh <project-name> [parent-dir]" >&2
+  echo "Usage: scripts/create-project.sh [--with-private [--with-users]] <project-name> [parent-dir]" >&2
   exit 1
 fi
 if [[ ! "${PROJECT_NAME}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
@@ -78,11 +104,6 @@ if [[ -e "${PROJECT_ROOT}" ]]; then
     exit 1
   fi
 fi
-
-NESTCOMMON_URL="${NESTCOMMON_URL:-https://github.com/bccapps/common-nest.git}"
-REACTCOMMON_URL="${REACTCOMMON_URL:-https://github.com/bccapps/common-react.git}"
-APPTEMPLATE_URL="${APPTEMPLATE_URL:-https://github.com/bccapps/app-template.git}"
-LIB_BRANCH="${LIB_BRANCH:-main}"
 
 # --- Prompts (Enter accepts the shown default) ---------------------------
 default_site_name="$(echo "${PROJECT_NAME}" | sed -E 's/(^|-)([a-z])/\1\U\2/g; s/-/ /g')"
@@ -110,35 +131,10 @@ fi
 mkdir -p "${PROJECT_ROOT}/front/src" "${PROJECT_ROOT}/back/src"
 
 cd "${PROJECT_ROOT}"
-git init -q
+git init -q -b main
 ok "git repository initialized."
 
-# Idempotent helpers -------------------------------------------------------
-add_submodule() {
-  local submodule_path="$1" url="$2"
-  if git config -f .gitmodules --get-regexp 'submodule\..*\.path' 2>/dev/null \
-      | awk '{print $2}' | grep -qx "${submodule_path}"; then
-    ok "submodule '${submodule_path}' already declared."
-  elif [[ -e "${submodule_path}" ]]; then
-    warn "'${submodule_path}' exists but is not a declared submodule — check manually, skipped."
-  else
-    git submodule add -b "${LIB_BRANCH}" "${url}" "${submodule_path}"
-    ok "submodule '${submodule_path}' added."
-  fi
-}
-
-link_symlink() {
-  local target="$1" linkpath="$2"
-  if [[ -L "${linkpath}" ]]; then
-    ok "symlink '${linkpath}' already present."
-  elif [[ -e "${linkpath}" ]]; then
-    warn "'${linkpath}' exists and is not a symlink — check manually, skipped."
-  else
-    ln -s "${target}" "${linkpath}"
-    ok "symlink '${linkpath}' -> '${target}' created."
-  fi
-}
-
+# Idempotent helpers (add_submodule / symlink) live in lib/libs.sh ---------
 random_password() {
   LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | head -c 32
 }
@@ -188,13 +184,8 @@ generate_env_dev() {
   ok "${out} written."
 }
 
-info "Adding shared submodules..."
-add_submodule back/.libs/nestcommon "${NESTCOMMON_URL}"
-add_submodule front/.libs/reactcommon "${REACTCOMMON_URL}"
-add_submodule front/.libs/apptemplate "${APPTEMPLATE_URL}"
-add_submodule back/.libs/apptemplate "${APPTEMPLATE_URL}"
-git submodule update --init --remote back/.libs/nestcommon front/.libs/reactcommon front/.libs/apptemplate back/.libs/apptemplate
-ok "Submodules ready: nestcommon, reactcommon, apptemplate (x2 mounts)."
+info "Mounting the shared libraries..."
+vx_setup_libs "${WITH_PRIVATE}"
 
 info "Writing baseline .gitignore (before npm install — otherwise node_modules gets committed)..."
 if [[ -f .gitignore ]]; then
@@ -234,9 +225,9 @@ GITIGNORE
 fi
 
 info "Linking root-level pointers (scripts, CLAUDE.md, AGENTS.md)..."
-link_symlink front/.libs/apptemplate/scripts scripts
-link_symlink front/.libs/apptemplate/CLAUDE.md CLAUDE.md
-link_symlink CLAUDE.md AGENTS.md
+vx_link_root_pointers
+vx_link_symlink front/.libs/apptemplate/CLAUDE.md CLAUDE.md
+vx_link_symlink CLAUDE.md AGENTS.md
 ok "Root symlinks ready."
 
 info "Materializing infra config files (link-config.mjs)..."
@@ -270,28 +261,25 @@ generate_env_dev front/.env.example front/.env.dev \
   "VITE_API_PORT=${NODE_PORT}" \
   "VITE_PORT=${FRONT_PORT}"
 
-info "Writing shared-modules.json (baseline: common, database, infra, commerce, user)..."
+info "Writing shared-modules.json (from shared-modules.json.example)..."
 if [[ -f shared-modules.json ]]; then
   ok "shared-modules.json already present — kept as-is."
 else
-  cat > shared-modules.json <<'JSON'
-{
-  "_doc": "Copy of AppTemplate/shared-modules.json.example, pre-filled with the usual baseline for a freshly created project. Consumed by back/front scripts/link-shared.mjs, which symlinks each listed module into src/modules_shared/. Modules NOT listed are PRUNED. 'infra' and 'commerce' are listed because nestcommon's UserModule unconditionally imports CommerceModule and PrometheusService (infra) — removing either breaks the 'user' module's compile, even before any billing/metrics feature is actually used. Add entries as the app grows.",
-  "nestcommon": [
-    "common",
-    "database",
-    "infra",
-    "commerce",
-    "user"
-  ],
-  "reactcommon": [
-    "common",
-    "infra",
-    "commerce",
-    "user"
-  ]
-}
-JSON
+  # Anonymous baseline = the example (no `user`). --with-users adds the user module and
+  # what it needs (checked with `check-boundaries --report` on the private repository).
+  NEST_MODULES='["common","database"]'
+  REACT_MODULES='["common"]'
+  if [[ "${WITH_USERS}" -eq 1 ]]; then
+    NEST_MODULES='["common","database","infra","commerce","oauth","user"]'
+    REACT_MODULES='["common","infra","commerce","user"]'
+  fi
+  NEST_MODULES="${NEST_MODULES}" REACT_MODULES="${REACT_MODULES}" node -e '
+    const fs = require("fs");
+    const example = JSON.parse(fs.readFileSync("front/.libs/apptemplate/shared-modules.json.example", "utf8"));
+    example.nestcommon = JSON.parse(process.env.NEST_MODULES);
+    example.reactcommon = JSON.parse(process.env.REACT_MODULES);
+    fs.writeFileSync("shared-modules.json", JSON.stringify(example, null, 2) + "\n");
+  '
   ok "shared-modules.json written."
 fi
 
@@ -340,12 +328,16 @@ info "Generating package.json (front + back) from package.base.json + package.lo
 ( cd back && node .libs/apptemplate/scripts/build-package.mjs back )
 ok "package.json generated for front and back."
 
-info "Running npm install (front + back)..."
-if ! ( cd front && npm install ); then
-  warn "front: npm install failed — fix manually with 'cd front && npm install'."
-fi
-if ! ( cd back && npm install ); then
-  warn "back: npm install failed — fix manually with 'cd back && npm install'."
+if [[ "${VX_SKIP_INSTALL:-0}" == "1" ]]; then
+  warn "VX_SKIP_INSTALL=1 — npm install skipped."
+else
+  info "Running npm install (front + back)..."
+  if ! ( cd front && npm install ); then
+    warn "front: npm install failed — fix manually with 'cd front && npm install'."
+  fi
+  if ! ( cd back && npm install ); then
+    warn "back: npm install failed — fix manually with 'cd back && npm install'."
+  fi
 fi
 
 if git rev-parse --verify HEAD >/dev/null 2>&1; then
@@ -364,7 +356,9 @@ else
   ok "Initial commit created."
 fi
 
-if command -v gh >/dev/null 2>&1; then
+if [[ "${VX_SKIP_GITHUB:-0}" == "1" ]]; then
+  warn "VX_SKIP_GITHUB=1 — GitHub repository creation skipped."
+elif command -v gh >/dev/null 2>&1; then
   if gh repo view "${GITHUB_ORG}/${PROJECT_NAME}" >/dev/null 2>&1; then
     info "GitHub repository ${GITHUB_ORG}/${PROJECT_NAME} already exists — reusing it."
     if ! git remote get-url origin >/dev/null 2>&1; then

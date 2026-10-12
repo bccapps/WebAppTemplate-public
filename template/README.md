@@ -113,6 +113,15 @@ module (e.g. wagmi/Reown for `user`) live in its `package.fragment.json`, merged
 - **Configuration**: seeded to DB via `defaultConfig.ts` (project-specific) + `configSchema.ts` (module-level)
 - **Internationalization**: `back/src/locales/` — `common.*.json` + `custom.*.json`
 
+## Library scripts (vx-public / vx-private)
+
+| Script | Purpose |
+|---|---|
+| `scripts/create-project.sh [--with-private [--with-users]] <name> [dir]` | New project: mounts `vx-public` (+ `vx-private`) in `back/.libs` and `front/.libs`, `.libs/apptemplate` symlinks, `shared-modules.json`, env files. URLs: `VX_PUBLIC_URL` / `VX_PRIVATE_URL` (defaults: `https://github.com/bccapps/WebAppTemplate-{public,private}.git`) |
+| `scripts/update_common.sh [--push-only\|--pull-only]` | For each mounted library: commit local changes of the back mount, fetch, rebase on `origin/main`, push; then the same on the front mount; both end on the same SHA; the parent repo gets a `chore: bump <lib>` commit. Then symlinks, `package.json` regeneration. Refuses a legacy app (run the migration first) |
+| `scripts/migrate-to-webapptemplate.sh` | One-shot, idempotent migration of a legacy app (`nestcommon`/`reactcommon`/`apptemplate` submodules). Does not commit |
+| `scripts/deploy-full.sh` | Deploys the version of the libraries **pinned by the app commit** (`git submodule update --init`); warns when a pinned ref is behind `origin/main` |
+
 ## DB SSL Connection
 
 For cloud DB providers with self-signed certificates, place the certificate at `back/<cert-file>` and set `DB_SSLROOTCERT=<cert-file>` in your `.env`.

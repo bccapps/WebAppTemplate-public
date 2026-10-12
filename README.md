@@ -16,7 +16,7 @@ An opinionated full-stack web application template: a **NestJS + TypeORM + Postg
 ## Quick start
 
 ```bash
-./template/scripts/create-project.sh my-app ~/projects
+./template/scripts/create-project.sh my-app ~/projects        # add --with-private if you have access to WebAppTemplate-private
 ```
 
 The script scaffolds a monorepo (`front/`, `back/`), mounts the libraries under `back/.libs` and `front/.libs`,
@@ -55,6 +55,8 @@ node --test template/scripts/*.test.mjs template/tools/*.test.mjs
 node tools/check-boundaries.mjs --root . --stack-dirs nest,react --allowed tools/allowed.json
 node tools/license-headers.mjs --root . --license mit --check
 tools/ci-sandbox.sh        # builds an anonymous project (back + front) and runs the back tests
+SANDBOX_PRIVATE=fake tools/ci-sandbox.sh   # same, with a fake vx-private module importing common
+tools/ci-git-flow.sh       # create-project / update_common / deploy staging against local bare origins
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).

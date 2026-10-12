@@ -34,5 +34,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Git flow (create-project, update_common, deploy staging) against local origins
+        run: tools/ci-git-flow.sh
       - name: Build an anonymous project (back + front) and run back tests
         run: tools/ci-sandbox.sh
