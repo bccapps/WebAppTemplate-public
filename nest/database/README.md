@@ -38,23 +38,31 @@ Pas d'entités, de contrôleurs ni d'endpoints HTTP (module d'infrastructure pur
 Le projet reste responsable des **chemins** (résolus depuis son propre `__dirname`) ; le module
 ne déduit jamais ses chemins de sa propre localisation (il est symlinké/compilé dans chaque app).
 
-`back/src/config/Datasource.ts` (fichier local mince) :
+`back/src/config/Datasource.ts` (symlink du template, ou fichier local mince si le projet le surcharge) :
 
 ```ts
 import { join } from 'path';
 import { DataSource } from 'typeorm';
-import { buildMainDataSourceOptions, DbContext } from '../modules_shared/database';
+import { buildMainDataSourceOptions, DbContext } from 'src/modules_shared/database';
+
+// Le template est symlinké : sous ts-node `__dirname` est le chemin RÉEL (dans .libs/), pas back/src/config.
+const isTypeScriptRun = __filename.endsWith('.ts');
+const backDir = isTypeScriptRun ? process.cwd() : join(__dirname, '..', '..');   // back/
+const baseDir = isTypeScriptRun ? join(backDir, 'src') : join(__dirname, '..');  // src/ ou dist/
 
 export const dbContext: DbContext = {
-  baseDir: join(__dirname, '..'),                       // src/
-  certBaseDir: join(__dirname, '..', '..'),             // back/  (pour DB_SSLROOTCERT)
-  migrationGlobs: [join(__dirname, '../migrations/*.{js,ts}')],
+  baseDir,
+  certBaseDir: backDir,                                  // pour DB_SSLROOTCERT
+  migrationGlobs: [join(baseDir, 'migrations/*.{js,ts}')],
 };
 
 // Connexion "main" — aussi utilisée par le CLI TypeORM / migrations.
 const AppDataSource = new DataSource(buildMainDataSourceOptions(dbContext));
 export default AppDataSource;
 ```
+
+Un `Datasource.ts` **réel** (override projet, non symlinké) peut continuer à utiliser `join(__dirname, '..')`.
+Le CLI TypeORM / ts-node doit être lancé depuis `back/` avec `-r tsconfig-paths/register` (alias `src/`).
 
 `AppModule` :
 

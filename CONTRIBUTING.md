@@ -6,6 +6,6 @@
   `node tools/license-headers.mjs --root . --license mit` (and verify with `--check`).
 - **Boundaries**: public modules import only public modules. Run
   `node tools/check-boundaries.mjs --root . --stack-dirs nest,react --allowed tools/allowed.json`.
-- **Tests**: add or update tests with your change; run `tools/ci-sandbox.sh` before opening a pull request.
+- **Tests**: add or update tests with your change; run `tools/ci-sandbox.sh anonymous` before opening a pull request.
 - **Secrets**: never commit `.env*`, keys, certificates or database dumps.
 - **Module README**: update the module's `README.md` in the same commit when its exposed behavior changes.

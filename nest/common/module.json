@@ -1,0 +1,25 @@
+{
+  "id": "common",
+  "title": "Common",
+  "description": "Fournit l'infrastructure transversale du backend : configuration applicative, internationalisation, chiffrement des transports et notifications.",
+  "visibility": "public",
+  "category": "core",
+  "requires": [],
+  "env": [
+    "ADMIN_TOKEN",
+    "APP_ENV",
+    "CRYPT_DB_DERIVATION_SALT",
+    "CRYPT_DB_MASTER_KEY",
+    "CRYPT_SESSION_PRIVATE_KEY",
+    "CRYPT_SESSION_TTL_MS",
+    "CRYPT_STRICT",
+    "DISABLE_TRANSPORT_CRYPTO",
+    "NODE_ROLE",
+    "PROJECT_NAME",
+    "PROWL_API_KEY",
+    "PROWL_API_URL",
+    "REDIS_URL",
+    "SHARED_DIRECTORY"
+  ],
+  "questions": []
+}

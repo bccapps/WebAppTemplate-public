@@ -12,16 +12,22 @@
 set -euo pipefail
 
 # ============================================================
-# update_common.sh — Sync shared libraries (nestcommon + reactcommon)
+# update_common.sh — Sync the VXFramework libraries (vx-public + vx-private)
 #
-# 1. For each submodule: commit & push local changes (if any)
-# 2. Pull latest upstream commits into both submodules
-# 3. Commit updated submodule refs in the parent repo (if changed)
+# Each library R is mounted twice (back/.libs/R and front/.libs/R: two checkouts of
+# the same repo). For each R present in .gitmodules:
+#   1. detached HEAD  -> checkout main
+#   2. commit local changes of the BACK mount, fetch, rebase origin/main, push;
+#      then the same for the FRONT mount (it rebases on what back just pushed)
+#   3. both mounts end fast-forwarded on origin/main (same SHA, else error)
+#   4. bump the refs in the parent repo (commit "chore: bump R")
+# Then: .libs/apptemplate symlinks, root `scripts` symlink, CLAUDE.md/AGENTS.md,
+# package.json regeneration (+ npm install).
 #
 # Usage:
-#   ./scripts/update_common.sh           Normal sync (commit, pull/rebase, push, bump parent refs)
-#   ./scripts/update_common.sh --push-only  Commit & push local changes + bump parent refs, skip pull
-#   ./scripts/update_common.sh --pull-only  Pull only, skip push & parent ref bump
+#   ./scripts/update_common.sh              Normal sync (commit, pull/rebase, push, bump parent refs)
+#   ./scripts/update_common.sh --push-only  Commit & push local changes + bump refs, skip pull
+#   ./scripts/update_common.sh --pull-only  Pull only, skip commit/push & parent ref bump
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,259 +53,182 @@ for arg in "$@"; do
   case "${arg}" in
     --push-only) PUSH_ONLY=1 ;;
     --pull-only) PULL_ONLY=1 ;;
+    *) err "unknown option: ${arg}"; exit 2 ;;
   esac
 done
+if [[ ${PUSH_ONLY} -eq 1 && ${PULL_ONLY} -eq 1 ]]; then
+  err "--push-only and --pull-only are mutually exclusive"; exit 2
+fi
 
-# ---------- Submodule map: label → path ----------
-SUBMODULE_NAMES=("nestcommon" "reactcommon")
-
-get_submodule_path() {
-  case "$1" in
-    nestcommon)  echo "back/.libs/nestcommon" ;;
-    reactcommon) echo "front/.libs/reactcommon" ;;
-  esac
-}
-
+REPOS=("vx-public" "vx-private")
 DATE="$(date '+%Y-%m-%d %H:%M:%S')"
 any_error=0
 
-# ============================================================
-# STEP -1 — AppTemplate (HOMOGENEOUS: edited in .libs/apptemplate and pushed, just
-# like nestcommon/reactcommon). The repo is mounted twice (front + back) — we treat
-# front/.libs/apptemplate as the canonical working tree (commit + push), then sync
-# the back mount and the symlinked clone (APPTEMPLATE_DIR, used to RUN ./scripts/*).
-# SCRIPT_DIR resolves to the clone's scripts/ dir because scripts/ is a symlink.
-# ============================================================
-APPTEMPLATE_DIR="$(dirname "${SCRIPT_DIR}")"
-AT_CANONICAL="front/.libs/apptemplate"
-AT_MIRROR="back/.libs/apptemplate"
-AT_FULL="${PROJECT_ROOT}/${AT_CANONICAL}"
+in_gitmodules() {
+  [[ -f .gitmodules ]] && git config -f .gitmodules --get-regexp 'submodule\..*\.path' 2>/dev/null \
+    | awk '{print $2}' | grep -qx "$1"
+}
+is_checkout() { [[ -d "$1/.git" || -f "$1/.git" ]]; }
 
-if [[ -d "${AT_FULL}/.git" || -f "${AT_FULL}/.git" ]]; then
-  # Submodules default to detached HEAD; a tracked branch is needed to push.
-  at_branch="$(git -C "${AT_FULL}" branch --show-current 2>/dev/null || true)"
-  if [[ "${at_branch}" != "main" ]]; then
-    info "apptemplate: ${AT_CANONICAL} detached — switching to main..."
-    git -C "${AT_FULL}" checkout main 2>/dev/null || \
-      git -C "${AT_FULL}" checkout -b main origin/main 2>/dev/null || \
-      warn "apptemplate: could not switch to main — operations may fail"
-  fi
-
-  # STEP 1 — commit local changes (homogeneous with nestcommon/reactcommon)
-  if [[ ${PULL_ONLY} -eq 0 && -n "$(git -C "${AT_FULL}" status --porcelain 2>/dev/null)" ]]; then
-    info "apptemplate: committing local changes in ${AT_CANONICAL}..."
-    git -C "${AT_FULL}" add -A
-    git -C "${AT_FULL}" commit -m "chore: update app-template ${DATE}"
-  fi
-
-  # STEP 2 — sync with upstream, then push
-  if [[ ${PUSH_ONLY} -eq 0 ]] && git -C "${AT_FULL}" fetch origin 2>/dev/null; then
-    git -C "${AT_FULL}" merge --ff-only origin/main 2>/dev/null || \
-      git -C "${AT_FULL}" rebase origin/main 2>/dev/null || \
-      warn "apptemplate: could not fast-forward/rebase onto origin/main — resolve manually"
-  fi
-  if [[ ${PULL_ONLY} -eq 0 ]]; then
-    if git -C "${AT_FULL}" push origin HEAD:main 2>/dev/null; then
-      ok "apptemplate: pushed"
-    else
-      warn "apptemplate: nothing to push (or no write access)"
-    fi
-  fi
-fi
-
-# Mirror the back mount (second checkout of the same repo) to upstream.
-MIR_FULL="${PROJECT_ROOT}/${AT_MIRROR}"
-if [[ -d "${MIR_FULL}/.git" || -f "${MIR_FULL}/.git" ]]; then
-  git -C "${MIR_FULL}" checkout -- . 2>/dev/null || true
-  git -C "${MIR_FULL}" clean -fd 2>/dev/null || true
-  git -C "${PROJECT_ROOT}" submodule update --remote "${AT_MIRROR}" 2>/dev/null || \
-    warn "apptemplate: back mirror sync failed"
-fi
-
-# Ensure root-level symlinks (scripts/, CLAUDE.md) point at the canonical submodule
-# working tree so edits in .libs/ are immediately visible without a push/pull cycle.
-# If a symlink is tracked in git, record it so it gets included in the bump commit.
-root_links_changed=""
-for root_link in "scripts" "CLAUDE.md"; do
-  link_path="${PROJECT_ROOT}/${root_link}"
-  desired="${AT_CANONICAL}/${root_link}"   # relative from PROJECT_ROOT = symlink parent
-  if [[ -L "${link_path}" ]]; then
-    current="$(readlink "${link_path}")"
-    [[ "${current}" == "${desired}" ]] && continue
-    rm "${link_path}"
-  elif [[ -e "${link_path}" ]]; then
-    warn "apptemplate: ${root_link} is a real file/dir — not overwriting"
-    continue
-  fi
-  ln -sf "${desired}" "${link_path}"
-  ok "apptemplate: root symlink set: ${root_link} → ${desired}"
-  # If git tracks this file, stage it for the bump commit
-  if git -C "${PROJECT_ROOT}" ls-files --error-unmatch "${root_link}" >/dev/null 2>&1; then
-    root_links_changed="${root_links_changed} ${root_link}"
-  fi
-done
-
-# Record updated apptemplate submodule refs (and any redirected root symlinks) in the parent.
-at_refs_changed="${root_links_changed}"
-for at_path in "${AT_CANONICAL}" "${AT_MIRROR}"; do
-  git -C "${PROJECT_ROOT}" diff --quiet -- "${at_path}" 2>/dev/null || at_refs_changed="${at_refs_changed} ${at_path}"
-done
-if [[ -n "${at_refs_changed}" ]]; then
-  # shellcheck disable=SC2086
-  git -C "${PROJECT_ROOT}" add ${at_refs_changed}
-  if git -C "${PROJECT_ROOT}" diff --cached --quiet; then
-    ok "apptemplate: parent refs already current"
-  else
-    git -C "${PROJECT_ROOT}" commit -m "chore(deps): bump app-template submodule(s)"
-    ok "apptemplate submodule refs committed"
-  fi
-fi
-
-# Pull any new canonical common.* locale keys from AppTemplate into this app's own
-# back/src/locales/common.{en,fr}.json (never overwrites a differing app value — see
-# sync-common-locales.mjs). Runs after the apptemplate refresh above so it sees the latest.
-SYNC_LOCALES_SCRIPT="${AT_FULL}/scripts/sync-common-locales.mjs"
-if [[ -f "${SYNC_LOCALES_SCRIPT}" && -f "${PROJECT_ROOT}/back/src/locales/common.en.json" ]]; then
-  node "${SYNC_LOCALES_SCRIPT}" --root "${PROJECT_ROOT}"
-  if ! git -C "${PROJECT_ROOT}" diff --quiet -- back/src/locales/common.en.json back/src/locales/common.fr.json 2>/dev/null; then
-    git -C "${PROJECT_ROOT}" add back/src/locales/common.en.json back/src/locales/common.fr.json
-    git -C "${PROJECT_ROOT}" commit -m "chore(deps): sync common locales from app-template"
-    ok "common locales: synced from app-template"
-  fi
+# ---------- Legacy layout guard ----------
+if in_gitmodules "back/.libs/nestcommon" || in_gitmodules "front/.libs/reactcommon" \
+   || ! in_gitmodules "front/.libs/vx-public"; then
+  err "This app still uses the legacy layout (nestcommon / reactcommon / apptemplate submodules)."
+  err "Run scripts/migrate-to-webapptemplate.sh first."
+  exit 1
 fi
 
 # ============================================================
-# STEP 0 — Ensure each submodule is on the main branch
-# (submodules are normally checked out in detached HEAD state;
-#  bare `git push` fails without a tracked branch)
+# Per-mount operations
 # ============================================================
-for name in "${SUBMODULE_NAMES[@]}"; do
-  path="$(get_submodule_path "${name}")"
-  if [[ ! -d "${PROJECT_ROOT}/${path}/.git" && ! -f "${PROJECT_ROOT}/${path}/.git" ]]; then
-    continue
+ensure_main() {            # <name> <mount>
+  local name="$1" mount="$2" branch
+  branch="$(git -C "${mount}" branch --show-current 2>/dev/null || true)"
+  if [[ "${branch}" != "main" ]]; then
+    info "${name} (${mount}): switching to main..."
+    git -C "${mount}" checkout main 2>/dev/null \
+      || git -C "${mount}" checkout -b main origin/main 2>/dev/null \
+      || { err "${name} (${mount}): could not switch to main"; return 1; }
   fi
-  current_branch="$(git -C "${PROJECT_ROOT}/${path}" branch --show-current 2>/dev/null || true)"
-  if [[ -z "${current_branch}" || "${current_branch}" != "main" ]]; then
-    info "${name}: detached HEAD — switching to main branch..."
-    git -C "${PROJECT_ROOT}/${path}" checkout main 2>/dev/null || \
-      git -C "${PROJECT_ROOT}/${path}" checkout -b main origin/main 2>/dev/null || \
-      warn "${name}: could not switch to main — operations may fail"
+}
+
+# commit local changes, fetch, rebase on origin/main, push. Never forces.
+sync_mount() {             # <name> <mount>
+  local name="$1" mount="$2"
+  if [[ ${PULL_ONLY} -eq 0 && -n "$(git -C "${mount}" status --porcelain)" ]]; then
+    info "${name} (${mount}): committing local changes..."
+    git -C "${mount}" add -A
+    git -C "${mount}" commit -q -m "chore: update ${name} ${DATE}"
   fi
-done
-
-# ============================================================
-# STEP 1 — Commit & push local changes in each submodule
-# ============================================================
-if [[ ${PULL_ONLY} -eq 0 ]]; then
-  for name in "${SUBMODULE_NAMES[@]}"; do
-    path="$(get_submodule_path "${name}")"
-
-    # Skip if submodule not initialised
-    if [[ ! -d "${PROJECT_ROOT}/${path}/.git" && ! -f "${PROJECT_ROOT}/${path}/.git" ]]; then
-      warn "${name}: not initialised — run: git submodule update --init"
-      continue
-    fi
-
-    info "${name}: checking for local changes..."
-
-    # Collect untracked + modified files
-    local_changes="$(git -C "${PROJECT_ROOT}/${path}" status --porcelain 2>/dev/null || true)"
-
-    if [[ -z "${local_changes}" ]]; then
-      ok "${name}: nothing to commit"
-      continue
-    fi
-
-    info "${name}: staging all changes..."
-    git -C "${PROJECT_ROOT}/${path}" add -A
-
-    info "${name}: committing..."
-    git -C "${PROJECT_ROOT}/${path}" commit -m "chore: update common ${DATE}"
-    ok "${name}: committed (will push after upstream sync)"
-  done
-fi
-
-# ============================================================
-# STEP 2 — Sync submodules with upstream, then push
-#   --push-only : skips the fetch/ff-rebase (pull) but STILL pushes local commits.
-#   --pull-only : skips this whole block (no push, no parent ref bump).
-#   The push lives OUTSIDE the pull guard on purpose — putting it inside meant
-#   --push-only never actually pushed (and never bumped the parent refs).
-# ============================================================
-if [[ ${PULL_ONLY} -eq 0 ]]; then
-  for name in "${SUBMODULE_NAMES[@]}"; do
-    path="$(get_submodule_path "${name}")"
-
-    if [[ ! -d "${PROJECT_ROOT}/${path}/.git" && ! -f "${PROJECT_ROOT}/${path}/.git" ]]; then
-      continue
-    fi
-
-    # ---- Pull (fetch + fast-forward/rebase) — skipped in --push-only mode ----
-    if [[ ${PUSH_ONLY} -eq 0 ]]; then
-      info "${name}: fetching upstream..."
-      if git -C "${PROJECT_ROOT}/${path}" fetch origin 2>/dev/null; then
-        if git -C "${PROJECT_ROOT}/${path}" merge --ff-only origin/main 2>/dev/null; then
-          ok "${name}: fast-forwarded to origin/main"
-        else
-          warn "${name}: fast-forward not possible — trying rebase..."
-          if git -C "${PROJECT_ROOT}/${path}" rebase origin/main; then
-            ok "${name}: rebased successfully"
-          else
-            err "${name}: rebase failed — resolve conflicts in ${path}"
-            git -C "${PROJECT_ROOT}/${path}" rebase --abort 2>/dev/null || true
-            any_error=1
-            continue
-          fi
-        fi
-      else
-        warn "${name}: fetch failed (no network?) — skipping pull"
+  if [[ ${PUSH_ONLY} -eq 0 ]]; then
+    if ! git -C "${mount}" fetch -q origin; then
+      warn "${name} (${mount}): fetch failed (no network?) — skipping pull"
+    elif ! git -C "${mount}" merge -q --ff-only origin/main 2>/dev/null; then
+      info "${name} (${mount}): fast-forward impossible — rebasing on origin/main..."
+      if ! git -C "${mount}" rebase origin/main >/dev/null; then
+        git -C "${mount}" rebase --abort 2>/dev/null || true
+        err "${name} (${mount}): rebase conflict. Resolve manually in ${mount} (git rebase origin/main), then re-run. Nothing was forced."
+        return 1
       fi
     fi
-
-    # ---- Push (always attempted unless --pull-only) ----
-    info "${name}: pushing..."
-    if git -C "${PROJECT_ROOT}/${path}" push origin HEAD:main 2>/dev/null; then
-      ok "${name}: pushed"
-    else
-      err "${name}: push failed — check remote access (HTTPS credentials / write permission) or a non-fast-forward (re-run without --push-only to sync first)"
-      any_error=1
+  fi
+  if [[ ${PULL_ONLY} -eq 0 ]]; then
+    if ! git -C "${mount}" push -q origin HEAD:main; then
+      err "${name} (${mount}): push failed — check remote access or a non-fast-forward (re-run without --push-only)"
+      return 1
     fi
-  done
+  fi
+}
 
-  # ============================================================
-  # STEP 3 — Commit updated submodule refs in the parent repo
-  # ============================================================
-  changed_refs=""
-  for name in "${SUBMODULE_NAMES[@]}"; do
-    path="$(get_submodule_path "${name}")"
-    if ! git diff --quiet -- "${path}" 2>/dev/null; then
-      changed_refs="${changed_refs} ${path}"
+sync_repo() {              # <name>  — back first, then front
+  local name="$1" mount
+  for mount in "back/.libs/${name}" "front/.libs/${name}"; do
+    is_checkout "${mount}" || { warn "${name}: ${mount} not initialised — run: git submodule update --init"; return 0; }
+  done
+  for mount in "back/.libs/${name}" "front/.libs/${name}"; do
+    ensure_main "${name}" "${mount}" || return 1
+  done
+  for mount in "back/.libs/${name}" "front/.libs/${name}"; do
+    sync_mount "${name}" "${mount}" || return 1
+  done
+  if [[ ${PUSH_ONLY} -eq 0 ]]; then
+    # Final alignment: both mounts fast-forward on origin/main and must agree.
+    for mount in "back/.libs/${name}" "front/.libs/${name}"; do
+      git -C "${mount}" merge -q --ff-only origin/main 2>/dev/null \
+        || { err "${name} (${mount}): cannot fast-forward on origin/main (local unpushed commits?)"; return 1; }
+    done
+    local sha_back sha_front
+    sha_back="$(git -C "back/.libs/${name}" rev-parse HEAD)"
+    sha_front="$(git -C "front/.libs/${name}" rev-parse HEAD)"
+    if [[ "${sha_back}" != "${sha_front}" ]]; then
+      err "${name}: back (${sha_back:0:8}) and front (${sha_front:0:8}) mounts differ after sync."
+      return 1
     fi
-  done
+  fi
+  ok "${name}: in sync"
+}
 
-  if [[ -n "${changed_refs}" ]]; then
-    info "Updating submodule refs in parent repo..."
-    # shellcheck disable=SC2086
-    git add ${changed_refs}
-    git commit -m "chore(deps): update nestcommon + reactcommon submodule refs"
-    ok "Parent repo submodule refs committed"
-  else
-    ok "Parent repo submodule refs are already up-to-date"
+bump_repo() {              # <name>
+  local name="$1" paths=()
+  for mount in "back/.libs/${name}" "front/.libs/${name}"; do
+    git diff --quiet -- "${mount}" 2>/dev/null || paths+=("${mount}")
+  done
+  if (( ${#paths[@]} > 0 )); then
+    git add "${paths[@]}"
+    git commit -q -m "chore: bump ${name}"
+    ok "${name}: refs bumped in the parent repo"
+  fi
+}
+
+# ============================================================
+# 1. Libraries
+# ============================================================
+for repo in "${REPOS[@]}"; do
+  if ! in_gitmodules "back/.libs/${repo}" && ! in_gitmodules "front/.libs/${repo}"; then
+    continue
+  fi
+  if ! sync_repo "${repo}"; then any_error=1; continue; fi
+  if [[ ${PULL_ONLY} -eq 0 ]]; then bump_repo "${repo}"; fi
+done
+
+# ============================================================
+# 2. Symlinks: <stack>/.libs/apptemplate -> vx-public/template, root scripts
+# ============================================================
+tracked_links=""
+for stack in back front; do
+  link="${stack}/.libs/apptemplate"
+  if [[ -L "${link}" && "$(readlink "${link}")" == "vx-public/template" ]]; then continue; fi
+  if [[ -e "${link}" && ! -L "${link}" ]]; then
+    warn "${link} is a real file/directory — not overwriting"; continue
+  fi
+  rm -f "${link}"; ln -s vx-public/template "${link}"
+  ok "symlink set: ${link} -> vx-public/template"
+  tracked_links="${tracked_links} ${link}"
+done
+link="scripts"
+desired="front/.libs/apptemplate/scripts"
+if [[ -L "${link}" && "$(readlink "${link}")" != "${desired}" ]]; then
+  rm "${link}"
+fi
+if [[ ! -e "${link}" && ! -L "${link}" ]]; then
+  ln -s "${desired}" "${link}"; ok "symlink set: ${link} -> ${desired}"
+  if git ls-files --error-unmatch "${link}" >/dev/null 2>&1; then tracked_links="${tracked_links} ${link}"; fi
+fi
+if [[ -n "${tracked_links}" ]]; then
+  # shellcheck disable=SC2086
+  git add -f ${tracked_links} 2>/dev/null || true
+  if ! git diff --cached --quiet; then
+    git commit -q -m "chore: fix apptemplate symlinks"
+    ok "apptemplate symlinks committed"
+  fi
+fi
+
+# Root CLAUDE.md = real file of @imports (+ project notes); AGENTS.md = generated, git-ignored.
+if [[ -f back/.libs/apptemplate/scripts/project-docs.mjs ]]; then
+  node back/.libs/apptemplate/scripts/project-docs.mjs ensure "${PROJECT_ROOT}"
+  git add CLAUDE.md .gitignore 2>/dev/null || true
+  if ! git diff --cached --quiet -- CLAUDE.md .gitignore; then
+    git commit -q -m "chore: refresh CLAUDE.md imports" -- CLAUDE.md .gitignore
+    ok "CLAUDE.md imports refreshed"
+  fi
+fi
+
+# Pull new canonical common.* locale keys from the template into the app's own
+# back/src/locales/common.{en,fr}.json (never overwrites a differing app value).
+SYNC_LOCALES_SCRIPT="${PROJECT_ROOT}/back/.libs/apptemplate/scripts/sync-common-locales.mjs"
+if [[ -f "${SYNC_LOCALES_SCRIPT}" && -f "${PROJECT_ROOT}/back/src/locales/common.en.json" ]]; then
+  node "${SYNC_LOCALES_SCRIPT}" --root "${PROJECT_ROOT}"
+  if ! git diff --quiet -- back/src/locales/common.en.json back/src/locales/common.fr.json 2>/dev/null; then
+    git add back/src/locales/common.en.json back/src/locales/common.fr.json
+    git commit -q -m "chore(deps): sync common locales from the template"
+    ok "common locales: synced from the template"
   fi
 fi
 
 # ============================================================
-# STEP 4 — Regenerate package.json (back + front) from package.base.json
-# (just synced above) + package.local.json, and `npm install` if that
-# changed anything. Without this, a dependency added to package.base.json
-# only lands in the submodule checkout — the CONSUMING app's own
-# package.json/node_modules stay stale until this runs, which silently
-# breaks its build even though `update_common.sh` reported success.
-# Runs unconditionally (including --pull-only) since its whole point is
-# making a pull actually take effect locally; skipped per-stack if that
-# stack doesn't use the package.base.json/package.local.json system.
-# Real incident (2026-09-15): a project ran update_common.sh and still hit
-# "Cannot find module '@base-org/account/node'" — this step didn't exist yet.
+# 3. Regenerate package.json (back + front) from package.base.json + fragments +
+# package.local.json, and `npm install` if that changed anything. Runs
+# unconditionally (including --pull-only): its point is making a pull take effect locally.
 # ============================================================
 regenerate_and_install() {
   local stack="$1"
@@ -332,13 +261,13 @@ regenerate_and_install() {
   fi
   ok "${stack}: package.json regenerated + installed"
 
-  if ! git -C "${PROJECT_ROOT}" diff --quiet -- "${stack}/package.json" "${stack}/package-lock.json" 2>/dev/null; then
-    git -C "${PROJECT_ROOT}" add "${stack}/package.json" "${stack}/package-lock.json"
-    git -C "${PROJECT_ROOT}" commit -m "chore(deps): regenerate ${stack}/package.json from app-template"
+  if ! git diff --quiet -- "${stack}/package.json" "${stack}/package-lock.json" 2>/dev/null; then
+    git add "${stack}/package.json" "${stack}/package-lock.json"
+    git commit -q -m "chore(deps): regenerate ${stack}/package.json from the template"
     ok "${stack}: package.json/package-lock.json committed"
   fi
 
-  warn "${stack}: if the new dependency uses a subpath export (pkg/subpath) and moduleResolution is \"node\", you may still need to add a tsconfig.json \"paths\" entry by hand — see CLAUDE.md \"package.json is a GENERATED file\" section."
+  warn "${stack}: if a new dependency uses a subpath export (pkg/subpath) and moduleResolution is \"node\", you may still need a tsconfig.json \"paths\" entry by hand — see CLAUDE.md \"package.json is a GENERATED file\"."
 }
 
 regenerate_and_install back

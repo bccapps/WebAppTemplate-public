@@ -578,6 +578,19 @@ i18n.get('user.account.subscription.renewalText', [date]);
 | `i18n.get(key, params?)` | retourne `key` telle quelle si la clé est absente |
 | `i18n.getForLang(key, lang)` | lecture dans une langue précise, sans substitution |
 
+### Nom du site dans les libellés
+
+Les clés `common.banner.devNotice.*`, `common.disclaimer.footer` et `common.auth.signup` contiennent
+le joker `{0}` = nom du site. Côté front, le nom du site est la clé de locale `custom.app.name`
+(`back/src/locales/custom.<lang>.json`, rempli avec `{{SITE_NAME}}` à la création du projet) :
+
+```tsx
+<I18nLabel id="common.disclaimer.footer" params={[i18n.get('custom.app.name')]} />
+```
+
+Côté back (e-mails…), le nom provient de `BrandService.getSiteName()` (clé de config `common_brand_siteName`),
+transmis en paramètre de `LocaleService.translate(key, lang, [siteName])`.
+
 ### Rupture d'API (2026-08-30)
 
 Le prop `defaultLabel` de `<I18nLabel>` et le 2ᵉ argument `defaultLabel` de `i18n.get()`

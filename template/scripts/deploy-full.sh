@@ -669,12 +669,13 @@ require_cmd git
 # ======================
 # SHARED LIB SUBMODULES
 # ======================
-# Ensure the shared-library git submodules (.libs/{nestcommon,reactcommon}) are
-# present BEFORE staging the build context. Staging uses `rsync -aL`, which
-# dereferences the `src/modules_shared/*` symlinks into `.libs/*`; on a fresh
-# checkout those submodules are empty → dangling symlinks → the build fails.
-# Idempotent. No-op for projects not yet migrated to submodules (no .gitmodules).
+# Ensure the shared-library git submodules (.libs/{vx-public,vx-private}) are present
+# BEFORE staging the build context. Staging uses `rsync -aL`, which dereferences the
+# `src/modules_shared/*` symlinks and `.libs/apptemplate` into the library checkouts; on
+# a fresh checkout those submodules are empty → dangling symlinks → the build fails.
+# Idempotent. No-op for projects without .gitmodules.
 # Works for monorepos (one .gitmodules at root) and split back/front repos.
+
 __seen_submodule_tops=""
 for __side in back front; do
   [[ -d "./${__side}" ]] || continue

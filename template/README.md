@@ -113,6 +113,59 @@ module (e.g. wagmi/Reown for `user`) live in its `package.fragment.json`, merged
 - **Configuration**: seeded to DB via `defaultConfig.ts` (project-specific) + `configSchema.ts` (module-level)
 - **Internationalization**: `back/src/locales/` — `common.*.json` + `custom.*.json`
 
+## Create a project
+
+```bash
+./template/scripts/create-project.sh            # interactive wizard (Node >= 20, no dependency)
+./template/scripts/create-project.sh my-app ~/projects --yes --entity "Acme" --email me@acme.io
+./template/scripts/create-project.sh --answers project.config.json --yes     # replay / CI
+./template/scripts/create-project.sh --dry-run ...                           # print the plan, write nothing
+```
+
+The wizard **never edits code**: it picks modules and produces configuration; the wiring goes through the modules'
+plugins (`plugin.ts` / `plugin.tsx`). Questions (Enter = default; each has a CLI equivalent, see `--help`):
+
+| # | Question | Effect |
+|---|---|---|
+| 1 | name, site name, publisher entity, contact email, ports | placeholders, `.env.dev` |
+| 2 | access to the private modules? | mounts `vx-private` (`--private`) |
+| 3 | **multi-user application** (accounts, login)? | yes: the `user` module and what it `requires`; no: anonymous mode, `ADMIN_TOKEN` generated in `back/.env.dev` |
+| 3a-c | login methods, sign-up (open / invitation / waiting list), several organizations | seeded values in `back/src/config/defaultConfig.ts` (+ `waitlist` / `tenant` modules); declared by the `user` manifest |
+| 4 | **selling** (products, subscriptions)? | `features.commerce.enabled` seeded `true` / `false` (the `commerce` module comes with `user` anyway: hidden, not removed); needs multi-user |
+| 5 | functional modules (grouped by category, with description) | closure of `requires` shown before confirmation |
+| 6 | database (selfhosted / cloud / supabase / neon), Redis | `DATABASE_ENGINE`, `.env` blocks |
+| 7 | languages | `back/src/locales/custom.<lang>.json`, `localesLanguages`, `localeDefault` |
+| 8 | recap | confirmation, then generation |
+
+Files produced: `shared-modules.json`, `project.config.json` (the answers: replay or add a module later),
+`back/.env.dev` + `back/.env.example` and `front/.env.dev` + `front/.env.example` (the `# @module <id>` ... `# @end`
+blocks of the template examples are kept only for the linked modules; `# @module !user` = "when `user` is NOT linked"),
+`back/src/config/defaultConfig.ts`. Inconsistent answers are refused with a message (private module without private access,
+selling without accounts, unknown module...).
+
+Module manifest `<nest|react>/<module>/module.json`: `id`, `title`, `description`, `visibility`, `category`
+(`core|users|business|ai|content|other`), `requires` (verified against the real imports by
+`tools/check-boundaries.mjs --check-manifests`), `env` (variables added to `.env.example`), `questions` (module-specific
+wizard questions with their effects: `config`, `configJson`, `env`, `modules`).
+
+Add or remove a module later (no code file is modified; `shared-modules.json`, `.env.example` blocks, `defaultConfig.ts`,
+`package.json` and the module links are updated):
+
+```bash
+node scripts/add-module.mjs voice
+node scripts/add-module.mjs --remove voice      # refused when another linked module requires it
+```
+
+## Library scripts (vx-public / vx-private)
+
+| Script | Purpose |
+|---|---|
+| `scripts/create-project.sh [options] [<name> [dir]]` | New project (wizard above): mounts `vx-public` (+ `vx-private`) in `back/.libs` and `front/.libs`, `.libs/apptemplate` symlinks, `shared-modules.json`, env files. URLs: `VX_PUBLIC_URL` / `VX_PRIVATE_URL` (defaults: `https://github.com/bccapps/WebAppTemplate-{public,private}.git`) |
+| `scripts/add-module.mjs <id>... [--remove]` | Add / remove shared modules in an existing project |
+| `scripts/update_common.sh [--push-only\|--pull-only]` | For each mounted library: commit local changes of the back mount, fetch, rebase on `origin/main`, push; then the same on the front mount; both end on the same SHA; the parent repo gets a `chore: bump <lib>` commit. Then symlinks, `package.json` regeneration. Refuses a legacy app (run the migration first) |
+| `scripts/migrate-to-webapptemplate.sh` | One-shot, idempotent migration of a legacy app (`nestcommon`/`reactcommon`/`apptemplate` submodules). Does not commit |
+| `scripts/deploy-full.sh` | Deploys with the **latest `main`** of the libraries (`git submodule update --init --remote`), not the refs pinned by the app commit |
+
 ## DB SSL Connection
 
 For cloud DB providers with self-signed certificates, place the certificate at `back/<cert-file>` and set `DB_SSLROOTCERT=<cert-file>` in your `.env`.
