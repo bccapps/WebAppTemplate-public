@@ -45,11 +45,12 @@ mkdir -p "${WD}/origins"
 make_origin public "${REPO}"
 make_origin private "${WD}/fake-private"
 export VX_PUBLIC_URL="${WD}/origins/public.git" VX_PRIVATE_URL="${WD}/origins/private.git"
-export VX_SKIP_INSTALL=1 VX_SKIP_GITHUB=1
+export VX_SKIP_GITHUB=1
 
 info "create-project.sh --with-private"
 mkdir -p "${WD}/proj"
-printf '\n\nCI Entity\nci@example.com\n\n\n\n' | "${REPO}/template/scripts/create-project.sh" --with-private demo "${WD}/proj" >/dev/null
+"${REPO}/template/scripts/create-project.sh" --yes --with-private --entity "CI Entity" --email ci@example.com \
+  --modules fakemod --no-install --no-github demo "${WD}/proj" >/dev/null
 APP="${WD}/proj/demo"; cd "${APP}"
 for s in back front; do
   [[ -d "${s}/.libs/vx-public/template" && -d "${s}/.libs/vx-private/nest/fakemod" ]] || fail "${s}: mounts missing"
@@ -58,6 +59,9 @@ for s in back front; do
 done
 [[ "$(git config -f .gitmodules --get-regexp 'submodule\..*\.path' | wc -l | tr -d ' ')" == "4" ]] || fail "expected 4 submodules"
 
+[[ ! -L CLAUDE.md && -f CLAUDE.md ]] || fail "CLAUDE.md must be a real file"
+grep -q '^@front/.libs/vx-private/CLAUDE.private.md' CLAUDE.md || fail "private import missing"
+git check-ignore -q AGENTS.md || fail "AGENTS.md must be git-ignored"
 info "update_common.sh --pull-only (nothing new)"
 scripts/update_common.sh --pull-only >/dev/null
 

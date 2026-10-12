@@ -1,0 +1,16 @@
+{
+  "id": "common",
+  "title": "Common",
+  "description": "This module contains common services and utils used by other modules.",
+  "visibility": "public",
+  "category": "core",
+  "requires": [],
+  "env": [
+    "ADMIN_TOKEN",
+    "VITE_APP_ENV",
+    "VITE_PROJECT_NAME",
+    "VITE_PROWL_API_KEY",
+    "VITE_PROWL_API_URL"
+  ],
+  "questions": []
+}

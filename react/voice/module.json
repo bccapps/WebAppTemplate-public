@@ -1,0 +1,12 @@
+{
+  "id": "voice",
+  "title": "Voice",
+  "description": "Frontend counterpart of the nestcommon/voice module.",
+  "visibility": "public",
+  "category": "ai",
+  "requires": [
+    "common"
+  ],
+  "env": [],
+  "questions": []
+}

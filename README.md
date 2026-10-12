@@ -11,7 +11,7 @@ An opinionated full-stack web application template: a **NestJS + TypeORM + Postg
 | `nest/common`, `react/common` | Core modules (configuration, i18n, HTTP, crypto transport, email, theming...) |
 | `nest/database` | Multi-connection TypeORM helpers |
 | `nest/voice`, `react/voice` | Voice module |
-| `tools/` | `check-boundaries.mjs`, `license-headers.mjs`, `ci-sandbox.sh`, `allowed.json` |
+| `tools/` | `check-boundaries.mjs`, `license-headers.mjs`, `ci-sandbox.sh`, `ci-git-flow.sh`, `allowed.json` |
 
 ## Quick start
 
@@ -53,9 +53,10 @@ error. Rule: a public module never imports a private one; a private module may i
 ```bash
 node --test template/scripts/*.test.mjs template/tools/*.test.mjs
 node tools/check-boundaries.mjs --root . --stack-dirs nest,react --allowed tools/allowed.json
+node tools/check-boundaries.mjs --root . --stack-dirs nest,react --check-manifests --visibility public
 node tools/license-headers.mjs --root . --license mit --check
-tools/ci-sandbox.sh        # builds an anonymous project (back + front) and runs the back tests
-SANDBOX_PRIVATE=fake tools/ci-sandbox.sh   # same, with a fake vx-private module importing common
+tools/ci-sandbox.sh anonymous      # wizard-created anonymous project: builds back + front, runs the back tests
+tools/ci-sandbox.sh multi-users    # same with multi-user accounts + sales, using a fake vx-private (SANDBOX_PRIVATE=<dir> for a real one)
 tools/ci-git-flow.sh       # create-project / update_common / deploy staging against local bare origins
 ```
 

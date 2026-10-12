@@ -1,0 +1,12 @@
+{
+  "id": "voice",
+  "title": "Voice",
+  "description": "Provides Text-to-Speech (TTS), Speech-to-Text (STT), and Speech-to-Speech (S2S) services with multiple provider backends.",
+  "visibility": "public",
+  "category": "ai",
+  "requires": [
+    "common"
+  ],
+  "env": [],
+  "questions": []
+}

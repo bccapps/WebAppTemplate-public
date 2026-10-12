@@ -36,7 +36,10 @@ module.exports = async () => {
     moduleFileExtensions: ['js', 'json', 'ts'],
     rootDir: path.join(stackDir, 'src'),
     testRegex: '.*\\.spec\\.ts$',
-    transform: { '^.+\\.(t|j)s$': 'ts-jest' },
+    // Type errors of vx-private files are not reported by ts-jest: TypeScript resolves their relative
+    // imports of public modules (`../../common/...`) from the real path, where they do not exist
+    // (jest-resolver.cjs fixes the runtime side; `nest build` type-checks the sources through the links).
+    transform: { '^.+\\.(t|j)s$': ['ts-jest', { diagnostics: { exclude: ['**/.libs/vx-private/**'] } }] },
     collectCoverageFrom: ['**/*.(t|j)s'],
     coverageDirectory: '../coverage',
     testEnvironment: 'node',
@@ -44,6 +47,8 @@ module.exports = async () => {
     transformIgnorePatterns: ['node_modules/(?!(.*/)?(@noble|@scure)/)'],
     moduleNameMapper: { '^src/(.*)$': '<rootDir>/$1' },
     setupFiles: ['<rootDir>/test-setup.ts'],
+    // vx-private specs import vx-public modules by relative path: see scripts/jest-resolver.cjs
+    resolver: path.join(__dirname, '..', 'scripts', 'jest-resolver.cjs'),
   };
   return mergeJestConfig(shared, readLocalJest(stackDir));
 };

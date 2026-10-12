@@ -1,0 +1,18 @@
+{
+  "id": "database",
+  "title": "Database",
+  "description": "Socle multi-base de données partagé entre tous les projets VXFramework (React/Nest).",
+  "visibility": "public",
+  "category": "core",
+  "requires": [],
+  "env": [
+    "DATABASE_ENGINE",
+    "DB_CONNECTIONS",
+    "DB_MODULE_ROUTING",
+    "DB_POOLSIZE",
+    "DB_SSLMODE",
+    "DB_SSLROOTCERT",
+    "TYPEORM_SYNC"
+  ],
+  "questions": []
+}
