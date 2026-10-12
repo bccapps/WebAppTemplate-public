@@ -23,10 +23,13 @@ jobs:
         run: node tools/check-boundaries.mjs --root . --stack-dirs nest,react --check-manifests --visibility public
       - name: License headers
         run: node tools/license-headers.mjs --root . --license mit --check
+      # The gitleaks GitHub Action needs a paid license for organizations; the open-source CLI does not.
       - name: Secret scan
-        uses: gitleaks/gitleaks-action@v2
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" dir . --redact --exit-code 1
 
   sandbox:
     runs-on: ubuntu-latest
