@@ -134,6 +134,9 @@ sync_repo() {              # <name>  — back first, then front
   if [[ ${PUSH_ONLY} -eq 0 ]]; then
     # Final alignment: both mounts fast-forward on origin/main and must agree.
     for mount in "back/.libs/${name}" "front/.libs/${name}"; do
+      # Refresh the remote ref first: the second mount pushed on top of the first one, whose `origin/main`
+      # would otherwise be stale (false "mounts differ" when both mounts had local changes).
+      git -C "${mount}" fetch -q origin 2>/dev/null || true
       git -C "${mount}" merge -q --ff-only origin/main 2>/dev/null \
         || { err "${name} (${mount}): cannot fast-forward on origin/main (local unpushed commits?)"; return 1; }
     done
