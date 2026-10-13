@@ -39,6 +39,16 @@ export const DB_ENGINE_LABELS = {
 export const dbFamily = (engine) => (engine === 'sqlite' ? 'sqlite' : 'postgres');
 export const REGISTRATION_MODES = { open: 'open', invitation: 'invite-only', waitlist: 'manual' };
 export const ANSWERS_SCHEMA_VERSION = 1;
+/** Neutral PWA colors (replaced by the project's own through `pwa.themeColor` / `pwa.backgroundColor`). */
+export const PWA_DEFAULT_COLORS = { themeColor: '#1976d2', backgroundColor: '#ffffff' };
+/** Dev dependencies added to front/package.local.json when the PWA is enabled. */
+export const PWA_DEV_DEPENDENCIES = {
+  '@vite-pwa/assets-generator': '^1.0.2',
+  'vite-plugin-pwa': '^1.3.0',
+  'workbox-core': '^7.4.1',
+  'workbox-precaching': '^7.4.1',
+  'workbox-routing': '^7.4.1',
+};
 
 const isDir = (p) => {
   try {
@@ -143,6 +153,7 @@ export function dependentsOf(catalog, id, linked) {
 // ---------------------------------------------------------------------------
 
 const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const LANG = /^[a-z]{2}(-[A-Z]{2})?$/;
 
@@ -154,6 +165,7 @@ export function normalizeAnswers(input = {}) {
   a.privateAccess = Boolean(a.privateAccess);
   a.multiUser = Boolean(a.multiUser);
   a.localTrust = Boolean(a.localTrust);
+  a.pwa = { ...(a.pwa ?? {}), enabled: Boolean(a.pwa?.enabled) };
   a.modules = [...new Set(a.modules ?? [])];
   a.database = { engine: 'selfhosted', redis: false, ...(a.database ?? {}) };
   a.languages = a.languages?.length ? a.languages : ['fr', 'en'];
@@ -254,6 +266,7 @@ export function validateAnswers(rawAnswers, catalog) {
   if (!(a.database.engine in DB_ENGINES)) errors.push(`database.engine must be one of ${Object.keys(DB_ENGINES).join(' | ')}`);
   for (const l of a.languages) if (!LANG.test(l)) errors.push(`language "${l}" is not a valid language code (fr, en, pt-BR...)`);
   if (a.multiUser && !a.privateAccess) errors.push('multiUser requires privateAccess (the user module lives in vx-private)');
+  errors.push(...validatePwa(a));
 
   const resolved = resolveModules(catalog, selectedModules(a));
   errors.push(...resolved.errors);
@@ -269,6 +282,99 @@ export function validateAnswers(rawAnswers, catalog) {
   }
   errors.push(...validateQuestionAnswers(a, catalog, resolved.ids));
   return errors;
+}
+
+// ---------------------------------------------------------------------------
+// PWA (installable app, optional)
+// ---------------------------------------------------------------------------
+
+/** Short name shown under the home-screen icon: the display name, cut to 12 characters. */
+const defaultShortName = (name) => (name.length > 12 ? name.slice(0, 12).trim() : name);
+
+/**
+ * Complete `pwa` section of the answers: `{ enabled, name, shortName, themeColor, backgroundColor }`.
+ * `name` defaults to the site name, `shortName` to its first 12 characters, the colors to a neutral pair.
+ */
+export function resolvePwa(rawAnswers) {
+  const a = normalizeAnswers(rawAnswers);
+  const name = (a.pwa.name || a.siteName || a.projectName || '').trim();
+  return {
+    enabled: a.pwa.enabled,
+    name,
+    shortName: (a.pwa.shortName || defaultShortName(name)).trim(),
+    themeColor: a.pwa.themeColor || PWA_DEFAULT_COLORS.themeColor,
+    backgroundColor: a.pwa.backgroundColor || PWA_DEFAULT_COLORS.backgroundColor,
+  };
+}
+
+/** Messages for an inconsistent `pwa` section; empty when the PWA is disabled. */
+export function validatePwa(rawAnswers) {
+  const a = normalizeAnswers(rawAnswers);
+  if (!a.pwa.enabled) return [];
+  const pwa = resolvePwa(a);
+  const errors = [];
+  if (!pwa.name) errors.push('pwa.name is required when the PWA is enabled (it defaults to the site name)');
+  if (pwa.shortName.length > 12) errors.push(`pwa.shortName "${pwa.shortName}" is longer than 12 characters (home-screen labels get truncated)`);
+  if (!pwa.shortName) errors.push('pwa.shortName must not be empty');
+  for (const key of ['themeColor', 'backgroundColor']) {
+    if (!HEX_COLOR.test(pwa[key])) errors.push(`pwa.${key} "${pwa[key]}" must be a #rrggbb color`);
+  }
+  return errors;
+}
+
+/** Content of front/package.local.json: the PWA packages are only added when the PWA is enabled. */
+export function frontPackageLocal(rawAnswers) {
+  const a = normalizeAnswers(rawAnswers);
+  const pkg = { name: `${a.projectName}-front`, version: '0.1.0', scripts: { dev: 'vite --mode dev', build: 'tsc -b && vite build' } };
+  if (a.pwa.enabled) {
+    pkg.scripts['pwa:icons'] = 'pwa-assets-generator --config pwa-assets.config.ts';
+    pkg.devDependencies = { ...PWA_DEV_DEPENDENCIES };
+  }
+  return pkg;
+}
+
+const PWA_MARKER = /^\s*(?:\/\/|#|<!--|\{\/\*)\s*\{\{([#/])PWA\}\}\s*(?:-->|\*\/\})?\s*$/;
+
+/**
+ * Keep or drop the `{{#PWA}}` ... `{{/PWA}}` blocks of a template file. Each marker sits alone on a
+ * line, wrapped in the comment syntax of the file (`// `, `# `, `<!-- -->`, `{/* *\/}`), so an
+ * unprocessed template stays a valid file. Markers are always removed; the block body only when enabled.
+ */
+export function filterPwaBlocks(text, enabled) {
+  const out = [];
+  let inBlock = false;
+  for (const line of text.split('\n')) {
+    const marker = line.match(PWA_MARKER);
+    if (marker) {
+      if ((marker[1] === '#') === inBlock) throw new Error(`unbalanced PWA marker: ${line.trim()}`);
+      inBlock = marker[1] === '#';
+      continue;
+    }
+    if (!inBlock || enabled) out.push(line);
+  }
+  if (inBlock) throw new Error('unterminated {{#PWA}} block');
+  return out.join('\n');
+}
+
+const escapeHtml = (v) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/** Placeholder values of the PWA templates (`_JSON` = quoted TS/JSON string, `_HTML` = attribute-safe text). */
+export function pwaPlaceholders(pwa) {
+  return {
+    '{{PWA_NAME_JSON}}': JSON.stringify(pwa.name),
+    '{{PWA_SHORT_NAME_JSON}}': JSON.stringify(pwa.shortName),
+    '{{PWA_NAME_HTML}}': escapeHtml(pwa.name),
+    '{{PWA_SHORT_NAME_HTML}}': escapeHtml(pwa.shortName),
+    '{{PWA_THEME_COLOR}}': pwa.themeColor,
+    '{{PWA_BACKGROUND_COLOR}}': pwa.backgroundColor,
+  };
+}
+
+/** Apply the PWA blocks and placeholders of one template file. Pure. */
+export function renderPwaTemplate(text, pwa) {
+  let out = filterPwaBlocks(text, pwa.enabled);
+  for (const [token, value] of Object.entries(pwaPlaceholders(pwa))) out = out.replaceAll(token, () => value);
+  return out;
 }
 
 /** True when a catalog entry works with the wizard database choice (`databases` absent = every engine). */

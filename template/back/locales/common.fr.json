@@ -293,6 +293,8 @@
   "app.header.alerts.title": "Alertes",
   "app.header.alerts.pending": "Opérations en attente",
   "app.header.alerts.failed": "Opérations en échec",
+  "app.header.install": "Installer l'application",
+  "app.header.install.ios": "Installer : menu Partager du navigateur, puis Sur l'écran d'accueil",
   "modules.tokensApi.name": "Sources de données tokens",
   "blockchain.admin.indicators.title": "Indicateurs",
   "blockchain.admin.indicators.subtitle": "Gérez le catalogue des indicateurs blockchain",

@@ -293,6 +293,8 @@
   "app.header.alerts.title": "Alerts",
   "app.header.alerts.pending": "Pending swaps",
   "app.header.alerts.failed": "Failed swaps",
+  "app.header.install": "Install the app",
+  "app.header.install.ios": "Install: use the browser Share menu, then Add to Home Screen",
   "modules.tokensApi.name": "Token data sources",
   "blockchain.admin.indicators.title": "Indicators",
   "blockchain.admin.indicators.subtitle": "Manage blockchain indicator catalog",

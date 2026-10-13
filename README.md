@@ -21,6 +21,7 @@ An opinionated full-stack web application template: a **NestJS + TypeORM + Postg
 
 The script scaffolds a monorepo (`front/`, `back/`), mounts the libraries under `back/.libs` and `front/.libs`,
 generates the `.env.dev` files and installs dependencies. Then `./scripts/run.sh dev` starts everything.
+The front gets `public/` files (`robots.txt`, `_redirects`, `_headers`, favicon), a one-shot reload after a deployment (`vite:preloadError`), and optionally an installable app (`--pwa`, see `template/README.md`).
 
 Libraries are mounted in **each** stack (Node resolves dependencies from the real path of a file):
 

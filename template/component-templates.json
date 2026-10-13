@@ -1,8 +1,12 @@
 {
-  "_doc": "Manifest consumed ONLY by scripts/create-project.sh, at project creation time. Unlike config-links.json (symlink, resynced on every link-config.mjs run, real-file override skips it), this manifest COPIES each source file once into a brand-new project and substitutes {{SITE_NAME}}, {{ENTITY_NAME}}, {{CONTACT_EMAIL}} and {{PROJECT_NAME}} with the values collected by the create-project.sh prompts. The resulting files are plain, project-owned files from that point on — no tool ever re-copies or re-links them after creation, so they are safe to customize freely (Header, Footer, PageLayout, Router, Title, landing page, legal placeholder pages, minimal front/back bootstrap). Paths are relative to this submodule root (source) and to the new project root (target).",
+  "_doc": "Manifest consumed ONLY by scripts/create-project.sh, at project creation time. Unlike config-links.json (symlink, resynced on every link-config.mjs run, real-file override skips it), this manifest COPIES each source file once into a brand-new project and substitutes {{SITE_NAME}}, {{ENTITY_NAME}}, {{CONTACT_EMAIL}} and {{PROJECT_NAME}} with the values collected by the create-project.sh prompts. The resulting files are plain, project-owned files from that point on — no tool ever re-copies or re-links them after creation, so they are safe to customize freely (Header, Footer, PageLayout, Router, Title, landing page, legal placeholder pages, minimal front/back bootstrap). The \"pwa\" group is copied only when project.config.json has pwa.enabled; in every copied file the {{#PWA}} ... {{/PWA}} blocks are kept or dropped accordingly and the {{PWA_*}} placeholders filled (see filterPwaBlocks in scripts/lib/project-engine.mjs). Paths are relative to this submodule root (source) and to the new project root (target).",
   "front": {
     "front/index.html": "front/index.html",
     "front/vite.config.ts": "front/vite.config.ts",
+    "front/public/robots.txt": "front/public/robots.txt",
+    "front/public/_redirects": "front/public/_redirects",
+    "front/public/_headers": "front/public/_headers",
+    "front/public/favicon.svg": "front/public/favicon.svg",
     "front/src/components/Title.tsx": "front/src/components/Title.tsx",
     "front/src/components/Footer.tsx": "front/src/components/Footer.tsx",
     "front/src/components/Router.tsx": "front/src/components/Router.tsx",
@@ -28,6 +32,12 @@
     "front/src/styles/theme_default.css": "front/src/styles/theme_default.css",
     "front/src/themes/index.ts": "front/src/themes/index.ts",
     "front/src/themes/default/index.ts": "front/src/themes/default/index.ts"
+  },
+  "pwa": {
+    "front/pwa.plugin.ts": "front/pwa.plugin.ts",
+    "front/pwa-assets.config.ts": "front/pwa-assets.config.ts",
+    "front/src/sw.ts": "front/src/sw.ts",
+    "front/src/components/PwaInstallButton.tsx": "front/src/components/PwaInstallButton.tsx"
   },
   "back": {
     "back/src/main.ts": "back/src/main.ts",

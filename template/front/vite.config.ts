@@ -9,5 +9,13 @@
 
 import { createViteConfig } from './viteConfig'
 import { Configuration } from './src/config/config'
+// {{#PWA}}
+import { pwaPlugin } from './pwa.plugin'
+// {{/PWA}}
 
-export default createViteConfig({ configuration: Configuration })
+export default createViteConfig({
+  configuration: Configuration,
+  // {{#PWA}}
+  extraPlugins: [pwaPlugin],
+  // {{/PWA}}
+})

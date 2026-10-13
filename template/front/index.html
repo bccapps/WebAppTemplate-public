@@ -2,9 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/images/favicon.ico" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{{SITE_NAME}}</title>
+    <!-- {{#PWA}} -->
+    <!-- The manifest <link> is injected by vite-plugin-pwa (dev and build): do not hardcode it. -->
+    <meta name="theme-color" content="{{PWA_THEME_COLOR}}" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="{{PWA_SHORT_NAME_HTML}}" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon-180x180.png" />
+    <!-- {{/PWA}} -->
   </head>
   <body>
     <div id="root"></div>

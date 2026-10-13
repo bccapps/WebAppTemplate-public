@@ -27,6 +27,9 @@ import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
 import { detectLocalTrust, sessionAuth } from '@/modules_shared/common/auth/sessionAuth';
 import { appPlugins, userManagementEnabled } from '@/plugins';
 import { Title } from './Title';
+// {{#PWA}}
+import { PwaInstallButton } from './PwaInstallButton';
+// {{/PWA}}
 import { I18nLabel } from '@/modules_shared/common/components/ui/label/I18nLabel';
 import { useSessionKeys } from '@/modules_shared/common/hooks/useSessionKeys';
 
@@ -167,6 +170,9 @@ export function Header({ alertsCount = 0 }: HeaderProps) {
                 </IconButton>
               </Tooltip>
             )}
+            {/* {{#PWA}} */}
+            <PwaInstallButton />
+            {/* {{/PWA}} */}
             {appPlugins.map((p) => (p.HeaderActions ? <p.HeaderActions key={p.id} /> : null))}
           </Box>
         </Box>

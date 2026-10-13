@@ -160,6 +160,7 @@ plugins (`plugin.ts` / `plugin.tsx`). Questions (Enter = default; each has a CLI
 | 4b | **monitoring / health / Redis cache** (`infra`)? | adds the `infra` module (default yes when multi-user, else no) |
 | 5 | functional modules (grouped by category, with description) | closure of `requires` shown before confirmation |
 | 6 | database (selfhosted / cloud / supabase / neon / **sqlite**), Redis (default no) | `DATABASE_ENGINE`, `.env` blocks; sqlite: `DB_PATH=data/<project>.db`, no `DB_*` Postgres variables, `better-sqlite3` in `back/package.local.json`. The question is asked **before** the modules: those that do not support the engine are not offered |
+| 6b | **installable app (PWA)?** (`--pwa` / `--no-pwa`, default no; `--pwa-name`, `--pwa-short-name` (12 characters at most), `--pwa-theme-color`, `--pwa-background-color`) | writes the `pwa` section of `project.config.json` (`enabled`, `name`, `shortName`, `themeColor`, `backgroundColor`; name defaults to the site name, colors to a neutral pair); enabled: copies `front/pwa.plugin.ts`, `front/pwa-assets.config.ts`, `front/src/sw.ts`, `front/src/components/PwaInstallButton.tsx`, keeps the PWA tags of `front/index.html`, the `Header` button and the PWA lines of `front/public/_headers`, and adds `vite-plugin-pwa`, `@vite-pwa/assets-generator`, `workbox-*` and the `pwa:icons` script to `front/package.local.json` (see « Front public files and PWA ») |
 | 7 | languages | `back/src/locales/custom.<lang>.json`, `localesLanguages`, `localeDefault` |
 | 8 | recap | confirmation, then generation |
 
@@ -168,6 +169,24 @@ Files produced: `shared-modules.json`, `project.config.json` (the answers: repla
 blocks of the template examples are kept only for the linked modules; `# @module !user` = "when `user` is NOT linked"),
 `back/src/config/defaultConfig.ts`. Inconsistent answers are refused with a message (private module without private access,
 selling without accounts, a module that does not support the chosen database, unknown module...).
+
+### Front public files and PWA
+
+Every project gets `front/public/` (copied once, then project-owned): `robots.txt` (allow all), `_redirects` (SPA fallback
+`/*  /index.html  200` for Cloudflare Pages), `_headers` (`index.html` never cached, `/assets/*` immutable) and a neutral
+`favicon.svg` (replace it with your logo). `front/src/main.tsx` installs a **one-shot reload on `vite:preloadError`** (a tab
+opened before a deploy asks for a chunk the new deploy removed): `installPreloadErrorReload` from
+`common/utils/preloadReload.ts`, guarded against loops through `sessionStorage` (see `react/common/README.md`).
+
+With the PWA enabled, the app is installable: `pwa.plugin.ts` (`vite-plugin-pwa`, `injectManifest`; manifest values come from
+`project.config.json`), `src/sw.ts` (precache of the build assets + SPA navigation fallback; **`/api/` is never cached**,
+data always comes from the network) and a header install button (`PwaInstallButton`, wired on `usePwaInstallPrompt`; shown
+only when the browser offers the installation, with a Share-menu hint on iOS). After creation, put your logo in
+`front/public/favicon.svg` and run `npm run pwa:icons` in `front/` to generate the icons (`public/pwa-*.png`,
+`maskable-icon-512x512.png`, `apple-touch-icon-180x180.png`, `favicon.ico`). `front/nginx.conf` serves `sw.js`,
+`registerSW.js` and `manifest.webmanifest` with `Cache-Control: no-cache` (a cached service worker would block updates).
+The wizard answers are in the `template/component-templates.json` « pwa » group; the `{{#PWA}}` ... `{{/PWA}}` blocks of
+the copied files are kept or dropped according to `pwa.enabled`. Existing apps keep their own files.
 
 Module manifest `<nest|react>/<module>/module.json`: `id`, `title`, `description`, `visibility`, `category`
 (`core|users|business|ai|content|other`), `requires` (verified against the real imports by

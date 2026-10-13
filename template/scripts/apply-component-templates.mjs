@@ -29,6 +29,7 @@ import { existsSync, readFileSync } from 'fs';
 import path from 'path';
 import process from 'process';
 import { fileURLToPath } from 'url';
+import { renderPwaTemplate, resolvePwa } from './lib/project-engine.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -76,6 +77,13 @@ function substitute(content, opts) {
     .replaceAll('{{PROJECT_NAME}}', opts.projectName ?? '');
 }
 
+/** `pwa` section of <project-root>/project.config.json (disabled when the file or the section is absent). */
+function readPwa(opts) {
+  const file = path.join(opts.projectRoot, 'project.config.json');
+  const answers = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
+  return resolvePwa({ siteName: opts.siteName, projectName: opts.projectName, ...answers });
+}
+
 async function copyOne(srcRel, tgtRel, opts) {
   const absSrc = path.join(TEMPLATE_ROOT, srcRel);
   const absTgt = path.join(opts.projectRoot, tgtRel);
@@ -91,14 +99,15 @@ async function copyOne(srcRel, tgtRel, opts) {
 
   await mkdir(path.dirname(absTgt), { recursive: true });
   const raw = await readFile(absSrc, 'utf8');
-  await writeFile(absTgt, substitute(raw, opts), 'utf8');
+  await writeFile(absTgt, renderPwaTemplate(substitute(raw, opts), opts.pwa), 'utf8');
   console.log(`[apply-component-templates] ✓ ${tgtRel}`);
 }
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const manifest = loadManifest();
-  const groups = [manifest.front ?? {}, manifest.back ?? {}];
+  opts.pwa = readPwa(opts);
+  const groups = [manifest.front ?? {}, ...(opts.pwa.enabled ? [manifest.pwa ?? {}] : []), manifest.back ?? {}];
   for (const group of groups) {
     for (const [srcRel, tgtRel] of Object.entries(group)) {
       await copyOne(srcRel, tgtRel, opts);

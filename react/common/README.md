@@ -58,6 +58,22 @@ never hangs a caller forever).
 
 ---
 
+## `utils/preloadReload.ts` — rechargement unique après un déploiement
+
+Un onglet ouvert avant un déploiement peut demander un chunk lazy que le nouveau déploiement a supprimé : Vite émet alors
+`vite:preloadError`. `installPreloadErrorReload({ target, storage, reload, schedule? })` (appelé par `main.tsx` du gabarit avec
+`window`, `sessionStorage` et `window.location.reload`) recharge **une seule fois** pour récupérer le nouvel `index.html`.
+Garde anti-boucle : la clé `vite-preload-reloaded` de `sessionStorage` (`claimPreloadReload` / `releasePreloadReload`) ; elle est
+effacée 5 s après un chargement sans erreur, pour que le déploiement suivant ait sa propre tentative. Stockage indisponible
+(mode privé) : pas de rechargement (pas de boucle possible). Tests : `utils/preloadReload.spec.ts`.
+
+## PWA — `pwa/` (installation de l'application)
+
+`pwa/hooks/usePwaInstallPrompt.ts` (`canInstall`, `isIos`, `isInstalled`, `prompt`) et `pwa/types.ts` (`PwaConfig`). Le gabarit
+branche le hook sur `PwaInstallButton` (bouton facultatif de l'en-tête, copié seulement si le projet active la PWA). La
+configuration du plugin Vite, le service worker (jamais de cache de `/api/`) et les options de l'assistant sont décrits dans
+`template/README.md` (« Front public files and PWA »).
+
 ## `HttpService` — déduplication des requêtes en vol (opt-in)
 
 Depuis PERFORMANCE_PLAN.md §6.3/§2.2 b, `HttpService.get/post/put/patch/delete/gets` acceptent une

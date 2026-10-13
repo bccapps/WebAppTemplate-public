@@ -34,8 +34,8 @@ import { fileURLToPath } from 'node:url';
 
 import {
   DB_ENGINES, DB_ENGINE_LABELS, appendModuleEnv, applyEnvValues, buildConfigEntries, buildEnvFromAnswers, buildSharedModules,
-  filterEnvExample, loadCatalog, normalizeAnswers, patchDefaultConfig, resolveProject, supportsDatabase, validateAnswers,
-  withQuestionDefaults,
+  filterEnvExample, frontPackageLocal, loadCatalog, normalizeAnswers, patchDefaultConfig, resolveProject, resolvePwa, supportsDatabase,
+  validateAnswers, withQuestionDefaults,
 } from './lib/project-engine.mjs';
 import { Prompter, askModuleQuestions, csv, selectFunctionalModules } from './lib/wizard.mjs';
 
@@ -63,6 +63,8 @@ Answers (each one is asked interactively when not given):
   --private | --no-private  mount vx-private (alias: --with-private)
   --multi-user | --no-multi-user   user accounts and login (alias: --with-users)
   --local-trust | --no-local-trust   single-user local app: no admin key on loopback (LOCAL_TRUST, needs no user module)
+  --pwa | --no-pwa          installable app (PWA: manifest, service worker, install button) [no]
+  --pwa-name <text> --pwa-short-name <text> (<= 12 chars)   --pwa-theme-color <#rrggbb> --pwa-background-color <#rrggbb>
   --commerce | --no-commerce       enable the sales screens (needs multi-user)
   --modules a,b             extra functional modules (closure of "requires" is added)
   --db <selfhosted|cloud|supabase|neon|sqlite>   --redis | --no-redis
@@ -78,7 +80,7 @@ Environment: VX_PUBLIC_URL, VX_PRIVATE_URL, LIB_BRANCH (see scripts/lib/libs.sh)
 `;
 
 const BOOL_FLAGS = new Set([
-  'private', 'no-private', 'with-private', 'multi-user', 'no-multi-user', 'with-users', 'commerce', 'no-commerce', 'local-trust', 'no-local-trust',
+  'private', 'no-private', 'with-private', 'multi-user', 'no-multi-user', 'with-users', 'commerce', 'no-commerce', 'local-trust', 'no-local-trust', 'pwa', 'no-pwa',
   'redis', 'no-redis', 'yes', 'dry-run', 'no-install', 'no-github', 'no-commit', 'vendor-libs', 'help',
 ]);
 
@@ -132,6 +134,10 @@ export function answersFromCli(opts) {
   if (opts['no-multi-user']) a.multiUser = false;
   if (opts['local-trust']) a.localTrust = true;
   if (opts['no-local-trust']) a.localTrust = false;
+  if (opts.pwa) a.pwa = { enabled: true };
+  if (opts['no-pwa']) a.pwa = { enabled: false };
+  const pwaFields = { name: opts['pwa-name'], shortName: opts['pwa-short-name'], themeColor: opts['pwa-theme-color'], backgroundColor: opts['pwa-background-color'] };
+  for (const [key, value] of Object.entries(pwaFields)) if (value) a.pwa = { ...(a.pwa ?? {}), [key]: value };
   if (opts.commerce) a.commerce = true;
   if (opts['no-commerce']) a.commerce = false;
   if (opts.modules) a.modules = csv(opts.modules);
@@ -232,6 +238,7 @@ export async function collectAnswers({ opts, given, prompter, catalogFor }) {
     a.localTrust = !resolveProject(catalog, a).ids.includes('user')
       && await prompter.confirm('Single-user local application (local trust mode: no admin key on this machine)?', false);
   }
+  if (given.pwa?.enabled === undefined) a.pwa.enabled = await prompter.confirm('Installable app (PWA: manifest, service worker, install button)?', false);
   if (given.database?.redis === undefined) a.database.redis = await prompter.confirm('Redis?', false);
   if (!given.languages) a.languages = csv(await prompter.text('Languages (first = default)', 'fr,en'));
   return { answers: a, catalog };
@@ -444,9 +451,7 @@ function finishProject({ root, opts, answers, resolved, catalog }) {
   writeFileSync(path.join(root, 'project.config.json'), `${JSON.stringify(saved, null, 2)}\n`);
   log.ok('project.config.json written.');
 
-  writeIfAbsent(path.join(root, 'front', 'package.local.json'), `${JSON.stringify({
-    name: `${answers.projectName}-front`, version: '0.1.0', scripts: { dev: 'vite --mode dev', build: 'tsc -b && vite build' },
-  }, null, 2)}\n`, 'front/package.local.json');
+  writeIfAbsent(path.join(root, 'front', 'package.local.json'), `${JSON.stringify(frontPackageLocal(answers), null, 2)}\n`, 'front/package.local.json');
   writeIfAbsent(path.join(root, 'back', 'package.local.json'), `${JSON.stringify(backPackageLocal(answers), null, 2)}\n`, 'back/package.local.json');
 
   if (existsSync(path.join(root, 'front', 'src', 'main.tsx')) && existsSync(path.join(root, 'back', 'src', 'main.ts'))) {
@@ -519,8 +524,10 @@ export function renderPlan(answers, resolved, catalog, root) {
   const dbLine = answers.database.engine === 'sqlite' ? `sqlite (${sqliteDbPath(answers.projectName)}, better-sqlite3 added to back/package.local.json)` : answers.database.engine;
   lines.push(`Database        ${dbLine}${answers.database.redis ? ' + Redis' : ''}`, `Languages       ${answers.languages.join(', ')}`);
   const entries = buildConfigEntries(catalog, answers, resolved.ids);
+  const pwa = resolvePwa(answers);
+  lines.push(`PWA             ${pwa.enabled ? `yes ("${pwa.name}" / "${pwa.shortName}", theme ${pwa.themeColor}, background ${pwa.backgroundColor}; vite-plugin-pwa added to front/package.local.json)` : 'no'}`);
   lines.push(`Seeded config   ${entries.map((e) => e.name).join(', ')}`);
-  lines.push('Files           shared-modules.json, project.config.json, back/.env.dev + .env.example, front/.env.dev + .env.example, back/src/config/defaultConfig.ts, back/src/locales/custom.<lang>.json');
+  lines.push(`Files           shared-modules.json, project.config.json, back/.env.dev + .env.example, front/.env.dev + .env.example, back/src/config/defaultConfig.ts, back/src/locales/custom.<lang>.json, front/public/{robots.txt,_redirects,_headers,favicon.svg}${pwa.enabled ? ', front/pwa.plugin.ts, front/pwa-assets.config.ts, front/src/sw.ts' : ''}`);
   return lines.join('\n');
 }
 
@@ -535,7 +542,8 @@ const SUMMARY = (a, root) => `
   - back/src/locales/custom.{lang}.json — replace placeholder landing/legal copy
   - front/src/components/pages/{Confidentiality,LegalMentions,UsageConditions}.tsx — legal text for ${a.entityName || 'your entity'}
   - FEATURES.md — create it and track the application capabilities
-  - add a module later: node scripts/add-module.mjs <id>
+${a.pwa?.enabled ? `  - PWA: replace front/public/favicon.svg with your logo, then run "npm run pwa:icons" in front/ (generates the manifest icons)
+` : ''}  - add a module later: node scripts/add-module.mjs <id>
 ============================================================
 `;
 
