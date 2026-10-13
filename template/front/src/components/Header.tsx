@@ -122,7 +122,7 @@ export function Header({ alertsCount = 0 }: HeaderProps) {
             </Popover>
             {isAdmin && (
               <Stack direction="row" spacing={0.5}>
-                <Tooltip title={<I18nLabel id="app.nav.admin.page" />}>
+                <Tooltip title={<I18nLabel id="common.nav.adminPage" />}>
                   <IconButton
                     color="inherit"
                     component={Link}
