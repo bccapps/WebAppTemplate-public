@@ -25,7 +25,18 @@ import path from 'node:path';
 export const STACKS = ['nest', 'react'];
 /** Always linked, public. `database` only exists on the back. */
 export const BASE_MODULES = ['common', 'database'];
-export const DB_ENGINES = { selfhosted: 'postgres', cloud: 'cloud', supabase: 'supabase', neon: 'neon' };
+/** Wizard database choice -> value of DATABASE_ENGINE (read by nest/database/databases.ts). */
+export const DB_ENGINES = { selfhosted: 'postgres', cloud: 'cloud', supabase: 'supabase', neon: 'neon', sqlite: 'sqlite' };
+/** Label shown by the wizard for each choice (keys of DB_ENGINES). */
+export const DB_ENGINE_LABELS = {
+  selfhosted: 'selfhosted (PostgreSQL in a local container)',
+  cloud: 'cloud (managed PostgreSQL)',
+  supabase: 'supabase (PostgreSQL)',
+  neon: 'neon (PostgreSQL)',
+  sqlite: 'SQLite (local file, single instance)',
+};
+/** Database family of a wizard choice, as named by the `databases` field of module.json. */
+export const dbFamily = (engine) => (engine === 'sqlite' ? 'sqlite' : 'postgres');
 export const REGISTRATION_MODES = { open: 'open', invitation: 'invite-only', waitlist: 'manual' };
 export const ANSWERS_SCHEMA_VERSION = 1;
 
@@ -74,7 +85,9 @@ export function buildCatalog(byStack) {
       const entry = byId.get(id) ?? {
         id, title: manifest.title, description: manifest.description, category: manifest.category,
         visibility: manifest.visibility, stacks: [], requires: new Set(), env: { nest: [], react: [] }, questions: [],
+        databases: null, // null = every engine; otherwise the engine families the module supports (module.json `databases`)
       };
+      if (Array.isArray(manifest.databases)) entry.databases = [...new Set([...(entry.databases ?? []), ...manifest.databases])];
       entry.stacks.push(stack);
       for (const r of manifest.requires ?? []) entry.requires.add(r);
       entry.env[stack] = [...(manifest.env ?? [])];
@@ -169,7 +182,7 @@ export function applicableQuestions(catalog, answers, resolvedIds) {
   }
   // `alwaysAsk` questions belong to modules that may not be resolved yet (e.g. "sell products?" before `commerce` is linked).
   for (const entry of catalog.byId.values()) {
-    if (resolvedIds.includes(entry.id)) continue;
+    if (resolvedIds.includes(entry.id) || !supportsDatabase(entry, answers.database?.engine ?? 'selfhosted')) continue;
     for (const q of entry.questions) {
       if (q.alwaysAsk && (!q.requiresPrivate || answers.privateAccess)) out.push(q);
     }
@@ -243,6 +256,7 @@ export function validateAnswers(rawAnswers, catalog) {
 
   const resolved = resolveModules(catalog, selectedModules(a));
   errors.push(...resolved.errors);
+  errors.push(...databaseIncompatibilities(catalog, resolved.ids, a.database.engine));
   if (!a.privateAccess) {
     for (const id of resolved.ids) {
       if (catalog.byId.get(id)?.visibility === 'private') {
@@ -252,6 +266,28 @@ export function validateAnswers(rawAnswers, catalog) {
     }
   }
   errors.push(...validateQuestionAnswers(a, catalog, resolved.ids));
+  return errors;
+}
+
+/** True when a catalog entry works with the wizard database choice (`databases` absent = every engine). */
+export function supportsDatabase(entry, engine) {
+  return !entry?.databases || entry.databases.includes(dbFamily(engine));
+}
+
+/**
+ * Messages for the modules whose `databases` field excludes the chosen engine
+ * (absent field = every engine). Pure; unknown ids are ignored (reported elsewhere).
+ */
+export function databaseIncompatibilities(catalog, ids, engine) {
+  if (!(engine in DB_ENGINES)) return [];
+  const family = dbFamily(engine);
+  const errors = [];
+  for (const id of ids) {
+    const entry = catalog.byId.get(id);
+    if (!supportsDatabase(entry, engine)) {
+      errors.push(`module "${id}" does not support the ${family} database (it supports: ${entry.databases.join(', ')}): choose another database engine or drop this module`);
+    }
+  }
   return errors;
 }
 

@@ -33,8 +33,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  DB_ENGINES, appendModuleEnv, applyEnvValues, buildConfigEntries, buildEnvFromAnswers, buildSharedModules,
-  filterEnvExample, loadCatalog, normalizeAnswers, patchDefaultConfig, resolveProject, validateAnswers,
+  DB_ENGINES, DB_ENGINE_LABELS, appendModuleEnv, applyEnvValues, buildConfigEntries, buildEnvFromAnswers, buildSharedModules,
+  filterEnvExample, loadCatalog, normalizeAnswers, patchDefaultConfig, resolveProject, supportsDatabase, validateAnswers,
   withQuestionDefaults,
 } from './lib/project-engine.mjs';
 import { Prompter, askModuleQuestions, csv, selectFunctionalModules } from './lib/wizard.mjs';
@@ -64,7 +64,7 @@ Answers (each one is asked interactively when not given):
   --multi-user | --no-multi-user   user accounts and login (alias: --with-users)
   --commerce | --no-commerce       enable the sales screens (needs multi-user)
   --modules a,b             extra functional modules (closure of "requires" is added)
-  --db <selfhosted|cloud|supabase|neon>   --redis | --no-redis
+  --db <selfhosted|cloud|supabase|neon|sqlite>   --redis | --no-redis
   --langs fr,en             first one = default language
   --answer <questionId>=<value>   answer a module question (repeatable; lists comma-separated)
   --answers <file.json>     answers file (project.config.json schema)
@@ -214,15 +214,16 @@ export async function collectAnswers({ opts, given, prompter, catalogFor }) {
   }
   const catalog = await catalogFor(a);
 
+  // The engine comes first: modules that do not support it (module.json `databases`) are then not offered.
+  if (!given.database?.engine) {
+    a.database.engine = await prompter.select('Database', Object.keys(DB_ENGINES).map((value) => ({ value, label: DB_ENGINE_LABELS[value] })), 'selfhosted');
+  }
   if (given.multiUser === undefined) {
-    a.multiUser = a.privateAccess && catalog.byId.has('user')
+    a.multiUser = a.privateAccess && supportsDatabase(catalog.byId.get('user'), a.database.engine) && catalog.byId.has('user')
       ? await prompter.confirm('Multi-user application (accounts, login)?', false) : false;
   }
   if (!given.modules) a.modules = await selectFunctionalModules(prompter, catalog, a);
   await askModuleQuestions(prompter, catalog, a);
-  if (!given.database?.engine) {
-    a.database.engine = await prompter.select('Database', Object.keys(DB_ENGINES).map((value) => ({ value })), 'selfhosted');
-  }
   if (given.database?.redis === undefined) a.database.redis = await prompter.confirm('Redis?', false);
   if (!given.languages) a.languages = csv(await prompter.text('Languages (first = default)', 'fr,en'));
   return { answers: a, catalog };
@@ -275,6 +276,9 @@ build
 .env*
 !.env.example
 *.local
+
+# SQLite database files (DATABASE_ENGINE=sqlite, DB_PATH=data/<project>.db)
+back/data/
 
 # Shared modules (materialized as symlinks by link-shared.mjs)
 modules_shared
@@ -330,7 +334,20 @@ function stackEnvDev(root, stack, answers, resolved, catalog, values) {
   log.ok(`${stack}/.env.dev written.`);
 }
 
-function backEnvValues(answers, resolved, fromAnswers) {
+/** Default SQLite file, relative to back/ (resolved by nest/database/databases.ts). */
+export const sqliteDbPath = (projectName) => `data/${projectName}.db`;
+
+/** Version range of better-sqlite3 added to back/package.local.json for SQLite projects. */
+export const BETTER_SQLITE3_VERSION = '^12.11.1';
+
+/** Content of back/package.local.json: SQLite is a native dependency, so only SQLite projects get it. */
+export function backPackageLocal(answers) {
+  const pkg = { name: `${answers.projectName}-back`, version: '0.1.0' };
+  if (answers.database.engine === 'sqlite') pkg.dependencies = { 'better-sqlite3': BETTER_SQLITE3_VERSION };
+  return pkg;
+}
+
+export function backEnvValues(answers, resolved, fromAnswers) {
   const { back, front } = answers.ports;
   const values = {
     APP_ENV: 'dev',
@@ -346,6 +363,9 @@ function backEnvValues(answers, resolved, fromAnswers) {
     Object.assign(values, {
       DB_HOST: 'localhost', DB_PORT: back + 1, DB_USER: 'postgres', DB_PASSWORD: randomPassword(), DB_NAME: answers.projectName,
     });
+  } else if (answers.database.engine === 'sqlite') {
+    // DB_MIGRATIONS_RUN stays unset in dev (synchronize); desktop builds set it to true.
+    Object.assign(values, { DATABASE_ENGINE: 'sqlite', DB_PATH: sqliteDbPath(answers.projectName) });
   } else {
     values.DATABASE_ENGINE = DB_ENGINES[answers.database.engine];
   }
@@ -417,7 +437,7 @@ function finishProject({ root, opts, answers, resolved, catalog }) {
   writeIfAbsent(path.join(root, 'front', 'package.local.json'), `${JSON.stringify({
     name: `${answers.projectName}-front`, version: '0.1.0', scripts: { dev: 'vite --mode dev', build: 'tsc -b && vite build' },
   }, null, 2)}\n`, 'front/package.local.json');
-  writeIfAbsent(path.join(root, 'back', 'package.local.json'), `${JSON.stringify({ name: `${answers.projectName}-back`, version: '0.1.0' }, null, 2)}\n`, 'back/package.local.json');
+  writeIfAbsent(path.join(root, 'back', 'package.local.json'), `${JSON.stringify(backPackageLocal(answers), null, 2)}\n`, 'back/package.local.json');
 
   if (existsSync(path.join(root, 'front', 'src', 'main.tsx')) && existsSync(path.join(root, 'back', 'src', 'main.ts'))) {
     log.ok('Base components already copied — skipped (apply-component-templates stays one-shot).');
@@ -486,7 +506,8 @@ export function renderPlan(answers, resolved, catalog, root) {
     `Front modules   ${resolved.perStack.react.join(', ')}`,
   ];
   if (resolved.added.length) lines.push(`Added by requires: ${resolved.added.join(', ')}`);
-  lines.push(`Database        ${answers.database.engine}${answers.database.redis ? ' + Redis' : ''}`, `Languages       ${answers.languages.join(', ')}`);
+  const dbLine = answers.database.engine === 'sqlite' ? `sqlite (${sqliteDbPath(answers.projectName)}, better-sqlite3 added to back/package.local.json)` : answers.database.engine;
+  lines.push(`Database        ${dbLine}${answers.database.redis ? ' + Redis' : ''}`, `Languages       ${answers.languages.join(', ')}`);
   const entries = buildConfigEntries(catalog, answers, resolved.ids);
   lines.push(`Seeded config   ${entries.map((e) => e.name).join(', ')}`);
   lines.push('Files           shared-modules.json, project.config.json, back/.env.dev + .env.example, front/.env.dev + .env.example, back/src/config/defaultConfig.ts, back/src/locales/custom.<lang>.json');

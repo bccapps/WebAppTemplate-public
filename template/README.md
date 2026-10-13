@@ -9,6 +9,8 @@ All environments are managed through the unified `scripts/run.sh` launcher.
 ./scripts/run.sh dev              # Infra (postgres + optional redis) + backend (watch) + frontend (vite)
 ./scripts/run.sh dev --infra-only # Only infrastructure containers
 ```
+With `DATABASE_ENGINE=sqlite` (or `DB_ENGINE=sqlite`) no container is started: the database is a file read by the back
+process; Docker is used only when `REDIS_URL` is set, and `--infra-only` then has nothing to start (it says so).
 Ctrl+C stops everything (back, front, containers).
 
 **Extra dev services (opt-in hook):** if the project has an executable
@@ -52,9 +54,9 @@ Requires `back/.env` (production).
 | Category | Variables | Description |
 |----------|-----------|-------------|
 | **Project** | `PROJECT_NAME`, `NODE_PORT`, `FRONT_PORT` | Project identity and port mapping |
-| **Database** | `DATABASE_ENGINE`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_NAME`, `DB_PASSWORD` | Postgres connection (`DATABASE_ENGINE`: `selfhosted`, `cloud`, `supabase`, `neon`) |
+| **Database** | `DATABASE_ENGINE`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_NAME`, `DB_PASSWORD` | Postgres connection (`DATABASE_ENGINE`: `postgres`, `cloud`, `supabase`, `neon`) |
 | **DB options** | `DB_SSLMODE`, `DB_SSLROOTCERT`, `DB_POOLSIZE`, `TYPEORM_SYNC`, `DB_MIGRATIONS_RUN` | SSL, pool tuning, schema sync, migrations at startup |
-| **SQLite** | `DB_ENGINE=sqlite`, `DB_PATH` | Local file database instead of Postgres (see `modules_shared/database/README.md`) |
+| **SQLite** | `DATABASE_ENGINE=sqlite` (or `DB_ENGINE=sqlite`), `DB_PATH` | Local file database instead of Postgres, single instance (see `modules_shared/database/README.md`). Written by the wizard (`DB_PATH=data/<project>.db`); `better-sqlite3` is added to `back/package.local.json` |
 | **Security** | `ADMIN_TOKEN`, `CRYPT_DB_MASTER_KEY`, `CRYPT_DB_DERIVATION_SALT`, `CRYPT_SESSION_PRIVATE_KEY`, `CLIENT_ORIGINS` | Anonymous-mode admin key, encryption keys, CORS |
 | **With the `user` module only** | `VITE_REOWN_PROJECT_ID`, `VITE_AUTH_CHAIN_POLICY`, `ADMIN_WALLET`, `TECH_TOKEN`, `JWT_SECRET` | Reown/WalletConnect auth, wallet admin, JWT (see `back/.env.example`) |
 | **Deployment** | `FRONT_HOSTS`, `BACK_HOSTS`, `REMOTE_USER`, `REMOTE_SSH_PORT`, `SSH_KEY_FILE`, `REMOTE_CONTEXT_NAME`, `REMOTE_APP_DIR` | Remote Docker deployment |
@@ -151,7 +153,7 @@ plugins (`plugin.ts` / `plugin.tsx`). Questions (Enter = default; each has a CLI
 | 4 | **selling** (products, subscriptions)? | `features.commerce.enabled` seeded `true` / `false` and adds the `commerce` module (declining leaves it out); needs multi-user |
 | 4b | **monitoring / health / Redis cache** (`infra`)? | adds the `infra` module (default yes when multi-user, else no) |
 | 5 | functional modules (grouped by category, with description) | closure of `requires` shown before confirmation |
-| 6 | database (selfhosted / cloud / supabase / neon), Redis | `DATABASE_ENGINE`, `.env` blocks |
+| 6 | database (selfhosted / cloud / supabase / neon / **sqlite**), Redis (default no) | `DATABASE_ENGINE`, `.env` blocks; sqlite: `DB_PATH=data/<project>.db`, no `DB_*` Postgres variables, `better-sqlite3` in `back/package.local.json`. The question is asked **before** the modules: those that do not support the engine are not offered |
 | 7 | languages | `back/src/locales/custom.<lang>.json`, `localesLanguages`, `localeDefault` |
 | 8 | recap | confirmation, then generation |
 
@@ -159,12 +161,15 @@ Files produced: `shared-modules.json`, `project.config.json` (the answers: repla
 `back/.env.dev` + `back/.env.example` and `front/.env.dev` + `front/.env.example` (the `# @module <id>` ... `# @end`
 blocks of the template examples are kept only for the linked modules; `# @module !user` = "when `user` is NOT linked"),
 `back/src/config/defaultConfig.ts`. Inconsistent answers are refused with a message (private module without private access,
-selling without accounts, unknown module...).
+selling without accounts, a module that does not support the chosen database, unknown module...).
 
 Module manifest `<nest|react>/<module>/module.json`: `id`, `title`, `description`, `visibility`, `category`
 (`core|users|business|ai|content|other`), `requires` (verified against the real imports by
 `tools/check-boundaries.mjs --check-manifests`), `env` (variables added to `.env.example`), `questions` (module-specific
-wizard questions with their effects: `config`, `configJson`, `env`, `modules`).
+wizard questions with their effects: `config`, `configJson`, `env`, `modules`), and the optional `databases` (engine families the module
+supports among `postgres` | `sqlite`; absent = all). A module that is not ported to SQLite (entities with Postgres-only
+types or raw SQL) declares `"databases": ["postgres"]`; `create-project.mjs` and `add-module.mjs` then refuse it with a SQLite project
+(`module "user" does not support the sqlite database (it supports: postgres)`), and so refuse the modules that `require` it.
 
 Add or remove a module later (no code file is modified; `shared-modules.json`, `.env.example` blocks, `defaultConfig.ts`,
 `package.json` and the module links are updated):

@@ -131,13 +131,16 @@ export const MANIFEST_FILE = 'module.json';
 export const MANIFEST_CATEGORIES = ['core', 'users', 'business', 'ai', 'content', 'other'];
 const QUESTION_TYPES = ['confirm', 'select', 'multiselect', 'text'];
 const MANIFEST_KEYS = ['id', 'title', 'description', 'visibility', 'category', 'requires', 'env', 'questions'];
+/** Optional keys. `databases`: engine families the module supports (absent = all). */
+const OPTIONAL_MANIFEST_KEYS = ['databases'];
+export const MANIFEST_DATABASES = ['postgres', 'sqlite'];
 
 /** Schema errors of one parsed manifest (empty array = valid). */
 export function validateManifest(manifest, dirName, visibility) {
   const errors = [];
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return ['manifest must be a JSON object'];
   for (const key of MANIFEST_KEYS) if (!(key in manifest)) errors.push(`missing key "${key}"`);
-  for (const key of Object.keys(manifest)) if (!MANIFEST_KEYS.includes(key)) errors.push(`unknown key "${key}"`);
+  for (const key of Object.keys(manifest)) if (!MANIFEST_KEYS.includes(key) && !OPTIONAL_MANIFEST_KEYS.includes(key)) errors.push(`unknown key "${key}"`);
   if (manifest.id !== dirName) errors.push(`id "${manifest.id}" must equal the directory name "${dirName}"`);
   for (const key of ['title', 'description']) {
     if (key in manifest && (typeof manifest[key] !== 'string' || !manifest[key].trim())) errors.push(`"${key}" must be a non-empty string`);
@@ -158,6 +161,11 @@ export function validateManifest(manifest, dirName, visibility) {
       const ok = q && typeof q.id === 'string' && typeof q.prompt === 'string' && QUESTION_TYPES.includes(q.type);
       if (!ok) errors.push(`questions[${i}] needs a string id, a string prompt and a type among ${QUESTION_TYPES.join(' | ')}`);
     });
+  }
+  if ('databases' in manifest) {
+    const valid = Array.isArray(manifest.databases) && manifest.databases.length > 0
+      && manifest.databases.every((d) => MANIFEST_DATABASES.includes(d)) && new Set(manifest.databases).size === manifest.databases.length;
+    if (!valid) errors.push(`"databases" must be a non-empty list without duplicates among ${MANIFEST_DATABASES.join(' | ')}`);
   }
   if (Array.isArray(manifest.env) && !manifest.env.every((v) => typeof v === 'string' && /^[A-Z][A-Z0-9_]*$/.test(v))) {
     errors.push('"env" entries must be UPPER_SNAKE_CASE variable names');

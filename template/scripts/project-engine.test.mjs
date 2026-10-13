@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
-  appendModuleEnv, applyEnvValues, buildConfigEntries, buildEnvFromAnswers, buildSharedModules, dependentsOf,
+  DB_ENGINES, appendModuleEnv, databaseIncompatibilities, dbFamily, applyEnvValues, buildConfigEntries, buildEnvFromAnswers, buildSharedModules, dependentsOf,
   filterEnvExample, loadCatalog, patchDefaultConfig, resolveModules, resolveProject, validateAnswers,
   withQuestionDefaults,
 } from './lib/project-engine.mjs';
@@ -160,4 +160,37 @@ test('defaultConfig.ts patch (create) and addition (add-module)', () => {
   assert.deepEqual(more.added.map((e) => e.name), ['b']);
   assert.match(more.source, /name: 'b', value: '2'/);
   assert.equal((more.source.match(/name: 'a'/g) ?? []).length, 1);
+});
+
+test('sqlite: engine accepted, family mapping, DATABASE_ENGINE value', () => {
+  assert.equal(DB_ENGINES.sqlite, 'sqlite');
+  assert.equal(dbFamily('sqlite'), 'sqlite');
+  for (const e of ['selfhosted', 'cloud', 'supabase', 'neon']) assert.equal(dbFamily(e), 'postgres');
+  const libs = makeLibs();
+  const pubOnly = loadCatalog({ public: libs.pub });
+  assert.deepEqual(validateAnswers(withQuestionDefaults(pubOnly, { ...base, modules: ['voice'], database: { engine: 'sqlite' } }), pubOnly), []);
+  libs.cleanup();
+});
+
+test('module.json "databases": absent = every engine, listed = refused on another engine with a clear message', () => {
+  const libs = makeLibs();
+  const catalog = loadCatalog({ public: libs.pub, private: libs.priv });
+  assert.equal(catalog.byId.get('voice').databases, null);
+  assert.deepEqual(catalog.byId.get('user').databases, ['postgres']);
+  assert.deepEqual(databaseIncompatibilities(catalog, ['common', 'voice', 'infra'], 'sqlite'), []);
+  assert.deepEqual(databaseIncompatibilities(catalog, ['user'], 'neon'), []);
+  assert.deepEqual(databaseIncompatibilities(catalog, ['user'], 'oracle'), [], 'unknown engine is reported by its own check');
+  const [msg] = databaseIncompatibilities(catalog, ['common', 'user'], 'sqlite');
+  assert.match(msg, /module "user" does not support the sqlite database \(it supports: postgres\)/);
+
+  const errors = (a) => validateAnswers(withQuestionDefaults(catalog, { ...base, privateAccess: true, ...a }), catalog).join(' | ');
+  assert.match(errors({ multiUser: true, database: { engine: 'sqlite' } }), /module "user" does not support the sqlite database/);
+  assert.match(errors({ modules: ['llm'], database: { engine: 'sqlite' } }), /module "user" does not support the sqlite database/);
+  assert.equal(errors({ multiUser: true, database: { engine: 'selfhosted' } }), '');
+  assert.equal(errors({ database: { engine: 'sqlite' } }), '');
+  // "always ask" questions of an incompatible module (commerce, infra) are not asked with SQLite
+  const sqliteAnswers = withQuestionDefaults(catalog, { ...base, privateAccess: true, database: { engine: 'sqlite' } });
+  assert.equal('commerce' in sqliteAnswers.questions, false);
+  assert.equal('commerce' in withQuestionDefaults(catalog, { ...base, privateAccess: true }).questions, true);
+  libs.cleanup();
 });

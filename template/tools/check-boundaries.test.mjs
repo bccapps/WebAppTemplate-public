@@ -110,6 +110,15 @@ test('validateManifest: schema errors are listed, a valid manifest passes', () =
   assert.match(validateManifest(JSON.parse(mf('a', { visibility: 'private' })), 'a', 'public').join(), /this repository is public/);
 });
 
+test('validateManifest: optional "databases" field (absent = all engines)', () => {
+  const ok = (databases) => validateManifest(JSON.parse(mf('voice', { databases })), 'voice', 'public');
+  assert.deepEqual(ok(['postgres']), []);
+  assert.deepEqual(ok(['postgres', 'sqlite']), []);
+  for (const bad of [[], ['mysql'], 'postgres', ['postgres', 'postgres']]) {
+    assert.match(ok(bad).join(), /"databases" must be a non-empty list/, JSON.stringify(bad));
+  }
+});
+
 test('checkManifests: missing manifest, import not in requires (error), unused requires (warning), external modules', () => {
   const root = makeTree({
     'nest/common/module.json': mf('common'),

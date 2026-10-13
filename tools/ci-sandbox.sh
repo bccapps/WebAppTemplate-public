@@ -16,6 +16,9 @@
 #
 # Modes:
 #   anonymous    (default) common + database + voice, no `user`: admin protected by ADMIN_TOKEN
+#   anonymous-sqlite  same as anonymous with the SQLite engine: DATABASE_ENGINE=sqlite + DB_PATH in back/.env.dev,
+#                better-sqlite3 in back/package.local.json, no Postgres variables; the entity discovery check
+#                runs against a SQLite file
 #   users-only   `user` WITHOUT `commerce` nor `infra` (no selling, no monitoring): proves that `user`
 #                compiles and boots with its optional extension points absent. Same private library
 #                options as multi-users.
@@ -29,7 +32,7 @@
 #   <sandbox>/app/back/.libs/apptemplate -> vx-public/template      (relative symlink)
 #   <sandbox>/app/front/.libs/...                                   (same)
 #
-# Usage: tools/ci-sandbox.sh [anonymous|users-only|multi-users] [sandbox-dir]   (default dir: a fresh mktemp directory)
+# Usage: tools/ci-sandbox.sh [anonymous|anonymous-sqlite|users-only|multi-users] [sandbox-dir]   (default dir: a fresh mktemp directory)
 # Env:   KEEP_SANDBOX=1 keeps an auto-created directory, SKIP_TESTS=1 skips back jest,
 #        SANDBOX_MODULES=a,b overrides the extra functional modules.
 # =============================================================================
@@ -37,7 +40,9 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="anonymous"
-if [[ "${1:-}" == "anonymous" || "${1:-}" == "users-only" || "${1:-}" == "multi-users" ]]; then MODE="$1"; shift; fi
+if [[ "${1:-}" == "anonymous" || "${1:-}" == "anonymous-sqlite" || "${1:-}" == "users-only" || "${1:-}" == "multi-users" ]]; then MODE="$1"; shift; fi
+DB_ENGINE_ANSWER="selfhosted"
+[[ "${MODE}" == "anonymous-sqlite" ]] && DB_ENGINE_ANSWER="sqlite"
 AUTO=0
 if [[ -z "${1:-}" ]]; then AUTO=1; SB="$(mktemp -d "${TMPDIR:-/tmp}/vx-ci-sandbox.XXXXXX")"; else SB="$1"; fi
 mkdir -p "${SB}"
@@ -80,11 +85,12 @@ if [[ "${MODE}" == "multi-users" || "${MODE}" == "users-only" ]]; then
     }, null, 2));' "${ANSWERS}"
 else
   MODULES="${SANDBOX_MODULES:-voice}"
-  MODULES="${MODULES}" node -e '
+  MODULES="${MODULES}" DB_ENGINE_ANSWER="${DB_ENGINE_ANSWER}" node -e '
     const modules = process.env.MODULES.split(",").filter(Boolean);
     require("fs").writeFileSync(process.argv[1], JSON.stringify({
       projectName: "app", siteName: "CI Sandbox", entityName: "CI Entity", contactEmail: "ci@example.com",
       privateAccess: false, multiUser: false, modules, languages: ["fr", "en"],
+      database: { engine: process.env.DB_ENGINE_ANSWER, redis: false },
     }, null, 2));' "${ANSWERS}"
 fi
 
@@ -103,6 +109,13 @@ if [[ "${MODE}" == "multi-users" || "${MODE}" == "users-only" ]]; then
   if grep -q '^ADMIN_TOKEN=' "${APP}/back/.env.dev"; then echo "ADMIN_TOKEN must not be generated with user management" >&2; exit 1; fi
 else
   grep -q '^ADMIN_TOKEN=[0-9a-f]\{64\}$' "${APP}/back/.env.dev" || { echo "ADMIN_TOKEN missing in anonymous mode" >&2; exit 1; }
+fi
+
+if [[ "${MODE}" == "anonymous-sqlite" ]]; then
+  grep -q '^DATABASE_ENGINE=sqlite$' "${APP}/back/.env.dev" || { echo "DATABASE_ENGINE=sqlite missing in back/.env.dev" >&2; exit 1; }
+  grep -q '^DB_PATH=data/app\.db$' "${APP}/back/.env.dev" || { echo "DB_PATH=data/app.db missing in back/.env.dev" >&2; exit 1; }
+  if grep -qE '^(DB_HOST|DB_PASSWORD)=' "${APP}/back/.env.dev"; then echo "Postgres variables must not be generated with SQLite" >&2; exit 1; fi
+  grep -q '"better-sqlite3"' "${APP}/back/package.local.json" || { echo "better-sqlite3 missing in back/package.local.json" >&2; exit 1; }
 fi
 
 for stack in back front; do
@@ -134,7 +147,11 @@ import AppDataSource, { dbContext } from './src/config/Datasource';
   if (missing.length) { console.error('MISSING: ' + missing.join(', ')); process.exit(1); }
 })();
 TS
-export DB_HOST=localhost DB_PORT=5432 DB_USER=ci DB_PASSWORD=ci DB_NAME=ci EXPECT_ENTITIES="${EXPECT_ENTITY}"
+if [[ "${MODE}" == "anonymous-sqlite" ]]; then
+  export DATABASE_ENGINE=sqlite DB_PATH="${SB}/ci.db" EXPECT_ENTITIES="${EXPECT_ENTITY}"
+else
+  export DB_HOST=localhost DB_PORT=5432 DB_USER=ci DB_PASSWORD=ci DB_NAME=ci EXPECT_ENTITIES="${EXPECT_ENTITY}"
+fi
 ( cd "${APP}/back" && npx ts-node --transpile-only -r tsconfig-paths/register ds-check.ts \
     && node -e "
       const m = require('./dist/config/Datasource');

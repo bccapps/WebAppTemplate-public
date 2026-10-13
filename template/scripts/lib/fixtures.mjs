@@ -36,7 +36,7 @@ export function makeLibs() {
   put('private', 'react', manifest('waitlist', { visibility: 'private', requires: ['common'], category: 'users' }));
   put('private', 'nest', manifest('tenant', { visibility: 'private', requires: ['user'], category: 'users' }));
   put('private', 'nest', manifest('user', {
-    visibility: 'private', category: 'users', requires: ['common'], env: ['JWT_SECRET'],
+    visibility: 'private', category: 'users', requires: ['common'], env: ['JWT_SECRET'], databases: ['postgres'],
     questions: [
       {
         id: 'authMethods', prompt: 'Login methods', type: 'multiselect', default: ['wallet', 'email'],
@@ -68,7 +68,7 @@ export function makeLibs() {
   put('private', 'react', manifest('user', { visibility: 'private', category: 'users', requires: ['common'] }));
   // commerce question lives in the nest manifest of commerce
   put('private', 'nest', manifest('commerce', {
-    visibility: 'private', requires: ['common', 'user'], category: 'business',
+    visibility: 'private', requires: ['common', 'user'], category: 'business', databases: ['postgres'],
     questions: [{
       id: 'commerce', prompt: 'Selling?', type: 'confirm', default: false, alwaysAsk: true, requiresPrivate: true, requires: ['user'],
       effects: [

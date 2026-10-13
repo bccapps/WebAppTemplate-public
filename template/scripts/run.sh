@@ -196,7 +196,8 @@ cmd_dev() {
   # Activate profiles based on env config
   local compose_profiles=""
   local db_engine
-  db_engine="$(echo "${DATABASE_ENGINE:-postgres}" | tr '[:upper:]' '[:lower:]')"
+  # Same precedence as nest/database/databases.ts: DB_ENGINE first, then DATABASE_ENGINE.
+  db_engine="$(echo "${DB_ENGINE:-${DATABASE_ENGINE:-postgres}}" | tr '[:upper:]' '[:lower:]')"
   local needs_local_db=0
   if [[ "${db_engine}" =~ ^(postgres|selfhosted)$ && "${DB_HOST:-localhost}" =~ ^(localhost|127\.|0\.0\.0\.0|db$|postgres$|${PROJECT_NAME}) ]]; then
     compose_profiles="--profile localdb"
@@ -206,21 +207,29 @@ cmd_dev() {
     compose_profiles="${compose_profiles} --profile redis"
   fi
 
-  # Point at the local Docker socket if already reachable (clears any inherited
-  # ssh:// DOCKER_HOST). Does NOT launch Docker Desktop — that only happens
-  # below, and only if local containers (--profile localdb/redis) are needed.
-  resolve_local_docker_host || true
+  # SQLite is an in-process file database: no Docker at all unless Redis is requested (REDIS_URL).
+  local uses_docker=1
+  if [[ "${db_engine}" == "sqlite" && -z "${REDIS_URL:-}" ]]; then
+    uses_docker=0
+  fi
 
-  info "Stopping any existing dev containers..."
-  docker compose -p "${compose_project}" --env-file ./back/.env.dev -f scripts/docker-compose-dev.yml --profile localdb --profile redis down --remove-orphans 2>/dev/null || true
+  if [[ ${uses_docker} -eq 1 ]]; then
+    # Point at the local Docker socket if already reachable (clears any inherited
+    # ssh:// DOCKER_HOST). Does NOT launch Docker Desktop — that only happens
+    # below, and only if local containers (--profile localdb/redis) are needed.
+    resolve_local_docker_host || true
 
-  # Remove leftover containers with fixed container_name from other compose projects
-  for cname in "${PROJECT_NAME}_postgres" "${PROJECT_NAME}_back" "${PROJECT_NAME}_front"; do
-    if docker inspect "${cname}" >/dev/null 2>&1; then
-      warn "Removing leftover container: ${cname}"
-      docker rm -f "${cname}" 2>/dev/null || true
-    fi
-  done
+    info "Stopping any existing dev containers..."
+    docker compose -p "${compose_project}" --env-file ./back/.env.dev -f scripts/docker-compose-dev.yml --profile localdb --profile redis down --remove-orphans 2>/dev/null || true
+
+    # Remove leftover containers with fixed container_name from other compose projects
+    for cname in "${PROJECT_NAME}_postgres" "${PROJECT_NAME}_back" "${PROJECT_NAME}_front"; do
+      if docker inspect "${cname}" >/dev/null 2>&1; then
+        warn "Removing leftover container: ${cname}"
+        docker rm -f "${cname}" 2>/dev/null || true
+      fi
+    done
+  fi
 
   # Kill any leftover processes from a previous run (scoped to this project)
   pkill -f "${PROJECT_ROOT}/back/.*nest" 2>/dev/null || true
@@ -269,17 +278,26 @@ cmd_dev() {
     info "No local infrastructure needed, skipping containers"
   fi
 
-  if [[ ${needs_local_db} -eq 1 ]]; then
+  if [[ "${db_engine}" == "sqlite" ]]; then
+    ok "Using SQLite (${DB_PATH:-data/${PROJECT_NAME}.db}), no database container"
+  elif [[ ${needs_local_db} -eq 1 ]]; then
     local pg_container="${PROJECT_NAME}_postgres"
     wait_for_postgres "${pg_container}"
   else
     ok "Using remote database (${DB_HOST}:${DB_PORT}), skipping local Postgres"
   fi
 
+  if [[ ${infra_only} -eq 1 && ${uses_docker} -eq 0 ]]; then
+    ok "Nothing to start: SQLite runs inside the back process and Redis is not configured (--infra-only has no effect)"
+    return
+  fi
+
   if [[ ${infra_only} -eq 1 ]]; then
     ok "Infrastructure is running (infra-only mode)"
     echo ""
-    if [[ ${needs_local_db} -eq 1 ]]; then
+    if [[ "${db_engine}" == "sqlite" ]]; then
+      echo "  SQLite   : ${DB_PATH:-data/${PROJECT_NAME}.db} (file, no container)"
+    elif [[ ${needs_local_db} -eq 1 ]]; then
       echo "  Postgres : localhost:${DB_PORT}"
     else
       echo "  Postgres : ${DB_HOST}:${DB_PORT} (remote)"

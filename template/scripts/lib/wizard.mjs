@@ -11,7 +11,7 @@
 
 import readline from 'node:readline/promises';
 
-import { BASE_MODULES, applicableQuestions, questionDefault, resolveProject } from './project-engine.mjs';
+import { BASE_MODULES, applicableQuestions, questionDefault, resolveProject, supportsDatabase } from './project-engine.mjs';
 
 export const csv = (v) => String(v).split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -99,6 +99,7 @@ export async function selectFunctionalModules(prompter, catalog, answers) {
   const hidden = new Set([...BASE_MODULES, 'user']);
   const candidates = [...catalog.byId.values()]
     .filter((m) => !hidden.has(m.id) && (answers.privateAccess || m.visibility === 'public'))
+    .filter((m) => supportsDatabase(m, answers.database?.engine ?? 'selfhosted')) // e.g. Postgres-only modules are not offered with SQLite
     .sort((x, y) => x.category.localeCompare(y.category) || x.id.localeCompare(y.id));
   if (!candidates.length) return [];
   const options = candidates.map((m) => ({ value: m.id, label: `[${m.category}] ${m.description}` }));

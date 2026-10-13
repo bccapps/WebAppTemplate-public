@@ -56,6 +56,7 @@ node tools/check-boundaries.mjs --root . --stack-dirs nest,react --allowed tools
 node tools/check-boundaries.mjs --root . --stack-dirs nest,react --check-manifests --visibility public
 node tools/license-headers.mjs --root . --license mit --check
 tools/ci-sandbox.sh anonymous      # wizard-created anonymous project: builds back + front, runs the back tests
+tools/ci-sandbox.sh anonymous-sqlite  # same as anonymous with the SQLite engine (DATABASE_ENGINE=sqlite, better-sqlite3, entity discovery on a SQLite file)
 tools/ci-sandbox.sh multi-users    # same with multi-user accounts + sales, using a fake vx-private (SANDBOX_PRIVATE=<dir> for a real one)
 tools/ci-git-flow.sh       # create-project / update_common / deploy staging against local bare origins
 ```
