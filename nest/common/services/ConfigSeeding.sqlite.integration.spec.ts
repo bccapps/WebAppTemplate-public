@@ -21,6 +21,18 @@ import { ModuleConfigSchema } from '../types/ModuleConfigSchema';
 import { ConfigSeederService } from './ConfigSeederService';
 import { ModuleConfigSeederService } from './ModuleConfigSeederService';
 
+// The SQLite driver is an optional dependency (projects that choose SQLite add it): skip these specs without it.
+const hasSqliteDriver = ((): boolean => {
+  try {
+    require.resolve('better-sqlite3');
+    return true;
+  } catch {
+    return false;
+  }
+})();
+const describeWithSqlite = hasSqliteDriver ? describe : describe.skip;
+
+
 jest.mock('src/config/defaultConfig', () => ({
   defaultConfigEntries: [
     { name: 'app_title', value: 'App', description: 'Title' },
@@ -57,7 +69,7 @@ afterEach(async () => {
   await dataSource.destroy();
 });
 
-describe('configuration seeding on a fresh SQLite database', () => {
+describeWithSqlite('configuration seeding on a fresh SQLite database', () => {
   it('seeds defaults and schema fields run concurrently without a UNIQUE violation', async () => {
     const defaults = new ConfigSeederService(repo);
     const modules = new ModuleConfigSeederService(repo);
@@ -91,7 +103,7 @@ describe('configuration seeding on a fresh SQLite database', () => {
   });
 });
 
-describe('seed precedence: defaultConfig.ts of the app over module schema defaults', () => {
+describeWithSqlite('seed precedence: defaultConfig.ts of the app over module schema defaults', () => {
   const run = (order: 'defaults-first' | 'modules-first' | 'concurrent') => {
     const defaults = new ConfigSeederService(repo);
     const modules = new ModuleConfigSeederService(repo);
@@ -114,7 +126,7 @@ describe('seed precedence: defaultConfig.ts of the app over module schema defaul
   });
 });
 
-describe('insertConfigIfAbsent on Postgres (SQL only, no connection)', () => {
+describeWithSqlite('insertConfigIfAbsent on Postgres (SQL only, no connection)', () => {
   it('generates ON CONFLICT DO NOTHING, the same idempotent insert as SQLite OR IGNORE', async () => {
     const pg = new DataSource({ type: 'postgres', entities: [ConfigurationEntity] });
     await (pg as unknown as { buildMetadatas(): Promise<void> }).buildMetadatas();

@@ -17,6 +17,18 @@ import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
 import type { TestingModule } from '@nestjs/testing';
 import type { DataSource } from 'typeorm';
 
+// The SQLite driver is an optional dependency (projects that choose SQLite add it): skip these specs without it.
+const hasSqliteDriver = ((): boolean => {
+  try {
+    require.resolve('better-sqlite3');
+    return true;
+  } catch {
+    return false;
+  }
+})();
+const describeWithSqlite = hasSqliteDriver ? describe : describe.skip;
+
+
 type Imports = {
   dataSource: DataSource;
   VoiceProviderCatalogEntity: typeof import('./entities/VoiceProviderCatalogEntity').VoiceProviderCatalogEntity;
@@ -52,7 +64,7 @@ afterAll(async () => {
   else process.env.DB_ENGINE = previousEnv.engine;
 });
 
-describe('voice entities on in-memory SQLite', () => {
+describeWithSqlite('voice entities on in-memory SQLite', () => {
   it('writes and reads back voice entities (JSON column, relation, simple-array)', async () => {
     const catalog = ctx.dataSource.getRepository(ctx.VoiceProviderCatalogEntity);
     const provider = await catalog.save(catalog.create({ name: 'P', slug: 'p', type: 'tts', capabilities: ['tts', 'stt'], baseUrl: 'http://x' }));

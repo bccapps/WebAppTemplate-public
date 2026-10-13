@@ -18,6 +18,18 @@ import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals';
 import type { TestingModule } from '@nestjs/testing';
 import type { DataSource, Repository } from 'typeorm';
 
+// The SQLite driver is an optional dependency (projects that choose SQLite add it): skip these specs without it.
+const hasSqliteDriver = ((): boolean => {
+  try {
+    require.resolve('better-sqlite3');
+    return true;
+  } catch {
+    return false;
+  }
+})();
+const describeWithSqlite = hasSqliteDriver ? describe : describe.skip;
+
+
 type Imports = {
   dataSource: DataSource;
   CronLockService: typeof import('./services/CronLockService').CronLockService;
@@ -71,7 +83,7 @@ afterAll(async () => {
   }
 });
 
-describe('portable entities on in-memory SQLite', () => {
+describeWithSqlite('portable entities on in-memory SQLite', () => {
   it('uses the SQLite column types', () => {
     const theme = ctx.dataSource.getMetadata(ctx.ThemeEntity);
     const consent = ctx.dataSource.getMetadata(ctx.CookieConsentEntity);
@@ -113,7 +125,7 @@ describe('portable entities on in-memory SQLite', () => {
   });
 });
 
-describe('CronLockService on SQLite', () => {
+describeWithSqlite('CronLockService on SQLite', () => {
   it('runIfDue runs once, then skips while the cooldown applies', async () => {
     const lock = moduleRef.get(ctx.CronLockService);
     const callback = jest.fn(async (): Promise<void> => undefined);
