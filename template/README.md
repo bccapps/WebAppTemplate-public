@@ -166,6 +166,7 @@ plugins (`plugin.ts` / `plugin.tsx`). Questions (Enter = default; each has a CLI
 |---|---|---|
 | 1 | name, site name, publisher entity, contact email, ports | placeholders, `.env.dev` |
 | 2 | access to the private modules? | mounts `vx-private` (`--private`) |
+| 2b | **desktop application (Tauri)?** (`--desktop` / `--no-desktop`, default no; `--desktop-name` [site name], `--desktop-identifier` [`com.example.<name>`]; asked before the database) | writes the `desktop` section of `project.config.json` (`enabled`, `productName`, `identifier`, `sidecars: []`); enabled: SQLite becomes the proposed database, multi-user is not asked, local trust (3') is proposed (default yes); copies `desktop/` (the shell, `desktop.config.json` filled with the name and the reverse-domain identifier, `tauri.conf.json` synced) and `.github/workflows/build-desktop.yml`, and adds `desktop:dev` and `desktop:build` to `back/package.local.json` (see « Desktop application »). Refused with the `user` module, with a database other than SQLite or with an identifier that is not a reverse domain (letters, digits, hyphens, at least two dot-separated parts) |
 | 3 | **multi-user application** (accounts, login)? | yes: the `user` module and what it `requires` (`common` only); no: anonymous mode, `ADMIN_TOKEN` generated in `back/.env.dev` |
 | 3' | **single-user local application (local trust mode)?** (asked last, only without the user module; `--local-trust`) | writes `LOCAL_TRUST=true` and `HOST=127.0.0.1` in `back/.env.dev` (`ADMIN_TOKEN` is still generated) |
 | 3a-c | login methods, sign-up (open / invitation / waiting list), several organizations | seeded values in `back/src/config/defaultConfig.ts` (+ `waitlist` / `tenant` modules); declared by the `user` manifest |
@@ -217,12 +218,34 @@ node scripts/add-module.mjs voice
 node scripts/add-module.mjs --remove voice      # refused when another linked module requires it
 ```
 
+### Desktop application
+
+The desktop option turns the project into a Tauri 2 application (shell in `desktop/`, packaging scripts in `scripts/desktop/`,
+details and `desktop.config.json` keys in `desktop/README.md`). Nothing is copied unless the option is chosen; the shell
+runs the back with `DATABASE_ENGINE=sqlite` and `LOCAL_TRUST=true`, hence the refusal with the `user` module or another
+database. Declare extra processes (a Python engine...) in `desktop.sidecars` of `project.config.json` before creation, or in
+`desktop/desktop.config.json` afterwards (`desktop.config.json` is the source of truth once the shell is installed).
+
+```bash
+node scripts/add-desktop.mjs --dry-run                 # existing project: print what would happen
+node scripts/add-desktop.mjs --name "My App" --identifier org.acme.myapp
+cd back && npm run desktop:dev                          # needs the Rust toolchain; builds nothing, uses back/dist and front/dist
+cd back && npm run desktop:build                        # builds back + front, then scripts/desktop/build-desktop.mjs --bundle
+```
+
+`add-desktop.mjs` has the same effects as answering yes to the question: it copies `desktop/` and the workflow, writes the
+`desktop` section of `project.config.json`, fills `desktop/desktop.config.json`, adds the two scripts to
+`back/package.local.json` and regenerates `back/package.json`. It overwrites nothing: it is refused when the option is already
+enabled, when `desktop/` or the workflow already exists, with the `user` module, with a database other than SQLite and with an
+invalid identifier. The identifier names the OS data folder of the app: change the `com.example.*` placeholder before shipping.
+
 ## Library scripts (vx-public / vx-private)
 
 | Script | Purpose |
 |---|---|
 | `scripts/create-project.sh [options] [<name> [dir]]` | New project (wizard above): mounts `vx-public` (+ `vx-private`) in `back/.libs` and `front/.libs`, `.libs/apptemplate` symlinks, `shared-modules.json`, env files. URLs: `VX_PUBLIC_URL` / `VX_PRIVATE_URL` (defaults: `https://github.com/bccapps/WebAppTemplate-{public,private}.git`) |
 | `scripts/add-module.mjs <id>... [--remove]` | Add / remove shared modules in an existing project |
+| `scripts/add-desktop.mjs [--name <text>] [--identifier <id>] [--dry-run]` | Add the desktop shell (Tauri) to an existing project (see « Desktop application ») |
 | `scripts/update_common.sh [--push-only\|--pull-only]` | For each mounted library: commit local changes of the back mount, fetch, rebase on `origin/main`, push; then the same on the front mount; both end on the same SHA; the parent repo gets a `chore: bump <lib>` commit. Then symlinks, `package.json` regeneration. Refuses a legacy app (run the migration first) |
 | `scripts/migrate-to-webapptemplate.sh` | One-shot, idempotent migration of a legacy app (`nestcommon`/`reactcommon`/`apptemplate` submodules). Does not commit |
 | `scripts/deploy-full.sh` | Deploys with the **latest `main`** of the libraries (`git submodule update --init --remote`), not the refs pinned by the app commit |

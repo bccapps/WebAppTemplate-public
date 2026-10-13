@@ -37,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [anonymous, anonymous-sqlite, users-only, multi-users]
+        mode: [anonymous, anonymous-sqlite, anonymous-sqlite-desktop, users-only, multi-users]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

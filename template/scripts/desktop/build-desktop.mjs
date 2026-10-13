@@ -30,7 +30,7 @@
  */
 
 import { spawnSync } from 'child_process';
-import { chmodSync, cpSync, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'fs';
+import { chmodSync, cpSync, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from 'fs';
 import path from 'path';
 import { pipeline } from 'stream/promises';
 import { Readable } from 'stream';
@@ -239,6 +239,6 @@ async function main() {
   else log('Resources ready. Next: --bundle, or scripts/desktop/package-cross.mjs for a portable Windows/Linux package.');
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((err) => { console.error(`ERROR ${err.message}`); process.exit(1); });
 }

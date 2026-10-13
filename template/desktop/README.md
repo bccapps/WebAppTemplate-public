@@ -195,7 +195,7 @@ Resources for the target must have been assembled with the same `--target`; for 
 
 `template/.github/workflows/build-desktop.yml` is a skeleton (macOS arm64 and x64, Windows, Linux) that runs
 `build-desktop.mjs --bundle` and uploads the bundles. It is copied into a project only when the desktop option is chosen
-(G3). It has never run on GitHub Actions.
+(`create-project.mjs --desktop` or `scripts/add-desktop.mjs`). It has never run on GitHub Actions.
 
 ## Possible evolution
 
@@ -203,10 +203,25 @@ Resources for the target must have been assembled with the same `--target`; for 
   started; it needs a release process the template does not impose.
 - Notarization and Windows signing in the CI workflow.
 
-## Not done yet (G3)
+## Adding the shell to a project
 
-- **G3 wizard**: the "desktop app" question of `create-project`, `desktop` entry in `project.config.json` (generating
-  `desktop.config.json` from it), `scripts/add-desktop.mjs` for existing projects, the `desktop:dev` / `desktop:build`
-  npm scripts.
+- New project: `create-project.mjs --desktop [--desktop-name <text>] [--desktop-identifier <reverse.domain>]`, or answer
+  yes to « Desktop application (Tauri)? » (asked before the database: SQLite becomes the default, multi-user is not asked, local
+  trust is proposed). The answers are saved in the `desktop` section of `project.config.json`
+  (`{ enabled, productName, identifier, sidecars: [] }`); `productName` defaults to the site name, `identifier` to
+  `com.example.<project name>` (a placeholder: it names the OS data folder, choose your own).
+- Existing project: `node scripts/add-desktop.mjs [--name ...] [--identifier ...] [--dry-run]`.
+- Both copy this folder (without `node_modules`, `build`, `target`, `src-tauri/gen`) and the workflow, fill `desktop.config.json`
+  (`productName`, `identifier`, `sidecars`) and sync `tauri.conf.json`, and add `desktop:dev` / `desktop:build` to
+  `back/package.local.json` (run them from `back/`; `desktop:dev` needs the Rust toolchain).
+- Refused with the `user` module (the shell forces `LOCAL_TRUST=true`), with a database other than SQLite (it forces
+  `DATABASE_ENGINE=sqlite`), with an invalid identifier, and when `desktop/` or the workflow already exists (nothing is
+  overwritten). Once installed, `desktop/desktop.config.json` is the source of truth: the `desktop` section of
+  `project.config.json` only records the answers.
+- CI: `tools/ci-sandbox.sh anonymous-sqlite-desktop` checks the generation (files, configs, scripts, `build-desktop.mjs --dry-run`)
+  and never compiles Rust.
+
+## Not done yet
+
 - Not verified here: a real window launch (the shell was compiled and unit-tested only), and a real packaging run
   (no download, no assembly, no `tauri build`, no signing was performed; only pure functions and `--dry-run`).

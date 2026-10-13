@@ -34,9 +34,10 @@ import { fileURLToPath } from 'node:url';
 
 import {
   DB_ENGINES, DB_ENGINE_LABELS, appendModuleEnv, applyEnvValues, buildConfigEntries, buildEnvFromAnswers, buildSharedModules,
-  filterEnvExample, frontPackageLocal, loadCatalog, normalizeAnswers, patchDefaultConfig, resolveProject, resolvePwa, supportsDatabase,
+  filterEnvExample, frontPackageLocal, loadCatalog, normalizeAnswers, patchDefaultConfig, resolveDesktop, resolveProject, resolvePwa, supportsDatabase,
   validateAnswers, withQuestionDefaults,
 } from './lib/project-engine.mjs';
+import { installDesktop } from './lib/desktop-install.mjs';
 import { Prompter, askModuleQuestions, csv, selectFunctionalModules } from './lib/wizard.mjs';
 
 const SCRIPT_DIR = path.dirname(realpathSync(fileURLToPath(import.meta.url)));
@@ -65,6 +66,9 @@ Answers (each one is asked interactively when not given):
   --local-trust | --no-local-trust   single-user local app: no admin key on loopback (LOCAL_TRUST, needs no user module)
   --pwa | --no-pwa          installable app (PWA: manifest, service worker, install button) [no]
   --pwa-name <text> --pwa-short-name <text> (<= 12 chars)   --pwa-theme-color <#rrggbb> --pwa-background-color <#rrggbb>
+  --desktop | --no-desktop  desktop application (Tauri shell: desktop/, build-desktop.yml, desktop:dev / desktop:build); implies SQLite by
+                            default, refused with the user module or another database [no]
+  --desktop-name <text> --desktop-identifier <com.example.app>   product name [site name] and reverse-domain id [com.example.<name>]
   --commerce | --no-commerce       enable the sales screens (needs multi-user)
   --modules a,b             extra functional modules (closure of "requires" is added)
   --db <selfhosted|cloud|supabase|neon|sqlite>   --redis | --no-redis
@@ -80,7 +84,7 @@ Environment: VX_PUBLIC_URL, VX_PRIVATE_URL, LIB_BRANCH (see scripts/lib/libs.sh)
 `;
 
 const BOOL_FLAGS = new Set([
-  'private', 'no-private', 'with-private', 'multi-user', 'no-multi-user', 'with-users', 'commerce', 'no-commerce', 'local-trust', 'no-local-trust', 'pwa', 'no-pwa',
+  'private', 'no-private', 'with-private', 'multi-user', 'no-multi-user', 'with-users', 'commerce', 'no-commerce', 'local-trust', 'no-local-trust', 'pwa', 'no-pwa', 'desktop', 'no-desktop',
   'redis', 'no-redis', 'yes', 'dry-run', 'no-install', 'no-github', 'no-commit', 'vendor-libs', 'help',
 ]);
 
@@ -138,6 +142,9 @@ export function answersFromCli(opts) {
   if (opts['no-pwa']) a.pwa = { enabled: false };
   const pwaFields = { name: opts['pwa-name'], shortName: opts['pwa-short-name'], themeColor: opts['pwa-theme-color'], backgroundColor: opts['pwa-background-color'] };
   for (const [key, value] of Object.entries(pwaFields)) if (value) a.pwa = { ...(a.pwa ?? {}), [key]: value };
+  if (opts.desktop) a.desktop = { enabled: true };
+  if (opts['no-desktop']) a.desktop = { enabled: false };
+  for (const [key, value] of Object.entries({ productName: opts['desktop-name'], identifier: opts['desktop-identifier'] })) if (value) a.desktop = { ...(a.desktop ?? {}), [key]: value };
   if (opts.commerce) a.commerce = true;
   if (opts['no-commerce']) a.commerce = false;
   if (opts.modules) a.modules = csv(opts.modules);
@@ -223,12 +230,15 @@ export async function collectAnswers({ opts, given, prompter, catalogFor }) {
   }
   const catalog = await catalogFor(a);
 
+  if (given.desktop?.enabled === undefined) a.desktop.enabled = await prompter.confirm('Desktop application (Tauri)?', false);
+  if (a.desktop.enabled) await askDesktopIdentity(prompter, given, a);
+
   // The engine comes first: modules that do not support it (module.json `databases`) are then not offered.
   if (!given.database?.engine) {
-    a.database.engine = await prompter.select('Database', Object.keys(DB_ENGINES).map((value) => ({ value, label: DB_ENGINE_LABELS[value] })), 'selfhosted');
+    a.database.engine = await prompter.select('Database', Object.keys(DB_ENGINES).map((value) => ({ value, label: DB_ENGINE_LABELS[value] })), a.desktop.enabled ? 'sqlite' : 'selfhosted');
   }
   if (given.multiUser === undefined) {
-    a.multiUser = a.privateAccess && supportsDatabase(catalog.byId.get('user'), a.database.engine) && catalog.byId.has('user')
+    a.multiUser = !a.desktop.enabled && a.privateAccess && supportsDatabase(catalog.byId.get('user'), a.database.engine) && catalog.byId.has('user')
       ? await prompter.confirm('Multi-user application (accounts, login)?', false) : false;
   }
   if (!given.modules) a.modules = await selectFunctionalModules(prompter, catalog, a);
@@ -236,12 +246,19 @@ export async function collectAnswers({ opts, given, prompter, catalogFor }) {
   if (given.localTrust === undefined) {
     // Asked last: modules may pull the user module in through "requires".
     a.localTrust = !resolveProject(catalog, a).ids.includes('user')
-      && await prompter.confirm('Single-user local application (local trust mode: no admin key on this machine)?', false);
+      && await prompter.confirm('Single-user local application (local trust mode: no admin key on this machine)?', a.desktop.enabled);
   }
   if (given.pwa?.enabled === undefined) a.pwa.enabled = await prompter.confirm('Installable app (PWA: manifest, service worker, install button)?', false);
   if (given.database?.redis === undefined) a.database.redis = await prompter.confirm('Redis?', false);
   if (!given.languages) a.languages = csv(await prompter.text('Languages (first = default)', 'fr,en'));
   return { answers: a, catalog };
+}
+
+/** Desktop questions (product name, identifier), asked only when the option is on and not given. */
+async function askDesktopIdentity(prompter, given, a) {
+  const defaults = resolveDesktop(a);
+  if (!given.desktop?.productName) a.desktop.productName = await prompter.text('Desktop app name', defaults.productName);
+  if (!given.desktop?.identifier) a.desktop.identifier = await prompter.text('Desktop app identifier (reverse domain, e.g. com.mycompany.myapp)', defaults.identifier);
 }
 
 // ---------------------------------------------------------------------------
@@ -447,7 +464,7 @@ function finishProject({ root, opts, answers, resolved, catalog }) {
   sh('node', ['scripts/link-config.mjs', root]);
 
   writeIfAbsent(path.join(root, 'shared-modules.json'), `${JSON.stringify(buildSharedModules(resolved, SHARED_DOC), null, 2)}\n`, 'shared-modules.json');
-  const saved = { ...answers, resolved: resolved.perStack };
+  const saved = { ...answers, desktop: answers.desktop.enabled ? resolveDesktop(answers) : { enabled: false }, resolved: resolved.perStack };
   writeFileSync(path.join(root, 'project.config.json'), `${JSON.stringify(saved, null, 2)}\n`);
   log.ok('project.config.json written.');
 
@@ -463,6 +480,10 @@ function finishProject({ root, opts, answers, resolved, catalog }) {
   }
   patchDefaults(root, buildConfigEntries(catalog, answers, resolved.ids));
   writeLocales(root, answers);
+  if (answers.desktop.enabled) {
+    const copied = installDesktop(root, path.join(root, 'front', '.libs', 'apptemplate'), answers, { keepExisting: true });
+    log.ok(`Desktop shell: ${copied.length} files copied (desktop/, .github/workflows/build-desktop.yml), scripts desktop:dev and desktop:build added to back/package.local.json.`);
+  }
 
   for (const stack of ['back', 'front']) {
     sh('node', ['.libs/apptemplate/scripts/build-package.mjs', stack], { cwd: path.join(root, stack) });
@@ -526,6 +547,8 @@ export function renderPlan(answers, resolved, catalog, root) {
   const entries = buildConfigEntries(catalog, answers, resolved.ids);
   const pwa = resolvePwa(answers);
   lines.push(`PWA             ${pwa.enabled ? `yes ("${pwa.name}" / "${pwa.shortName}", theme ${pwa.themeColor}, background ${pwa.backgroundColor}; vite-plugin-pwa added to front/package.local.json)` : 'no'}`);
+  const desktop = resolveDesktop(answers);
+  lines.push(`Desktop         ${desktop.enabled ? `yes ("${desktop.productName}", ${desktop.identifier}; desktop/, .github/workflows/build-desktop.yml, scripts desktop:dev and desktop:build in back/package.local.json)` : 'no'}`);
   lines.push(`Seeded config   ${entries.map((e) => e.name).join(', ')}`);
   lines.push(`Files           shared-modules.json, project.config.json, back/.env.dev + .env.example, front/.env.dev + .env.example, back/src/config/defaultConfig.ts, back/src/locales/custom.<lang>.json, front/public/{robots.txt,_redirects,_headers,favicon.svg}${pwa.enabled ? ', front/pwa.plugin.ts, front/pwa-assets.config.ts, front/src/sw.ts' : ''}`);
   return lines.join('\n');
@@ -543,6 +566,7 @@ const SUMMARY = (a, root) => `
   - front/src/components/pages/{Confidentiality,LegalMentions,UsageConditions}.tsx — legal text for ${a.entityName || 'your entity'}
   - FEATURES.md — create it and track the application capabilities
 ${a.pwa?.enabled ? `  - PWA: replace front/public/favicon.svg with your logo, then run "npm run pwa:icons" in front/ (generates the manifest icons)
+` : ''}${a.desktop?.enabled ? `  - desktop: check desktop/desktop.config.json (identifier "${a.desktop.identifier}" names the OS data folder), run "tauri icon <logo>" in desktop/ for the app icons, see desktop/README.md
 ` : ''}  - add a module later: node scripts/add-module.mjs <id>
 ============================================================
 `;

@@ -165,6 +165,8 @@ export function normalizeAnswers(input = {}) {
   a.privateAccess = Boolean(a.privateAccess);
   a.multiUser = Boolean(a.multiUser);
   a.localTrust = Boolean(a.localTrust);
+  a.desktop = { ...(a.desktop ?? {}), enabled: Boolean(a.desktop?.enabled) };
+  if (a.desktop.sidecars !== undefined && !Array.isArray(a.desktop.sidecars)) a.desktop.sidecars = [a.desktop.sidecars];
   a.pwa = { ...(a.pwa ?? {}), enabled: Boolean(a.pwa?.enabled) };
   a.modules = [...new Set(a.modules ?? [])];
   a.database = { engine: 'selfhosted', redis: false, ...(a.database ?? {}) };
@@ -270,6 +272,7 @@ export function validateAnswers(rawAnswers, catalog) {
 
   const resolved = resolveModules(catalog, selectedModules(a));
   errors.push(...resolved.errors);
+  errors.push(...validateDesktop(a, resolved.ids));
   if (a.localTrust && resolved.ids.includes('user')) errors.push('localTrust only applies to applications without the user module');
   errors.push(...databaseIncompatibilities(catalog, resolved.ids, a.database.engine));
   if (!a.privateAccess) {
@@ -375,6 +378,67 @@ export function renderPwaTemplate(text, pwa) {
   let out = filterPwaBlocks(text, pwa.enabled);
   for (const [token, value] of Object.entries(pwaPlaceholders(pwa))) out = out.replaceAll(token, () => value);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Desktop shell (Tauri, optional)
+// ---------------------------------------------------------------------------
+
+/** Reverse-DNS application identifier (also the name of the OS data folder), e.g. `com.example.notes`. */
+export const DESKTOP_IDENTIFIER = /^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-9-]*)+$/;
+
+/** npm scripts added to back/package.local.json when the desktop option is on (run from `back/`). */
+export const DESKTOP_NPM_SCRIPTS = {
+  'desktop:dev': 'npm --prefix ../desktop install && DESKTOP_RESOURCES="$(cd .. && pwd)" npm --prefix ../desktop run dev',
+  'desktop:build': 'npm run build && npm --prefix ../front run build && npm --prefix ../desktop install && node ../scripts/desktop/build-desktop.mjs --root .. --bundle',
+};
+
+/**
+ * Complete `desktop` section of the answers: `{ enabled, productName, identifier, sidecars }`.
+ * `productName` defaults to the site name, `identifier` to `com.example.<project name without hyphens>`.
+ */
+export function resolveDesktop(rawAnswers) {
+  const a = normalizeAnswers(rawAnswers);
+  return {
+    enabled: a.desktop.enabled,
+    productName: (a.desktop.productName || a.siteName || a.projectName || '').trim(),
+    identifier: (a.desktop.identifier || `com.example.${String(a.projectName ?? '').replace(/-/g, '')}`).trim(),
+    sidecars: a.desktop.sidecars ?? [],
+  };
+}
+
+/**
+ * Messages for an inconsistent `desktop` section; empty when the option is off. The shell always runs the back with
+ * `DATABASE_ENGINE=sqlite` and `LOCAL_TRUST=true`, hence the two cross-checks. `resolvedIds` = linked modules.
+ */
+export function validateDesktop(rawAnswers, resolvedIds) {
+  const a = normalizeAnswers(rawAnswers);
+  if (!a.desktop.enabled) return [];
+  const desktop = resolveDesktop(a);
+  const errors = [];
+  if (!desktop.productName) errors.push('desktop.productName is required when the desktop option is enabled (it defaults to the site name)');
+  if (!DESKTOP_IDENTIFIER.test(desktop.identifier)) errors.push(`desktop.identifier "${desktop.identifier}" must be a reverse-domain id such as com.example.myapp (letters, digits, hyphens, at least two dot-separated parts)`);
+  if (a.database.engine !== 'sqlite') errors.push('the desktop option requires the sqlite database engine (the shell runs the back with DATABASE_ENGINE=sqlite)');
+  if (resolvedIds.includes('user')) errors.push('the desktop option only applies to applications without the user module (the shell runs the back in local trust mode)');
+  const seen = new Set();
+  for (const [i, sidecar] of desktop.sidecars.entries()) {
+    const name = sidecar?.name;
+    if (typeof name !== 'string' || !name) errors.push(`desktop.sidecars[${i}] needs a "name"`);
+    else if (name === 'server' || seen.has(name)) errors.push(`desktop.sidecars[${i}]: name "${name}" is reserved or duplicated`);
+    else seen.add(name);
+  }
+  return errors;
+}
+
+/** Content of desktop/desktop.config.json: the template's file with the project's identity and sidecars. Pure. */
+export function buildDesktopConfig(templateConfig, rawAnswers) {
+  const desktop = resolveDesktop(rawAnswers);
+  return { ...templateConfig, productName: desktop.productName, identifier: desktop.identifier, sidecars: desktop.sidecars };
+}
+
+/** `package.local.json` of the back with the desktop scripts added (existing scripts of the same name are kept). */
+export function withDesktopScripts(pkg) {
+  return { ...pkg, scripts: { ...DESKTOP_NPM_SCRIPTS, ...(pkg.scripts ?? {}) } };
 }
 
 /** True when a catalog entry works with the wizard database choice (`databases` absent = every engine). */

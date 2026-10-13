@@ -17,7 +17,7 @@
  *   node scripts/sync-tauri-config.mjs [--version 1.2.3] [--dir <desktop dir>]
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -82,4 +82,4 @@ function main() {
   console.log(`tauri.conf.json: ${next.productName} (${next.identifier})${opts.version ? ` v${opts.version}` : ''}`);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) main();
