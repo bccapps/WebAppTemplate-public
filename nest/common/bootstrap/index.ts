@@ -8,3 +8,4 @@
  */
 
 export * from './configureHttpApp';
+export * from './serveFrontend';

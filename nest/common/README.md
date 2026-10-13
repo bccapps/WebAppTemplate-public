@@ -14,6 +14,7 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 | Notifications | `ProwlService` publie des alertes push via l'API Prowl.
 | Email | `EmailService` envoie des emails via Brevo (SMTP relay) ou un serveur SMTP custom, configurable depuis l'admin via `emailConfigSchema`. Le transport est recréé automatiquement lorsqu'un paramètre change.
 | Démarrage HTTP | `bootstrap/configureHttpApp.ts` : `configureHttpApp(app, options?)` applique le durcissement commun (voir « Démarrage HTTP » plus bas). |
+| Service du front | `bootstrap/serveFrontend.ts` : `serveFrontend(app, dir)`, option activée par `SERVE_FRONT_DIR` (voir « Servir le front » plus bas). |
 | Santé | `HealthController` : `GET /api/v1/health` public, agrège les contributeurs `HEALTH_CONTRIBUTORS`. |
 | Stockage d'images | `ImageStorageService` écrit sur disque local (défaut) ou sur un bucket Cloudflare R2, configurable depuis l'admin via `storageConfigSchema`. Voir « Stockage R2 » plus bas.
 
@@ -419,6 +420,17 @@ Exemples :
 | `RAW_BODY_PATHS` | `/webhook` | Fragments de chemin dont le corps JSON est aussi disponible en `req.rawBody` (signatures de webhooks), limite 50 Mo. Correspondance par sous-chaîne sur le chemin sans query string. Les autres routes : 5 Mo. |
 
 Limites ajustables par option (`jsonLimit`, `rawBodyLimit`). Tests : `bootstrap/configureHttpApp.spec.ts`.
+
+### Servir le front (`serveFrontend`)
+
+Option pour un déploiement même origine (bureau, conteneur unique) : URL d'API relatives, pas de CORS. `main.ts` lit `resolveFrontDir()` (variable `SERVE_FRONT_DIR`, chemin relatif résolu depuis le dossier de travail du back) et appelle `serveFrontend(app, dir)` **après `app.init()`** si elle est définie. Sans variable, rien n'est monté.
+
+- Fichiers statiques via `express.static` (aucune dépendance ajoutée) ; `index.html` répond `Cache-Control: no-cache`, `/assets/*` répond `public, max-age=31536000, immutable` (noms hachés par Vite).
+- Repli SPA : tout `GET` qui accepte du HTML et n'est ni `/api`, ni `/api/*` (Swagger sur `/api`, API sur `/api/v1`), ni `/assets/*` reçoit `index.html`. Un fichier absent sous `/assets/` donne un 404, jamais l'index. Les autres méthodes et les requêtes `Accept: application/json` ne sont pas interceptées.
+- Nest enregistre son handler 404 à la fin de `app.init()` : `serveFrontend` replace donc ses deux middlewares devant lui dans la pile Express (sans effet si la pile n'a pas la forme attendue). Elle **lève** une erreur si `dir/index.html` est absent (démarrage en échec plutôt que 404 silencieux).
+- Hors périmètre : la CSP (posée par le front ou nginx), la compression des fichiers statiques (`compression` de `main.ts`).
+
+Tests : `bootstrap/serveFrontend.spec.ts` (dossier temporaire, supertest).
 
 ## Services exportés
 
