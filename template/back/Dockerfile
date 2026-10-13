@@ -90,7 +90,9 @@ ENV NODE_ENV=production
 # calls fail with "x509: certificate signed by unknown authority" without it.
 # postgresql-client: pg_isready/psql, used by migrate-db.sh to wait for the DB and check
 # whether the schema is empty before running TypeORM migrations inside this same image.
-RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates postgresql-client && \
+# git: needed by apps that host or run git themselves (AgentHub serves per-project git remotes through
+# `git http-backend` and creates bare repositories). Harmless for the others (~40 MB, no daemon).
+RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates postgresql-client git && \
     rm -rf /var/lib/apt/lists/*
 
 # Layers are ordered from most stable to most volatile. Everything below an invalidated

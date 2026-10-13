@@ -1031,7 +1031,8 @@ ENV NODE_ENV=production
 # built in; Debian slim images don't ship it by default.
 # ca-certificates: TLS verification for outbound HTTPS calls made by native Go binaries
 # (e.g. zklighter-sdk's signer) — Debian slim doesn't ship the CA bundle either.
-RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates && \
+# git: keep in sync with back/Dockerfile (apps that host or run git themselves, e.g. AgentHub).
+RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates git && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --chown=node:node --from=prod-deps /app/node_modules ./node_modules
