@@ -9,5 +9,6 @@
 
 export * from './configureHttpApp';
 export * from './serveFrontend';
+export * from './swaggerEnabled';
 export * from './compressionMiddleware';
 export * from './watchParentProcess';

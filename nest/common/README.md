@@ -458,7 +458,7 @@ Nest ajoute son handler 404 et son filtre d'exceptions à la **fin** de `app.ini
 
 1. `configureHttpApp(app)` (proxy, helmet, CORS, corps, pipe) ;
 2. `app.use(lazyCompression(getThreshold))` : le seuil `common_gzip_threshold` n'est en base qu'après `init()` (seed), `getThreshold` est donc appelée **à la première requête** et l'instance `compression` est mise en cache ; seuil invalide ou lecture en échec : 1024 octets (`DEFAULT_GZIP_THRESHOLD`) ;
-3. `SwaggerModule.setup('api', app, document)` ;
+3. `SwaggerModule.setup('api', app, document)`, **seulement si `resolveSwaggerEnabled()`** (`bootstrap/swaggerEnabled.ts` : `SWAGGER_ENABLED=true|false`, sinon actif hors production uniquement) : la documentation de l'API n'est jamais publique en production par défaut ;
 4. `serveFrontend(app, dir)` si `SERVE_FRONT_DIR` ;
 5. `await app.init()`, puis `app.listen()` ;
 6. `exitWhenParentGone()` après l'écoute (sans effet sans `DESKTOP_PARENT_PID`).

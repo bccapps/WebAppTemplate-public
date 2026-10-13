@@ -16,7 +16,7 @@ import { ProwlService } from 'src/modules_shared/common/services/ProwlService';
 import * as http from 'http';
 import * as https from 'https';
 import { ConfigurationService } from 'src/modules_shared/common/services/ConfigurationService';
-import { configureHttpApp, DEFAULT_GZIP_THRESHOLD, lazyCompression, resolveFrontDir, exitWhenParentGone, resolveListenHost, serveFrontend } from 'src/modules_shared/common/bootstrap';
+import { configureHttpApp, DEFAULT_GZIP_THRESHOLD, lazyCompression, resolveFrontDir, exitWhenParentGone, resolveListenHost, resolveSwaggerEnabled, serveFrontend } from 'src/modules_shared/common/bootstrap';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const CacheableLookup = require('cacheable-lookup').default;
 
@@ -59,15 +59,17 @@ async function bootstrap() {
     })
   );
 
-  // configuration swagger
-  const config = new DocumentBuilder()
-    .setTitle('{{SITE_NAME}} API')
-    .setDescription('{{SITE_NAME}} API description')
-    .setVersion('1.0')
-    .addTag('{{PROJECT_NAME}}')
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, document);
+  // Swagger on /api: SWAGGER_ENABLED=true|false, else only outside production (never public by accident).
+  if (resolveSwaggerEnabled()) {
+    const config = new DocumentBuilder()
+      .setTitle('{{SITE_NAME}} API')
+      .setDescription('{{SITE_NAME}} API description')
+      .setVersion('1.0')
+      .addTag('{{PROJECT_NAME}}')
+      .build();
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api', app, document);
+  }
 
   // Optional same-origin front (SERVE_FRONT_DIR=<built front dir>): static files, SPA fallback, index.html never cached.
   const frontDir = resolveFrontDir();
