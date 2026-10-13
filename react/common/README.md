@@ -260,6 +260,22 @@ bundled at build time via `import.meta.glob`) are unaffected — they're already
 bundle regardless of the active language, this only scopes the *backend-served*
 `common`/`custom` categories.
 
+### Locales d'un module : le chemin de chargement
+
+Deux sources, fusionnées dans `i18n` par `LocaleService.init()` :
+
+1. **Embarquées** : `locales/locales.<lang>.json` de chaque module lié (dont `react/common/locales/`, clés `common.richtext.editor.*`,
+   etc.), collectées au build par `import.meta.glob('/src/modules_shared/**/locales/locales.*.json', { eager: true })` et fusionnées par
+   `mergeModuleLocales` (`services/moduleLocales.ts`, ordre des chemins, le dernier gagne sur une clé commune). Elles sont ajoutées **avant** tout
+   appel réseau.
+2. **Servies par le back** (`GET /locales?lang=`) : `common.<lang>.json`, `custom.<lang>.json` et les `locales/` des modules **Nest** liés.
+   Leur contenu s'ajoute aux clés embarquées et gagne sur une clé identique (c'est ainsi qu'une app personnalise un libellé).
+
+Conséquences : les clés d'un module front (dont `react/common`) sont disponibles dans toutes les apps, que `localesLocation` soit `remote` ou
+`local`, et même si la requête échoue ; **il ne faut jamais** les recopier dans les `common.*.json` partagés (hors dépôt). Le `/locales` du back
+ne les contient pas, par construction : pour vérifier une clé de module front, regarder le bundle, pas la réponse du back. Tests :
+`services/LocaleService.spec.ts`, `services/moduleLocales.spec.ts`.
+
 ---
 
 ## Modules distants — `isRemoteModule()` et `isAvailable()` (2026-09-23)
@@ -604,7 +620,7 @@ import { monTheme } from './mon-theme'
 themeRegistry.register(monTheme)
 ```
 
-**5. Ajouter les clés i18n** dans `nestcommon/common/locales/common.*.json`.
+**5. Ajouter les clés i18n** dans `<module>/locales/locales.{en,fr}.json` du module (voir « Locales d'un module » ci-dessous) — jamais dans les `common.*.json` partagés.
 
 ### Intégration dans l'app
 

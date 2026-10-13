@@ -11,6 +11,7 @@ import { HttpResult } from '../../common/core/http/HttpResult';
 import { httpService } from '../../common/core/http/HttpService';
 import { configurationService } from '../../common/services/ConfigurationService';
 import { i18n } from '../../common/core/i18n/I18n';
+import { mergeModuleLocales } from './moduleLocales';
 
 export class LocaleService {
   public preloadKey = 'LocaleService';
@@ -26,27 +27,9 @@ export class LocaleService {
   private readonly loadedLangs = new Set<string>();
   private readonly pendingLangLoads = new Map<string, Promise<void>>();
 
+  /** Labels bundled with the linked modules, whatever the locales mode (see `mergeModuleLocales`). */
   private getModuleLocales(): Record<string, Record<string, string>> {
-    const moduleLocaleFiles = import.meta.glob(
-      '/src/modules_shared/**/locales/locales.*.json',
-      { eager: true }
-    );
-    const mergedLocales: Record<string, Record<string, string>> = {};
-
-    Object.entries(moduleLocaleFiles).forEach(([filePath, module]) => {
-      const match = filePath.match(/locales\.([^.]+)\.json$/);
-      if (!match) return;
-
-      const lang = match[1];
-      const localePayload = (module as { default?: Record<string, string> })
-        .default as Record<string, string> | undefined;
-      const locales = localePayload || (module as Record<string, string>);
-
-      if (!mergedLocales[lang]) mergedLocales[lang] = {};
-      mergedLocales[lang] = { ...mergedLocales[lang], ...locales };
-    });
-
-    return mergedLocales;
+    return mergeModuleLocales(import.meta.glob('/src/modules_shared/**/locales/locales.*.json', { eager: true }));
   }
 
   private getLocalesLocation(): 'remote' | 'local' {

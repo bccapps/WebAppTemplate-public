@@ -127,4 +127,38 @@ describe('LocaleService — lang-scoped fetch (§1.3) + idempotent init (§1.4)'
     await Promise.all([p1, p2]);
     expect(httpServiceMock.get).toHaveBeenCalledTimes(2);
   });
+
+  it('init() serves the labels bundled with the modules (react/common/locales) when the remote payload does not carry them', async () => {
+    service.init(vi.fn());
+    fakeResult.resolve({ en: { 'custom.only': 'Remote' } });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(i18nMod.i18n.getForLang('custom.only', 'en')).toBe('Remote');
+    expect(i18nMod.i18n.getForLang('common.richtext.editor.bold', 'en')).toBe('Bold');
+  });
+
+  it('init() still serves the bundled labels when the remote fetch fails', async () => {
+    class FailingResult extends FakeHttpResult {
+      private failCb: (() => void) | null = null;
+      fail(cb?: () => void) { this.failCb = cb ?? null; return this; }
+      reject() { this.failCb?.(); }
+    }
+    const failing = new FailingResult();
+    httpServiceMock.get.mockReturnValue(failing);
+    const cb = vi.fn();
+    service.init(cb);
+    failing.reject();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(cb).toHaveBeenCalledTimes(1);
+    expect(i18nMod.i18n.getForLang('common.richtext.editor.bold', 'en')).toBe('Bold');
+  });
+
+  it('a remote key overrides the bundled label of the same key (app customisation wins)', async () => {
+    service.init(vi.fn());
+    fakeResult.resolve({ en: { 'common.richtext.editor.bold': 'Strong' } });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(i18nMod.i18n.getForLang('common.richtext.editor.bold', 'en')).toBe('Strong');
+  });
 });
