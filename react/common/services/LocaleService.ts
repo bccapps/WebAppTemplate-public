@@ -13,6 +13,19 @@ import { configurationService } from '../../common/services/ConfigurationService
 import { i18n } from '../../common/core/i18n/I18n';
 import { mergeModuleLocales } from './moduleLocales';
 
+/** Separates the category from the language in the keys of a local batch (`common|fr`): neither can contain it. */
+const LOCAL_KEY_SEPARATOR = '|';
+
+/** Turns `{ 'common|fr': {...}, 'custom|fr': {...} }` into `{ fr: { ...common, ...custom } }`. */
+export function mergeLocalBatch(byKey: Record<string, Record<string, string>>): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  for (const [key, labels] of Object.entries(byKey ?? {})) {
+    const lang = key.slice(key.indexOf(LOCAL_KEY_SEPARATOR) + 1);
+    out[lang] = { ...out[lang], ...labels };
+  }
+  return out;
+}
+
 export class LocaleService {
   public preloadKey = 'LocaleService';
   /** Guards against re-fetching `/locales` when `init()` is called more than
@@ -91,14 +104,30 @@ export class LocaleService {
         ret = httpService.get(url);
       }
     } else {
-      const locales = this.getLocalesLanguages();
-      const urls: { [id: string]: any } = {};
-      for (const locale of locales) {
-        urls[locale] = '/locales/' + category + '.' + locale + '.json';
-      }
-      ret = httpService.gets(urls, { skipTransport: true });
+      ret = this.getLocalLocales(category);
     }
     return ret;
+  }
+
+  /**
+   * Local mode: the files `/locales/<category>.<lang>.json` of every configured language. For `category === ''` (all
+   * categories) every category of `localesCategories` is fetched and merged per language (later categories win on a
+   * common key); a missing file fails the whole fetch, like any batch.
+   */
+  private getLocalLocales(category: string): HttpResult {
+    const categories = category === '' ? this.getLocalesCategories() : [category];
+    const urls: { [id: string]: string } = {};
+    for (const lang of this.getLocalesLanguages()) {
+      for (const cat of categories) urls[`${cat}${LOCAL_KEY_SEPARATOR}${lang}`] = `/locales/${cat}.${lang}.json`;
+    }
+    const batch = httpService.gets(urls, { skipTransport: true });
+    const merged = new HttpResult();
+    batch
+      .then((byKey: Record<string, Record<string, string>>) => merged.thenCb?.(mergeLocalBatch(byKey)))
+      .fail((e) => merged.failCb?.(e))
+      .error((e) => merged.errorCb?.(e))
+      .notAuthorized((e) => merged.notAuthorizedCb?.(e));
+    return merged;
   }
 
   /** Browser/OS language, mapped to the only two languages this app handles —
