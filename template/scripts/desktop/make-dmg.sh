@@ -1,10 +1,13 @@
 #!/bin/sh
+
+# =============================================================================
 # VXFramework
 #
 # Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
 # SPDX-License-Identifier: MIT
 #
 # Licensed under the MIT License. See LICENSE in the project root.
+# =============================================================================
 
 # Builds a macOS .dmg with hdiutil (no AppleScript/Finder, so it works in CI and over SSH).
 #
