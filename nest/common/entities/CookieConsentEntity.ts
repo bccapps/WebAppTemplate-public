@@ -8,7 +8,7 @@
  */
 
 import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from 'typeorm';
-import { jsonColumnType, timestampColumnType } from '../../database/dbEngine';
+import { jsonColumnType, timestampColumnType } from '../utils/dbEngine';
 
 export type CookieConsentCategories = { necessary: true; audienceMeasurement: boolean };
 

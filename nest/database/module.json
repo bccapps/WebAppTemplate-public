@@ -4,7 +4,9 @@
   "description": "Socle multi-base de données partagé entre tous les projets VXFramework (React/Nest).",
   "visibility": "public",
   "category": "core",
-  "requires": [],
+  "requires": [
+    "common"
+  ],
   "env": [
     "DATABASE_ENGINE",
     "DB_CONNECTIONS",

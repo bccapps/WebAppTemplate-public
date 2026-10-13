@@ -18,7 +18,7 @@ import {
   Unique,
   UpdateDateColumn,
 } from 'typeorm';
-import { jsonColumnType, timestampColumnType } from '../../database/dbEngine';
+import { jsonColumnType, timestampColumnType } from '../../common/utils/dbEngine';
 import { VoiceProviderCatalogEntity } from './VoiceProviderCatalogEntity';
 
 @Entity({ name: 'user_voice_accesses' })

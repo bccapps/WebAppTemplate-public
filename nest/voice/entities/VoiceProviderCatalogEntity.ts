@@ -13,7 +13,7 @@ import {
   Entity,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import { timestampColumnType } from '../../database/dbEngine';
+import { timestampColumnType } from '../../common/utils/dbEngine';
 
 @Entity({ name: 'voice_provider_catalog' })
 export class VoiceProviderCatalogEntity {

@@ -15,7 +15,7 @@ import { ModuleConfigService } from './ModuleConfigService';
 import { CronLockService } from './CronLockService';
 import { InstanceRoleService } from './InstanceRoleService';
 import { CryptService } from './CryptService';
-import { isSqliteDataSource, portableQuery } from '../../database/dbEngine';
+import { isSqliteDataSource, portableQuery } from '../utils/dbEngine';
 
 const DISK_ALERT_KEY = 'disk-alert-sent';
 const DISK_THRESHOLD = 90;

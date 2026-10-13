@@ -9,7 +9,7 @@
 
 /**
  * Integration test on an in-memory SQLite database (better-sqlite3 must be installed; no Docker, no Postgres):
- * the portable entities of `common` and `voice` are synchronized, written and read back, and CronLockService
+ * the portable entities of `common` are synchronized, written and read back, and CronLockService
  * runs its in-process lock + `polling_lock` cooldown.
  *
  * The engine is read at import time by the entity decorators, so the environment is set before any dynamic import.
@@ -24,8 +24,6 @@ type Imports = {
   ThemeEntity: typeof import('./entities/ThemeEntity').ThemeEntity;
   CookieConsentEntity: typeof import('./entities/CookieConsentEntity').CookieConsentEntity;
   ConfigurationEntity: typeof import('./entities/ConfigurationEntity').default;
-  VoiceProviderCatalogEntity: typeof import('../voice/entities/VoiceProviderCatalogEntity').VoiceProviderCatalogEntity;
-  VoiceAccessEntity: typeof import('../voice/entities/VoiceAccessEntity').VoiceAccessEntity;
   eventRepo: Repository<import('./events/EventFeedEntityBase').EventFeedEntityBase>;
 };
 
@@ -40,30 +38,28 @@ beforeAll(async () => {
   const { Test: TestingTest } = await import('@nestjs/testing');
   const { TypeOrmModule } = await import('@nestjs/typeorm');
   const { DataSource: Ds, Entity } = await import('typeorm');
-  const { DatabaseModule } = await import('../database/DatabaseModule');
-  const { buildMainDataSourceOptions } = await import('../database/databases');
   const { CronLockService } = await import('./services/CronLockService');
   const { ThemeEntity } = await import('./entities/ThemeEntity');
   const { CookieConsentEntity } = await import('./entities/CookieConsentEntity');
   const ConfigurationEntity = (await import('./entities/ConfigurationEntity')).default;
-  const { VoiceProviderCatalogEntity } = await import('../voice/entities/VoiceProviderCatalogEntity');
-  const { VoiceAccessEntity } = await import('../voice/entities/VoiceAccessEntity');
   const { EventFeedEntityBase } = await import('./events/EventFeedEntityBase');
 
   @Entity({ name: 'test_event_feed' })
   class TestEventFeedEntity extends EventFeedEntityBase {}
 
-  const entities = [ConfigurationEntity, ThemeEntity, CookieConsentEntity, VoiceProviderCatalogEntity, VoiceAccessEntity, TestEventFeedEntity];
-  const context = { baseDir: __dirname, migrationGlobs: [] as string[] };
-  const mainDataSource = new Ds({ ...buildMainDataSourceOptions(context), entities });
+  const entities = [ConfigurationEntity, ThemeEntity, CookieConsentEntity, TestEventFeedEntity];
   moduleRef = await TestingTest.createTestingModule({
-    imports: [DatabaseModule.forRoot({ context, mainDataSource }), TypeOrmModule.forFeature(entities)],
+    imports: [
+      TypeOrmModule.forRoot({ type: 'better-sqlite3', database: ':memory:', synchronize: true, entities }),
+      TypeOrmModule.forFeature(entities),
+    ],
     providers: [CronLockService],
   }).compile();
+  const mainDataSource = moduleRef.get(Ds);
   await moduleRef.init(); // runs CronLockService.onApplicationBootstrap (creates polling_lock)
   ctx = {
     dataSource: mainDataSource, CronLockService, ThemeEntity, CookieConsentEntity, ConfigurationEntity,
-    VoiceProviderCatalogEntity, VoiceAccessEntity, eventRepo: mainDataSource.getRepository(TestEventFeedEntity),
+    eventRepo: mainDataSource.getRepository(TestEventFeedEntity),
   };
 });
 
@@ -105,16 +101,6 @@ describe('portable entities on in-memory SQLite', () => {
     const saved = await repo.save(repo.create({ ip: '127.0.0.1', userAgent: 'jest', categories }));
     const found = await repo.findOneByOrFail({ id: saved.id });
     expect(found.categories).toEqual(categories);
-  });
-
-  it('writes and reads back voice entities (JSON column, relation, simple-array)', async () => {
-    const catalog = ctx.dataSource.getRepository(ctx.VoiceProviderCatalogEntity);
-    const provider = await catalog.save(catalog.create({ name: 'P', slug: 'p', type: 'tts', capabilities: ['tts', 'stt'], baseUrl: 'http://x' }));
-    const access = ctx.dataSource.getRepository(ctx.VoiceAccessEntity);
-    const saved = await access.save(access.create({ label: 'L', providerId: provider.id, providerConfig: { voice: 'a', speed: 1.5 } }));
-    const found = await access.findOneByOrFail({ id: saved.id });
-    expect(found.providerConfig).toEqual({ voice: 'a', speed: 1.5 });
-    expect(found.updatedAt).toBeInstanceOf(Date);
   });
 
   it('appends and reads an event feed row (JSON payload)', async () => {

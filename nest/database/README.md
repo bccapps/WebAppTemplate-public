@@ -13,8 +13,8 @@ d'assigner certains modules à une base de données dédiée, sans modifier leur
 - **Dormant par défaut** : tant qu'aucune connexion ni routage n'est déclaré, une seule
   connexion `main` est construite, identique à l'ancien `Datasource.ts` mono-connexion.
 
-Module **autonome** : ne dépend que de `typeorm` et `@nestjs/typeorm` (aucun autre module
-nestcommon), pour fonctionner dans n'importe quel projet quel que soit son lot de modules.
+Module quasi autonome : ne dépend que de `typeorm`, `@nestjs/typeorm` et du module `common` (toujours lié, il porte
+les utilitaires de moteur), pour fonctionner dans n'importe quel projet quel que soit son lot de modules.
 
 ## Architecture
 
@@ -22,8 +22,8 @@ nestcommon), pour fonctionner dans n'importe quel projet quel que soit son lot d
 |------|---------|-------------|
 | Module | `DatabaseModule.ts` | `forRoot({ context, mainDataSource })` : enregistre la connexion `main` + les connexions nommées |
 | Helper | `databases.ts` | `buildMainDataSourceOptions`, `buildExtraDataSourceOptions`, `resolveEntityGlobs`, type `DbContext` |
-| Helper | `dbEngine.ts` | `isSqlite`, `isSqliteDataSource`, `resolveEngine`, types de colonnes portables `jsonColumnType`, `timestampColumnType`, et `portableQuery` (SQL brut `$n` → `?` sous SQLite) |
-| Helper | `dbRouting.ts` | `dbFor`, `connectionToken`, `parseModuleRouting`, `parseConnectionNames`, `isRoutingActive`, `MAIN_CONNECTION` |
+| Helper | `dbEngine.ts` | Ré-exporte depuis `common/utils/dbEngine.ts` (où ils vivent, pour que `common` et `voice` n'importent jamais `database`, absent chez certains projets) : `isSqlite`, `isSqliteDataSource`, `resolveEngine`, types de colonnes portables `jsonColumnType`, `timestampColumnType`, et `portableQuery` (SQL brut `$n` → `?` sous SQLite) |
+| Helper | `dbRouting.ts` | `dbFor`, `connectionToken`, `parseModuleRouting`, `parseConnectionNames`, `isRoutingActive`, `MAIN_CONNECTION` (défini dans `common/utils/dbEngine.ts`, ré-exporté) |
 | Barrel | `index.ts` | Ré-exporte tout le module |
 
 Pas d'entités, de contrôleurs ni d'endpoints HTTP (module d'infrastructure pur).

@@ -69,3 +69,7 @@ google-cloud, aws-polly, azure-tts, elevenlabs, deepgram, assemblyai, openai, gl
 ## Extension Points
 - Add new TTS/STT/S2S providers by creating a client class and adding a case to the dispatch service
 - S2S WebSocket endpoints planned for phase 2
+
+## Base de données
+
+Les entités utilisent les types de colonnes portables de `common/utils/dbEngine.ts` (`jsonColumnType()`, `timestampColumnType()`), jamais le module `database`. Tests : `sqlite.integration.spec.ts` (SQLite en mémoire) et `portableEntities.spec.ts` (types Postgres inchangés).

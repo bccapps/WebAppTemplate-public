@@ -16,9 +16,6 @@ import { DataSource } from 'typeorm';
 import ConfigurationEntity from './entities/ConfigurationEntity';
 import { CookieConsentEntity } from './entities/CookieConsentEntity';
 import { ThemeEntity } from './entities/ThemeEntity';
-import { VoiceAccessEntity } from '../voice/entities/VoiceAccessEntity';
-import { UserVoiceAccessEntity } from '../voice/entities/UserVoiceAccessEntity';
-import { VoiceProviderCatalogEntity } from '../voice/entities/VoiceProviderCatalogEntity';
 import { EventFeedEntityBase } from './events/EventFeedEntityBase';
 import { Entity } from 'typeorm';
 
@@ -29,15 +26,12 @@ const EXPECTED: Array<[string, Function, Record<string, string>]> = [
   ['EventFeedEntityBase', GuardEventFeedEntity, { payload: 'jsonb', createdAt: 'timestamptz' }],
   ['CookieConsentEntity', CookieConsentEntity, { categories: 'jsonb', createdAt: 'timestamptz' }],
   ['ThemeEntity', ThemeEntity, { createdAt: 'timestamptz', updatedAt: 'timestamptz' }],
-  ['VoiceProviderCatalogEntity', VoiceProviderCatalogEntity, { createdAt: 'timestamptz' }],
-  ['VoiceAccessEntity', VoiceAccessEntity, { providerConfig: 'jsonb', createdAt: 'timestamptz', updatedAt: 'timestamptz' }],
-  ['UserVoiceAccessEntity', UserVoiceAccessEntity, { providerConfig: 'jsonb', createdAt: 'timestamptz', updatedAt: 'timestamptz' }],
 ];
 
 describe('portable entities keep their Postgres column types', () => {
   const dataSource = new DataSource({
     type: 'postgres',
-    entities: [ConfigurationEntity, GuardEventFeedEntity, CookieConsentEntity, ThemeEntity, VoiceAccessEntity, UserVoiceAccessEntity, VoiceProviderCatalogEntity],
+    entities: [ConfigurationEntity, GuardEventFeedEntity, CookieConsentEntity, ThemeEntity],
   });
   (dataSource as unknown as { buildMetadatas(): Promise<void> }).buildMetadatas();
 

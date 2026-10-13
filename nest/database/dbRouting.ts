@@ -23,8 +23,9 @@
  * built, byte-for-byte identical to the legacy single-DataSource behaviour.
  */
 
-/** Logical name of the default connection (NestJS default / unnamed). */
-export const MAIN_CONNECTION = 'main';
+import { MAIN_CONNECTION } from '../common/utils/dbEngine';
+
+export { MAIN_CONNECTION };
 
 /** Parse `DB_MODULE_ROUTING` (JSON). Invalid JSON is ignored (dormant-safe). */
 export function parseModuleRouting(): Record<string, string> {

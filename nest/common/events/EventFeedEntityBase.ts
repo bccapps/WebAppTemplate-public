@@ -7,7 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 import { Column, CreateDateColumn, Index, PrimaryGeneratedColumn } from 'typeorm';
-import { jsonColumnType, timestampColumnType } from '../../database/dbEngine';
+import { jsonColumnType, timestampColumnType } from '../utils/dbEngine';
 
 /**
  * Columns of an append-only event feed table (outbox read by consumer apps, see eventFeed.ts).

@@ -15,7 +15,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { timestampColumnType } from '../../database/dbEngine';
+import { timestampColumnType } from '../utils/dbEngine';
 
 @Entity({ name: 'themes' })
 export class ThemeEntity {

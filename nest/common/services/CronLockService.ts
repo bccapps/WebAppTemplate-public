@@ -9,7 +9,7 @@
 
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { isSqliteDataSource, portableQuery } from '../../database/dbEngine';
+import { isSqliteDataSource, portableQuery } from '../utils/dbEngine';
 
 /**
  * A cron fires at a fixed wall-clock time but `last_run_at` is stamped when the previous run was claimed, a few
