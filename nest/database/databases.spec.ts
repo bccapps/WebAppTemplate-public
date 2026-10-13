@@ -22,7 +22,7 @@ const ENV_KEYS = [
   'DB_ENGINE', 'DATABASE_ENGINE', 'DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME',
   'DB_SSLMODE', 'DB_POOLSIZE', 'DB_PATH', 'DB_SYNC', 'TYPEORM_SYNC', 'DB_MIGRATIONS_RUN',
   'DB_CONNECTIONS', 'DB_MODULE_ROUTING', 'DB__ARCHIVE__ENGINE', 'DB__ARCHIVE__PATH',
-  'DB__ARCHIVE__HOST', 'NODE_ENV',
+  'DB__ARCHIVE__HOST', 'NODE_ENV', 'APP_DATA_DIR',
 ];
 
 describe('database options', () => {
@@ -108,6 +108,15 @@ describe('database options', () => {
       expect(o.database).toBe(join(backDir, 'data/app.db'));
       expect(existsSync(join(backDir, 'data'))).toBe(true);
       expect(o.migrations).toEqual([join(backDir, 'src/migrations/*.{js,ts}')]);
+    });
+
+    it('resolves a relative path from APP_DATA_DIR when set, not from certBaseDir', () => {
+      const dataDir = join(backDir, 'userdata');
+      process.env.DATABASE_ENGINE = 'sqlite';
+      process.env.DB_PATH = 'data/app.db';
+      process.env.APP_DATA_DIR = dataDir;
+      expect(buildMainDataSourceOptions(ctx())).toMatchObject({ database: join(dataDir, 'data/app.db') });
+      expect(existsSync(join(dataDir, 'data'))).toBe(true);
     });
 
     it('keeps an absolute path and prefers DB_ENGINE over DATABASE_ENGINE', () => {

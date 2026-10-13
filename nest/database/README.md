@@ -84,7 +84,7 @@ imports: [
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | main | Connexion par défaut (inchangé) |
 | `DB_SSLMODE` / `DB_SSLROOTCERT` / `DB_POOLSIZE` | main | SSL + pool |
 | `DB_ENGINE` ou `DATABASE_ENGINE` (`postgres`/`cloud`/`neon`/`supabase`/`sqlite`) / `TYPEORM_SYNC` | main | Moteur (défaut `postgres`) + synchronize |
-| `DB_PATH` | main | SQLite : fichier de base (relatif au dossier `back/`, ou absolu, ou `:memory:`) |
+| `DB_PATH` | main | SQLite : fichier de base (absolu, `:memory:`, ou relatif à `APP_DATA_DIR` si défini, sinon au dossier `back/`) |
 | `DB_MIGRATIONS_RUN=true` | main | Exécute les migrations au démarrage (tous moteurs ; usage typique : app de bureau) |
 | `DB_CONNECTIONS=analytics,archive` | — | Liste des connexions nommées additionnelles |
 | `DB__<NAME>__HOST` / `__PORT` / `__USER` / `__PASSWORD` / `__NAME` | nommée | Idem `DB_*` mais pour la connexion `<NAME>` |

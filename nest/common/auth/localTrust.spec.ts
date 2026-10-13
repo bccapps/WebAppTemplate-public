@@ -11,6 +11,7 @@ import { describe, it, expect, afterEach } from '@jest/globals';
 import { AnonymousAuthProvider } from './AnonymousAuthProvider';
 import {
   assertLocalTrustHost,
+  allowedHostPorts,
   isLocalHostHeader,
   isLocalOrigin,
   isLocalTrustEnabled,
@@ -114,6 +115,36 @@ describe('isLocalTrustRequest matrix', () => {
   it('refuses a missing socket or Host', () => {
     expect(isLocalTrustRequest({ headers: { host: 'localhost:3000' } }, ENV)).toBe(false);
     expect(isLocalTrustRequest(req('127.0.0.1', {}), ENV)).toBe(false);
+  });
+});
+
+describe('FRONT_PORT in development', () => {
+  const dev = { NODE_PORT: '3000', FRONT_PORT: '5173', APP_ENV: 'dev' };
+  const viaVite = req('127.0.0.1', { host: 'localhost:5173', origin: 'http://localhost:5173' });
+
+  it('accepts the front port only when APP_ENV=dev', () => {
+    expect(isLocalTrustRequest(viaVite, dev)).toBe(true);
+    for (const appEnv of [undefined, 'prod', 'preprod', '']) {
+      expect(isLocalTrustRequest(viaVite, { ...dev, APP_ENV: appEnv })).toBe(false);
+    }
+  });
+
+  it('still accepts NODE_PORT and refuses other ports in dev', () => {
+    expect(isLocalTrustRequest(req('127.0.0.1', { host: 'localhost:3000' }), dev)).toBe(true);
+    expect(isLocalTrustRequest(req('127.0.0.1', { host: 'localhost:9999' }), dev)).toBe(false);
+  });
+
+  it('does not loosen the other checks on the front port', () => {
+    expect(isLocalTrustRequest(req('203.0.113.9', { host: 'localhost:5173' }), dev)).toBe(false);
+    expect(isLocalTrustRequest(req('127.0.0.1', { host: 'evil.example:5173' }), dev)).toBe(false);
+    expect(isLocalTrustRequest(req('127.0.0.1', { host: 'localhost:5173', origin: 'https://evil.example' }), dev)).toBe(false);
+    expect(isLocalTrustRequest(req('127.0.0.1', { host: 'localhost:5173', 'x-forwarded-for': '127.0.0.1' }), dev)).toBe(false);
+  });
+
+  it('computes the allowed ports', () => {
+    expect(allowedHostPorts({ NODE_PORT: '3000', FRONT_PORT: '5173' })).toEqual(['3000']);
+    expect(allowedHostPorts(dev)).toEqual(['3000', '5173']);
+    expect(allowedHostPorts({ APP_ENV: 'dev', FRONT_PORT: '5173' })).toEqual([]);
   });
 });
 

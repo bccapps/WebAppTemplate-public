@@ -14,7 +14,9 @@
  *  - the TCP peer (`req.socket.remoteAddress`) is a loopback address. `req.ip` and `X-Forwarded-For` are never used
  *    because `trust proxy` (see `configureHttpApp`) makes them client-controlled;
  *  - no proxy header (`X-Forwarded-*`, `Forwarded`, `X-Real-IP`) is present: a local reverse proxy relays remote traffic;
- *  - `Host` is a loopback name (`127.0.0.1`, `localhost`, `[::1]`) on the listening port (blocks DNS rebinding);
+ *  - `Host` is a loopback name (`127.0.0.1`, `localhost`, `[::1]`) on the listening port `NODE_PORT` (blocks DNS rebinding).
+ *    With `APP_ENV=dev` only, the front dev server port `FRONT_PORT` is also accepted (the Vite proxy may keep the
+ *    browser's `Host`; it adds no `X-Forwarded-*` header unless `xfwd` is set);
  *  - `Origin` is absent or an http(s) loopback origin (blocks cross-site pages aimed at the local port).
  */
 
@@ -61,11 +63,20 @@ function splitHostPort(value: string): { hostname: string; port: string } | null
 }
 
 /** `Host` header check: loopback name, and the listening port when known (an absent port means the default one). */
-export function isLocalHostHeader(host: string | undefined, port: string | undefined): boolean {
+export function isLocalHostHeader(host: string | undefined, port: string | string[] | undefined): boolean {
   if (!host) return false;
   const parsed = splitHostPort(host);
   if (!parsed || !LOOPBACK_NAMES.has(parsed.hostname)) return false;
-  return !port || parsed.port === port;
+  const ports = (Array.isArray(port) ? port : [port]).filter((p): p is string => !!p);
+  return ports.length === 0 || ports.includes(parsed.port);
+}
+
+/** Ports accepted in `Host`: `NODE_PORT`, plus `FRONT_PORT` only when `APP_ENV=dev` (Vite proxy in development). */
+export function allowedHostPorts(env: LocalTrustEnv = process.env): string[] {
+  const ports = [env.NODE_PORT?.trim()];
+  if (!ports[0]) return []; // unknown listening port: any port, as before
+  if (env.APP_ENV?.trim().toLowerCase() === 'dev') ports.push(env.FRONT_PORT?.trim());
+  return ports.filter((p): p is string => !!p);
 }
 
 /** `Origin` check: absent is fine (same-origin GET, curl, native clients); otherwise an http(s) loopback origin. */
@@ -87,6 +98,6 @@ export function isLocalTrustRequest(req: LocalTrustRequest, env: LocalTrustEnv =
   if (!isLoopbackAddress(req.socket?.remoteAddress)) return false;
   if (PROXY_HEADERS.some((h) => headers[h] !== undefined)) return false;
   const host = headers['host'];
-  if (typeof host !== 'string' || !isLocalHostHeader(host, env.NODE_PORT?.trim() || undefined)) return false;
+  if (typeof host !== 'string' || !isLocalHostHeader(host, allowedHostPorts(env))) return false;
   return isLocalOrigin(headers['origin']);
 }

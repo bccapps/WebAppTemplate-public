@@ -58,7 +58,7 @@ Requires `back/.env` (production).
 | **DB options** | `DB_SSLMODE`, `DB_SSLROOTCERT`, `DB_POOLSIZE`, `TYPEORM_SYNC`, `DB_MIGRATIONS_RUN` | SSL, pool tuning, schema sync, migrations at startup |
 | **SQLite** | `DATABASE_ENGINE=sqlite` (or `DB_ENGINE=sqlite`), `DB_PATH` | Local file database instead of Postgres, single instance (see `modules_shared/database/README.md`). Written by the wizard (`DB_PATH=data/<project>.db`); `better-sqlite3` is added to `back/package.local.json` |
 | **Security** | `ADMIN_TOKEN`, `CRYPT_DB_MASTER_KEY`, `CRYPT_DB_DERIVATION_SALT`, `CRYPT_SESSION_PRIVATE_KEY`, `CLIENT_ORIGINS` | Anonymous-mode admin key, encryption keys, CORS (`*` refused in production) |
-| **HTTP server** | `HOST`, `TRUST_PROXY`, `RAW_BODY_PATHS`, `APP_VERSION`, `LOG_DIR`, `LOG_TO_FILE` | Listen address, proxy trust, webhook raw-body paths, version in `/api/v1/health`, file logs (all optional, see `back/.env.example` and `nest/common/README.md`) |
+| **HTTP server** | `HOST`, `TRUST_PROXY`, `RAW_BODY_PATHS`, `APP_VERSION`, `LOG_DIR`, `LOG_TO_FILE`, `APP_DATA_DIR` | Listen address, proxy trust, webhook raw-body paths, version in `/api/v1/health`, file logs (all optional, see `back/.env.example` and `nest/common/README.md`) |
 | **Front served by the back** | `SERVE_FRONT_DIR` | Optional same-origin front (directory of the built front); see « Servir le front » in `nest/common/README.md` |
 | **With the `user` module only** | `VITE_REOWN_PROJECT_ID`, `VITE_AUTH_CHAIN_POLICY`, `ADMIN_WALLET`, `TECH_TOKEN`, `JWT_SECRET` | Reown/WalletConnect auth, wallet admin, JWT (see `back/.env.example`) |
 | **Deployment** | `FRONT_HOSTS`, `BACK_HOSTS`, `REMOTE_USER`, `REMOTE_SSH_PORT`, `SSH_KEY_FILE`, `REMOTE_CONTEXT_NAME`, `REMOTE_APP_DIR` | Remote Docker deployment |

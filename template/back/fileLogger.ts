@@ -17,7 +17,7 @@
  *
  * Env:
  *   LOG_TO_FILE   "false" to disable file output (stdout prefix still applied). Default on.
- *   LOG_DIR       directory for log files. Default <cwd>/logs.
+ *   LOG_DIR       directory for log files. Default <APP_DATA_DIR>/logs, else <cwd>/logs.
  *   LOG_MAX_BYTES rotate the current day's file once it exceeds this size. Default 50MB.
  */
 import * as fs from 'fs';
@@ -30,7 +30,7 @@ export function installFileLogging(): void {
   let write: (line: string) => void = () => {};
 
   if (fileEnabled) {
-    const dir = process.env.LOG_DIR || path.join(process.cwd(), 'logs');
+    const dir = process.env.LOG_DIR || path.join(process.env.APP_DATA_DIR?.trim() || process.cwd(), 'logs');
     const maxBytes = Number(process.env.LOG_MAX_BYTES || 50 * 1024 * 1024);
     let stream: fs.WriteStream | null = null;
     let curDay = '';

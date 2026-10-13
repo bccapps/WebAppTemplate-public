@@ -62,6 +62,18 @@ describe('local trust over HTTP', () => {
     expect((await get(headers)).status).toBe(401);
   });
 
+  it('accepts the front dev-server Host only with APP_ENV=dev', async () => {
+    await boot({ LOCAL_TRUST: 'true', FRONT_PORT: '5173', APP_ENV: 'dev' });
+    expect((await get({ Host: 'localhost:5173', Origin: 'http://localhost:5173' })).body.mode).toBe('local-trust');
+    expect((await get({ Host: 'localhost:5173', 'X-Forwarded-For': '8.8.8.8' })).status).toBe(401);
+    expect((await get({ Host: 'localhost:5174' })).status).toBe(401);
+  });
+
+  it('refuses the front dev-server Host outside APP_ENV=dev', async () => {
+    await boot({ LOCAL_TRUST: 'true', FRONT_PORT: '5173', APP_ENV: 'prod' });
+    expect((await get({ Host: 'localhost:5173' })).status).toBe(401);
+  });
+
   it('still accepts the admin key from a refused request', async () => {
     await boot({ LOCAL_TRUST: 'true' });
     const res = await get({ Host: 'evil.example:3000', Authorization: `Bearer ${TOKEN}` });

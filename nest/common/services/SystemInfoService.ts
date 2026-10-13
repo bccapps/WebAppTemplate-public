@@ -9,8 +9,10 @@
 
 import { Injectable } from '@nestjs/common';
 import * as os from 'os';
-import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 import SystemInfoDto from '../dtos/SystemInfoDto';
+import { resolveAppDataDir } from '../utils/appDataDir';
 
 @Injectable()
 export class SystemInfoService {
@@ -19,7 +21,7 @@ export class SystemInfoService {
     const freeMem = os.freemem();
     const usedMem = totalMem - freeMem;
 
-    const disk = this.getDiskUsage();
+    const disk = await this.getDiskUsage();
 
     return {
       memory: {
@@ -32,32 +34,32 @@ export class SystemInfoService {
     };
   }
 
-  private getDiskUsage(): SystemInfoDto['disk'] {
-    try {
-      const output = execSync('df -k /', { encoding: 'utf-8' });
-      const lines = output.trim().split('\n');
-      if (lines.length < 2) return this.zeroDisk();
-
-      const parts = lines[1].split(/\s+/);
-      const totalKb = parseInt(parts[1], 10);
-      const usedKb = parseInt(parts[2], 10);
-      const freeKb = parseInt(parts[3], 10);
-
-      if (isNaN(totalKb) || isNaN(usedKb) || isNaN(freeKb)) return this.zeroDisk();
-
-      const totalBytes = totalKb * 1024;
-      const usedBytes = usedKb * 1024;
-      const freeBytes = freeKb * 1024;
-
-      return {
-        totalBytes,
-        usedBytes,
-        freeBytes,
-        usagePercent: totalBytes > 0 ? Math.round((usedBytes / totalBytes) * 10000) / 100 : 0,
-      };
-    } catch {
-      return this.zeroDisk();
+  /**
+   * Usage of the volume holding `APP_DATA_DIR` (when set and present), else the root of the current drive.
+   * `fs.statfs` (Node >= 18.15) works on Linux, macOS and Windows: no system command.
+   */
+  private async getDiskUsage(): Promise<SystemInfoDto['disk']> {
+    const candidates = [resolveAppDataDir(), path.parse(process.cwd()).root].filter((p): p is string => !!p);
+    for (const target of candidates) {
+      try {
+        const st = await fs.promises.statfs(target);
+        const totalBytes = st.blocks * st.bsize;
+        const freeBytes = st.bavail * st.bsize;
+        const usedBytes = totalBytes - st.bfree * st.bsize;
+        if (![totalBytes, usedBytes, freeBytes].every(Number.isFinite)) continue;
+        // `df` semantics: usage = used / (used + available to unprivileged users).
+        const denom = usedBytes + freeBytes;
+        return {
+          totalBytes,
+          usedBytes,
+          freeBytes,
+          usagePercent: denom > 0 ? Math.round((usedBytes / denom) * 10000) / 100 : 0,
+        };
+      } catch {
+        // try the next candidate
+      }
     }
+    return this.zeroDisk();
   }
 
   private zeroDisk(): SystemInfoDto['disk'] {

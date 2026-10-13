@@ -34,6 +34,7 @@ import {
   isRoutingActive,
   parseConnectionNames,
 } from './dbRouting';
+import { resolveAppDataDir } from '../common/utils/appDataDir';
 import { connectionEnvPrefix, readConnectionEnv, resolveEngine } from './dbEngine';
 
 /** Project-specific locations, resolved by the consuming project. */
@@ -130,7 +131,7 @@ function buildSqliteOptions(
     throw new Error(`${connectionEnvPrefix(name)}PATH is required when the engine is sqlite`);
   }
   const memory = rawPath === ':memory:';
-  const database = memory || isAbsolute(rawPath) ? rawPath : join(ctx.certBaseDir ?? process.cwd(), rawPath);
+  const database = memory || isAbsolute(rawPath) ? rawPath : join(resolveAppDataDir() ?? ctx.certBaseDir ?? process.cwd(), rawPath);
   if (!memory) mkdirSync(dirname(database), { recursive: true });
   return {
     ...(isMain ? {} : { name }),

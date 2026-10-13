@@ -15,6 +15,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { FunctionalException } from '../exceptions/FunctionalException';
 import { ModuleConfigService } from './ModuleConfigService';
+import { appDataSubdir } from '../utils/appDataDir';
 
 export const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const DEFAULT_CACHE_CONTROL = 'public, max-age=31536000, immutable';
@@ -104,11 +105,14 @@ export class ImageStorageService {
   }
 
   private resolveSharedDir(): string {
-    return process.env.SHARED_DIRECTORY && process.env.SHARED_DIRECTORY.trim().length > 0
-      ? process.env.SHARED_DIRECTORY.trim()
-      : process.env.NODE_ENV === 'production'
-      ? ImageStorageService.DEFAULT_PROD_SHARED_DIR
-      : ImageStorageService.DEFAULT_DEV_SHARED_DIR;
+    const explicit = process.env.SHARED_DIRECTORY?.trim();
+    if (explicit) return explicit;
+    return (
+      appDataSubdir('shared') ??
+      (process.env.NODE_ENV === 'production'
+        ? ImageStorageService.DEFAULT_PROD_SHARED_DIR
+        : ImageStorageService.DEFAULT_DEV_SHARED_DIR)
+    );
   }
 
   private async ensureDir(namespace: string): Promise<string> {
