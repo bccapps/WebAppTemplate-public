@@ -146,7 +146,7 @@ if [[ "${MODE}" == "anonymous-sqlite-desktop" ]]; then
     const scripts = read("back/package.json").scripts;
     if (!scripts["desktop:dev"] || !scripts["desktop:build"]) { console.error("desktop:* scripts missing in back/package.json"); process.exit(1); }
   ' "${APP}"
-  ( cd "${APP}/desktop" && node --test scripts/ )
+  ( cd "${APP}/desktop" && node --test scripts/*.test.mjs )
   # add-desktop must refuse a project that already has the shell
   if node "${REPO}/template/scripts/add-desktop.mjs" --root "${APP}" --dry-run; then echo "add-desktop must refuse an existing desktop option" >&2; exit 1; fi
 else

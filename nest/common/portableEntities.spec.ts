@@ -11,7 +11,8 @@
  * Postgres schema guard: without `DB_ENGINE`, the portable entities must keep the exact column types they
  * had before the port (`jsonb`, `timestamptz`), so no Postgres migration is introduced. Metadata only: no connection.
  */
-import { describe, expect, it } from '@jest/globals';
+import { restoreEngineEnv } from './testing/postgresEngineEnv';
+import { afterAll, describe, expect, it } from '@jest/globals';
 import { DataSource } from 'typeorm';
 import ConfigurationEntity from './entities/ConfigurationEntity';
 import { CookieConsentEntity } from './entities/CookieConsentEntity';
@@ -29,6 +30,7 @@ const EXPECTED: Array<[string, Function, Record<string, string>]> = [
 ];
 
 describe('portable entities keep their Postgres column types', () => {
+  afterAll(restoreEngineEnv);
   const dataSource = new DataSource({
     type: 'postgres',
     entities: [ConfigurationEntity, GuardEventFeedEntity, CookieConsentEntity, ThemeEntity],

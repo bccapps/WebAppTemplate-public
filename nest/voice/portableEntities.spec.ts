@@ -11,7 +11,8 @@
  * Postgres schema guard for `voice`: without `DB_ENGINE`, the portable entities must keep the exact column types
  * they had before the port (`jsonb`, `timestamptz`), so no Postgres migration is introduced. Metadata only.
  */
-import { describe, expect, it } from '@jest/globals';
+import { restoreEngineEnv } from '../common/testing/postgresEngineEnv';
+import { afterAll, describe, expect, it } from '@jest/globals';
 import { DataSource } from 'typeorm';
 import { VoiceAccessEntity } from './entities/VoiceAccessEntity';
 import { UserVoiceAccessEntity } from './entities/UserVoiceAccessEntity';
@@ -24,6 +25,7 @@ const EXPECTED: Array<[string, Function, Record<string, string>]> = [
 ];
 
 describe('voice portable entities keep their Postgres column types', () => {
+  afterAll(restoreEngineEnv);
   const dataSource = new DataSource({
     type: 'postgres',
     entities: [VoiceAccessEntity, UserVoiceAccessEntity, VoiceProviderCatalogEntity],
