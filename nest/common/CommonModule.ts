@@ -22,6 +22,7 @@ import { SystemInfoController } from './controllers/SystemInfoController';
 import { ThemeController } from './controllers/ThemeController';
 import { CookieConsentController } from './controllers/CookieConsentController';
 import { HealthController } from './controllers/HealthController';
+import { EventStreamController } from './event-stream/EventStreamController';
 
 // Services
 import { ConfigurationService } from './services/ConfigurationService';
@@ -29,6 +30,7 @@ import { LocaleService } from './services/LocaleService';
 import { ProwlService } from './services/ProwlService';
 import { CryptService } from './services/CryptService';
 import { RedisService } from './services/RedisService';
+import { EventStreamService } from './event-stream/EventStreamService';
 import { RemoteEventFeedPollerService } from './events/RemoteEventFeedPollerService';
 import { CryptSessionService } from './services/CryptSessionService';
 import { TransportCryptInterceptor } from './interceptors/TransportCryptInterceptor';
@@ -66,7 +68,7 @@ import ConfigurationEntity from './entities/ConfigurationEntity';
 
 @Module({
   imports: [TypeOrmModule.forFeature([ConfigurationEntity, ThemeEntity, CookieConsentEntity])],
-  controllers: [ConfigurationController, LocaleController, CryptController, ModuleConfigController, EmailController, BugReportController, SystemInfoController, ThemeController, CookieConsentController, HealthController],
+  controllers: [ConfigurationController, LocaleController, CryptController, ModuleConfigController, EmailController, BugReportController, SystemInfoController, ThemeController, CookieConsentController, HealthController, EventStreamController],
   providers: [
     ConfigurationService,
     ConfigSeederService,
@@ -75,6 +77,7 @@ import ConfigurationEntity from './entities/ConfigurationEntity';
     ProwlService,
     CryptService,
     RedisService,
+    EventStreamService,
     RemoteEventFeedPollerService,
     CryptSessionService,
     TransportCryptInterceptor,
@@ -121,6 +124,7 @@ import ConfigurationEntity from './entities/ConfigurationEntity';
     ProwlService,
     CryptService,
     RedisService,
+    EventStreamService,
     RemoteEventFeedPollerService,
     CryptSessionService,
     ModuleConfigRegistry,
@@ -148,3 +152,4 @@ export { ModuleConfigService } from './services/ModuleConfigService';
 
 export * from './auth';
 export * from './plugins';
+export * from './event-stream';

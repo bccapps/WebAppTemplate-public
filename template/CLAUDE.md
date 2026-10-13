@@ -116,6 +116,7 @@ Modules expose configurable variables with metadata shown in the admin UI.
 - **Function size** < 40 lines; beyond, split. Keep files moderate.
 - **Performance**: `useMemo` for expensive calculations, `useCallback` for handlers, `React.memo` for pure components.
 - **Internationalization**: add the key to all locale files, reference via the i18n utilities. NEVER use `defaultLabel` on `<I18nLabel>` or default values on `i18n.get()` — missing translations must stay visible.
+- **Live updates**: publish through `EventStreamService` (`common/event-stream`, see the common README); do not add polling for data the server can push.
 - **Configuration discipline**: global settings → `ConfigurationEntity` + `defaultConfigEntries` + translations (never in `config.ts`; add to `defaultConfig.ts`); user settings → the `user` module's `UserSetting` (when linked); module settings → Module Config Schema (§4).
 
 ## 6. Code Quality

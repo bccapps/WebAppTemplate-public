@@ -16,6 +16,7 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 | Démarrage HTTP | `bootstrap/configureHttpApp.ts` : `configureHttpApp(app, options?)` applique le durcissement commun (voir « Démarrage HTTP » plus bas). |
 | Service du front | `bootstrap/serveFrontend.ts` : `serveFrontend(app, dir)`, option activée par `SERVE_FRONT_DIR` (voir « Servir le front » plus bas). |
 | Santé | `HealthController` : `GET /api/v1/health` public, agrège les contributeurs `HEALTH_CONTRIBUTORS`. |
+| Flux d'événements | `EventStreamService` + `EventStreamController` (`event-stream/`) : poussée serveur → navigateur en SSE (`GET /api/v1/events/stream`). Voir « Flux d'événements serveur » plus bas. |
 | Stockage d'images | `ImageStorageService` écrit sur disque local (défaut) ou sur un bucket Cloudflare R2, configurable depuis l'admin via `storageConfigSchema`. Voir « Stockage R2 » plus bas.
 
 ## Intégrations clés
@@ -45,6 +46,11 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 | Méthode | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/admin-session` | Admin | Renvoie `{ admin: true, mode }` (`mode` = `users` \| `anonymous` \| `local-trust`). Sert au front (`AdminTokenGate`) à valider la clé admin ou à détecter le mode local de confiance. |
+
+### Flux d'événements (`EventStreamController`)
+| Méthode | Endpoint | Auth | Description |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/events/stream?topics=a.b,c.d:1` | Tout principal authentifié | Flux SSE (`text/event-stream`), **exempté du chiffrement de transport** et du limiteur de débit. Détails : « Flux d'événements serveur ». |
 
 ### Locales (`LocaleController`)
 | Méthode | Endpoint | Auth | Description |
@@ -508,6 +514,103 @@ Helpers purs exportés : `allowedHostPorts`, `isLocalTrustEnabled`, `isLoopbackA
 `APP_DATA_DIR` (optionnel) est la racine des données inscriptibles : base par défaut de `SHARED_DIRECTORY` (`<dir>/shared`), de `LOG_DIR` (`<dir>/logs`, `fileLogger.ts` du gabarit) et d'un `DB_PATH` SQLite **relatif** (sinon résolu depuis `back/`). Non défini : comportement inchangé. Une valeur explicite de `SHARED_DIRECTORY`, `LOG_DIR` ou un `DB_PATH` absolu l'emporte. La coquille de bureau le dirige vers le dossier de données de l'OS. Helpers : `resolveAppDataDir`, `appDataSubdir`.
 
 `SystemInfoService` mesure le disque avec `fs.statfs` (Node >= 18.15) sur le volume de `APP_DATA_DIR` (s'il existe), sinon la racine du lecteur courant : aucune commande système, donc identique sous Windows. `DiskAlertService` s'appuie sur lui. Plus aucun `execSync`/`exec` dans `nest/`.
+
+## Flux d'événements serveur (`event-stream/`)
+
+Remplace le polling : le serveur **publie**, le navigateur reçoit sur un seul flux par onglet. Les événements sont surtout
+des **invalidations** (`{ topic, type, id?, version?, data? }`, `data` petit : progression, statut) ; le client relit par
+REST quand il faut le détail, donc le contrôle d'accès reste celui de l'API. Règle du gabarit : **pas de polling pour une
+mise à jour en direct, publier via `EventStreamService`**. Le côté React (`useServerEvents`, `useLiveResource`) arrive
+avec C2.
+
+### Publier (services, tâches planifiées, workers)
+
+```ts
+import { EventStreamService } from '<common>'; // exporté par CommonModule, injectable partout
+
+constructor(private readonly events: EventStreamService) {}
+
+// 1. Invalidation simple. Audience = qui peut recevoir (au moins un champ, sinon personne).
+this.events.publish('ocr.document:12', { type: 'status', id: 5, data: { ocrStatus: 'completed' } }, { userId: 3 });
+
+// 2. Événement fréquent : au plus un par clé et par seconde, le dernier gagne.
+this.events.publishThrottled(`run:${runId}`, 1000, `tradingbot.run:${runId}`, { type: 'metrics', data: snapshot }, { userId });
+```
+
+- `publish(topic, event, audience): void` : sans attente, **ne lève jamais** ; sujet invalide, `type` vide, audience vide
+  ou événement > 16 Ko : journalisé et abandonné.
+- `publishThrottled(key, intervalMs, topic, event, audience): void` : le premier appel part tout de suite, puis un seul
+  événement par intervalle (le dernier appel de l'intervalle).
+- **Audience** `{ userId?, tenantId?, admin?: true, public?: true }` : tout champ présent doit correspondre au principal de
+  la connexion (`id`, propriété `tenantId`, `admin`) ; `public: true` = toute connexion authentifiée abonnée au sujet.
+  **Aucun champ = remis à personne** (pas de diffusion implicite). L'audience filtre la remise ; l'autorisation
+  à l'abonnement (ci-dessous) filtre l'accès au sujet : les deux s'appliquent.
+- **Sujets** : `<module>.<ressource>[:<clé>]` (`tradingbot.runs`, `tradingbot.run:<id>`, `ocr.document:<companyId>`).
+- Un **worker** (`NODE_ROLE=worker`) publie avec le même service, sans contrôleur : l'événement passe par Redis
+  (`PUBLISH <PROJECT_NAME>:SSE`) jusqu'aux répliques API qui tiennent les connexions.
+
+### Autoriser un sujet à l'abonnement
+
+```ts
+this.events.registerTopicAuthorizer('ocr.document:*', async (principal, { key }) =>
+  this.companies.isMember(principal.id, Number(key)),
+);
+```
+
+`pattern` = sujet exact ou avec `*` (un ou plusieurs caractères ; `key` = le texte capturé). Plusieurs autorisations qui
+correspondent : toutes doivent accepter ; une exception vaut refus. Sans autorisation enregistrée, seul le filtre
+d'audience s'applique. Retourne une fonction de désinscription. Sujets refusés : listés dans `denied` de l'événement
+`ready` ; **403** si aucun des sujets demandés n'est autorisé.
+
+### Producteurs à la demande (données qui ne « changent » pas en base)
+
+```ts
+this.events.registerTopicProducer('tradingbot.candle:*', {
+  intervalMs: 2000,
+  authorize: (principal, { key }) => this.runs.isOwner(principal.id, key), // obligatoire
+  produce: async ({ key }) => ({ type: 'candle', data: await this.platform.lastCandle(key) }), // objet, tableau ou rien
+});
+```
+
+Le producteur démarre sur ce processus à l'arrivée du premier abonné local d'un sujet, s'arrête au départ du dernier ;
+un appel par intervalle et par sujet quelle que soit le nombre d'onglets, jamais deux `produce` simultanés pour un
+sujet, erreurs journalisées sans arrêter la boucle. Ses événements vont aux seuls abonnés **de ce processus** (pas de
+Redis) et n'ont pas de filtre d'audience : `authorize` est l'unique barrière, d'où son caractère obligatoire.
+
+### Flux HTTP
+
+`GET /api/v1/events/stream?topics=a.b,c.d:1` (`@Sse`, `@NoTransportCrypt()` : Nest envoie les en-têtes SSE au premier
+message). L'authentification est celle de toute requête (Bearer d'un utilisateur, clé admin, `LOCAL_TRUST`) ; sans principal,
+**401**. `EventSource` ne sait pas envoyer `Authorization` : le client utilise `fetch` (C2).
+
+| Trame (`event:`) | Contenu |
+| --- | --- |
+| `ready` | `{ topics, denied, transport }`, première trame |
+| `event` | `{ topic, type, id?, version?, data? }` ; `id:` SSE = `<instance>.<seq>` pour `Last-Event-ID` |
+| `transport` | `{ state: 'degraded' \| 'ok' }` : Redis configuré mais injoignable (les événements des autres processus manquent ; les clients repassent en polling) puis rétabli |
+| `resync` | reprise `Last-Event-ID` impossible (autre instance, tampon de 500 dépassé) : tout relire |
+| `expired` | jeton expiré (`exp` du principal ou du JWT), le serveur ferme ; le client rouvre avec un jeton rafraîchi |
+
+Un commentaire `: ping` toutes les 20 s maintient la connexion (Cloudflare coupe vers 100 s d'inactivité).
+**Limites** (dépassement journalisé et refusé : 400 ou 429) : 50 sujets par connexion, 10 connexions par principal
+(`kind:id`), 16 Ko par événement, tampon de reprise de 500 événements.
+
+### Transport et pannes
+
+Sans `REDIS_URL` : transport en mémoire (une seule instance). Avec `REDIS_URL` : `RedisTransport` s'abonne par
+`client.duplicate()` (seulement tant qu'il y a une connexion locale) au canal `${PROJECT_NAME}:SSE` ; le service livre
+toujours d'abord à ses propres connexions, donc une panne Redis n'interrompt jamais la remise locale. Redis injoignable
+(abonné coupé ou `PUBLISH` en échec) : état `degraded` diffusé aux connexions locales, `ok` au rétablissement ; ioredis se
+reconnecte et se réabonne seul. Après un retour à `ok`, relire les ressources (des événements ont pu être perdus).
+`useTransport(...)` et `InMemoryBus` permettent de simuler plusieurs instances en test.
+
+### Raccords
+
+- **Limiteur de débit** : le contrôleur porte `@SkipThrottle()` de `@nestjs/throttler` **si le paquet est installé**
+  (sinon aucun effet, `common` n'en dépend pas). D1 déplacera le limiteur dans `common` : rien à changer ici.
+- **Proxys** : `proxy_buffering off` et un délai de lecture long sur `/api/v1/events/` (C3 : `nginx.conf` du gabarit,
+  `back-lb`).
+- Options (tests, réglage) : `{ provide: EVENT_STREAM_OPTIONS, useValue: { heartbeatMs, maxTopicsPerConnection, ... } }`.
 
 ## Plugins
 
