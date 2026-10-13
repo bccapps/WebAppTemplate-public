@@ -12,6 +12,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import ConfigurationEntity from '../entities/ConfigurationEntity';
 import { defaultConfigEntries } from 'src/config/defaultConfig';
+import { insertConfigIfAbsent } from '../utils/insertConfigIfAbsent';
 
 @Injectable()
 export class ConfigSeederService implements OnApplicationBootstrap {
@@ -68,19 +69,15 @@ export class ConfigSeederService implements OnApplicationBootstrap {
         return;
       }
 
-      await this.configurationRepository.insert(
-        toCreate.map(({ name, value, description }) => ({
-          name,
-          value,
-          description: description ?? '',
-        })),
+      // Idempotent insert: a module schema seeded at the same time may already have stored some of these names.
+      const inserted = await insertConfigIfAbsent(
+        this.configurationRepository,
+        toCreate.map(({ name, value, description }) => ({ name, value, description: description ?? '' })),
       );
 
-      this.logger.log(
-        `Seeded ${toCreate.length} default configuration entr${
-          toCreate.length > 1 ? 'ies' : 'y'
-        }`,
-      );
+      if (inserted > 0) {
+        this.logger.log(`Seeded ${inserted} default configuration entr${inserted > 1 ? 'ies' : 'y'}`);
+      }
     } catch (error) {
       this.logger.error(
         'Failed to seed default configuration entries',

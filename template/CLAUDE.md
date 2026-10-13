@@ -81,7 +81,7 @@ Modules expose configurable variables with metadata shown in the admin UI.
 **Backend:**
 - `configSchema.ts` with `ModuleConfigSchema` (moduleId, fields with key, type, defaultValue, group)
 - A registration service implementing `OnApplicationBootstrap` → `moduleConfigService.register(schema)`, added to the module providers
-- `ModuleConfigSeederService` seeds `defaultValue` to DB at bootstrap
+- `ModuleConfigSeederService` seeds `defaultValue` to DB at bootstrap. Both seeders insert through `insertConfigIfAbsent` (`ON CONFLICT DO NOTHING` / `INSERT OR IGNORE`): never seed `config` with find-then-save, the two seeders run concurrently on a first start
 - DTOs: 1 DTO per entity, 1 file per DTO, 1 file per entity
 
 **Locales:** `modules_shared/<module>/locales` — all languages, all texts and labels. Key convention `{moduleId}_{configKey}` (e.g. `mymodule_maxRetries`).

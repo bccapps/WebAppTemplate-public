@@ -12,6 +12,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import ConfigurationEntity from '../entities/ConfigurationEntity';
 import { ModuleConfigSchema } from '../types/ModuleConfigSchema';
+import { insertConfigIfAbsent } from '../utils/insertConfigIfAbsent';
 
 @Injectable()
 export class ModuleConfigSeederService {
@@ -23,19 +24,15 @@ export class ModuleConfigSeederService {
   ) {}
 
   async seedSchema(schema: ModuleConfigSchema): Promise<void> {
-    let seededCount = 0;
-    for (const field of schema.fields) {
-      if (field.defaultValue === undefined) continue;
-      const exists = await this.configRepo.findOne({ where: { name: field.key } });
-      if (exists) continue;
-      const entity = this.configRepo.create({
+    // One idempotent insert for the whole schema: rows already stored (or stored meanwhile by another seeder) are kept.
+    const rows = schema.fields
+      .filter((field) => field.defaultValue !== undefined)
+      .map((field) => ({
         name: field.key,
         value: this.serializeValue(field.defaultValue, field.type),
         description: field.description ?? '',
-      });
-      await this.configRepo.save(entity);
-      seededCount++;
-    }
+      }));
+    const seededCount = await insertConfigIfAbsent(this.configRepo, rows);
     if (seededCount > 0) {
       this.logger.log(`Seeded ${seededCount} config entries for module "${schema.moduleId}"`);
     }

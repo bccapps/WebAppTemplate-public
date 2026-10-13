@@ -393,7 +393,7 @@ Le `ModuleConfigSeederService` insère automatiquement les valeurs par défaut d
 **Comportement :**
 - Parcourt tous les schémas enregistrés dans `ModuleConfigRegistry`
 - Pour chaque champ ayant un `defaultValue`, vérifie si la clé existe déjà en base
-- Si la clé n'existe pas, insère la valeur par défaut sérialisée
+- Insère les valeurs par défaut sérialisées des clés absentes, en **une seule requête idempotente** (`insertConfigIfAbsent`, `utils/insertConfigIfAbsent.ts` : `ON CONFLICT DO NOTHING` sous Postgres, `INSERT OR IGNORE` sous SQLite). `ConfigSeederService` (valeurs par défaut de l'app) et `ModuleConfigSeederService` (schémas) s'exécutent en même temps au premier démarrage : un « lire puis insérer » provoquait `UNIQUE constraint failed: config.name` pour une clé déclarée par les deux (ou en double dans `defaultConfig.ts`) ; les lignes existantes ne sont jamais modifiées. Test : `services/ConfigSeeding.sqlite.integration.spec.ts` (SQLite en mémoire ; SQL Postgres vérifié sans connexion).
 - Les valeurs existantes ne sont jamais écrasées
 
 **Sérialisation des types :**
