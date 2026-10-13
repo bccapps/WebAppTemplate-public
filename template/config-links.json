@@ -17,6 +17,7 @@
   "front/nginx.conf": "front/nginx.conf",
   "front/viteConfig.ts": "front/viteConfig.ts",
   "front/libRoots.ts": "front/libRoots.ts",
+  "front/vitestConfig.ts": "front/vitestConfig.ts",
   "front/eslint.config.js": "front/eslint.config.js",
   "front/tsconfig.json": "front/tsconfig.json",
   "front/tsconfig.node.json": "front/tsconfig.node.json",

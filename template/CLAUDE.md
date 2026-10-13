@@ -185,8 +185,10 @@ Manual test procedures and TODO lists are optional: create them only when the us
 | `cd front && npx tsc -b` | type-check only (the full build adds `vite build`) | _to measure_ |
 | `cd back && npx jest <file>` | one spec file | _to measure_ |
 | `cd back && npm test` | all back unit tests | _to measure_ |
+| `cd front && npx vitest run <file>` | one front spec (standalone, node environment) | _to measure_ |
 | `npm run i18n:check` | missing locale keys | _to measure_ |
 
+- **Front Vitest config:** `front/vitest.config.ts` is `export default createVitestConfig()` from `front/vitestConfig.ts` (linked from the template, see `config-links.json`). It sets `resolve.preserveSymlinks: true`, without which the relative imports between linked modules (`../common/...` in a spec of `modules_shared/user`) cannot be resolved; never write a Vitest config of your own without it.
 - **While iterating:** the cheap type-check/lint + only the spec files you touched.
 - **Before committing:** the full test suite and `i18n:check` once.
 - Durations drift as the code base grows: date every measurement and update it when it is off by more than ~2×.
