@@ -8,6 +8,7 @@
  */
 
 import { HttpStatus, INestApplication, ValidationPipe } from '@nestjs/common';
+import type { CorsOptions, CorsOptionsDelegate } from '@nestjs/common/interfaces/external/cors-options.interface';
 import * as bodyParser from 'body-parser';
 import helmet from 'helmet';
 import { AppException } from '../exceptions/AppException';
@@ -33,6 +34,13 @@ export interface HttpAppOptions {
    * `false` registers no global pipe (the app validates by itself, or a whitelist would strip fields it relies on).
    */
   validation?: false | ValidationOptions;
+  /**
+   * Path prefixes (e.g. `/api/v1/inline-image/`) served to any origin: CORS open without credentials (the `Origin: null`
+   * of a sandboxed iframe included) and `Cross-Origin-Resource-Policy: cross-origin` (helmet sets `same-origin`).
+   * Reserve it for public, credential-free routes (images, tracking pixels). Default none; the other routes keep the
+   * allow-list.
+   */
+  publicCorsPaths?: string[];
 }
 
 /** Subset of the `ValidationPipe` options exposed by {@link HttpAppOptions.validation}. */
@@ -54,6 +62,7 @@ export interface ResolvedHttpAppOptions {
   allowedHeaders: string[];
   /** Options of the global validation pipe, `false` when none is registered. */
   validation: false | ValidationOptions;
+  publicCorsPaths: string[];
 }
 
 const BASE_CORS_HEADERS = ['Content-Type', 'Authorization', 'x-crypt-session', 'x-crypt-accept-encoding'];
@@ -102,6 +111,7 @@ export function resolveHttpAppOptions(options: HttpAppOptions = {}, env: HttpApp
     rawBodyLimit: options.rawBodyLimit ?? '50mb',
     allowedHeaders: [...new Set([...BASE_CORS_HEADERS, ...(options.extraCorsHeaders ?? []).map((h) => h.trim()).filter(Boolean)])],
     validation: options.validation === false ? false : { ...DEFAULT_VALIDATION, ...options.validation },
+    publicCorsPaths: (options.publicCorsPaths ?? []).map((p) => p.trim()).filter(Boolean),
   };
 }
 
@@ -122,6 +132,34 @@ function corsOrigin(allowedOrigins: string[]) {
       new AppException('CORS_FORBIDDEN', `CORS origin not allowed: ${origin}`, HttpStatus.FORBIDDEN),
       false
     );
+  };
+}
+
+/** CORS answer of the public paths: any origin (an opaque `null` one included), no credentials, `Content-Type` only. */
+const PUBLIC_CORS: CorsOptions = { origin: true, credentials: false, allowedHeaders: ['Content-Type'] };
+
+type PathRequest = { path?: string; url?: string };
+
+function requestPath(req: PathRequest): string {
+  return req.path ?? (req.url ?? '').split('?')[0];
+}
+
+/** Whether `path` starts with one of the public prefixes. */
+export function isPublicCorsPath(path: string, prefixes: readonly string[]): boolean {
+  return prefixes.some((prefix) => path.startsWith(prefix));
+}
+
+/** CORS configuration: the open policy on the public paths, `base` (the allow-list) elsewhere. */
+function corsOptions(base: CorsOptions, publicPaths: readonly string[]): CorsOptions | CorsOptionsDelegate<PathRequest> {
+  if (publicPaths.length === 0) return base;
+  return (req, callback) => callback(null, isPublicCorsPath(requestPath(req), publicPaths) ? PUBLIC_CORS : base);
+}
+
+/** Sets `Cross-Origin-Resource-Policy: cross-origin` on the public paths (runs after helmet, which sets `same-origin`). */
+function publicResourcePolicy(publicPaths: readonly string[]) {
+  return (req: PathRequest, res: { setHeader: (name: string, value: string) => void }, next: Next): void => {
+    if (isPublicCorsPath(requestPath(req), publicPaths)) res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    next();
   };
 }
 
@@ -146,6 +184,7 @@ function rawBodyMiddleware(paths: string[], limit: string) {
 /**
  * Applies the shared HTTP hardening to a Nest application: proxy trust, security headers, CORS,
  * body limits with raw-body capture, and the global validation pipe (`validation: false` skips it).
+ * `publicCorsPaths` opens CORS and the cross-origin resource policy on those path prefixes only.
  *
  * Must run BEFORE `app.init()`: the middlewares have to sit ahead of Nest's own parsers and of the router
  * (CORS preflights would otherwise 404). Throws (instead of exiting) on an unsafe configuration; `main.ts`
@@ -158,12 +197,14 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions 
   (app.getHttpAdapter().getInstance() as ExpressLike).set('trust proxy', resolved.trustProxy);
   // CSP is off on purpose: the API serves JSON and Swagger UI; the front sets its own CSP (nginx / hosting headers).
   app.use(helmet({ contentSecurityPolicy: false }));
-  app.enableCors({
+  if (resolved.publicCorsPaths.length > 0) app.use(publicResourcePolicy(resolved.publicCorsPaths));
+  const cors: CorsOptions = {
     origin: corsOrigin(resolved.allowedOrigins),
     credentials: !wildcard,
     allowedHeaders: resolved.allowedHeaders,
     exposedHeaders: ['x-crypt-encrypted', 'x-crypt-version', 'x-crypt-session'],
-  });
+  };
+  app.enableCors(corsOptions(cors, resolved.publicCorsPaths) as CorsOptions);
   app.use(rawBodyMiddleware(resolved.rawBodyPaths, resolved.rawBodyLimit));
   app.use(bodyParser.json({ limit: resolved.jsonLimit }));
   app.use(bodyParser.urlencoded({ limit: resolved.jsonLimit, extended: true }));

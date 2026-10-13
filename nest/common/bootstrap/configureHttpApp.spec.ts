@@ -15,6 +15,7 @@ import {
   assertSafeOrigins,
   configureHttpApp,
   HttpAppOptions,
+  isPublicCorsPath,
   parseTrustProxy,
   resolveHttpAppOptions,
   resolveListenHost,
@@ -35,6 +36,11 @@ class EchoController {
   @Post('/plain')
   plain(@Req() req: { rawBody?: Buffer }, @Body() body: EchoDto) {
     return { raw: req.rawBody?.toString('utf8') ?? null, body };
+  }
+
+  @Get('/pub/img')
+  pub() {
+    return { ok: true };
   }
 
   @Get('/ip')
@@ -208,5 +214,63 @@ describe('configureHttpApp', () => {
     expect(res.headers['content-security-policy']).toBeUndefined();
     expect(res.body.ip).toBe('203.0.113.9');
     await app.close();
+  });
+
+  describe('publicCorsPaths', () => {
+    const options: HttpAppOptions = { clientOrigins: 'https://a.io', publicCorsPaths: ['/pub/'] };
+
+    it('accepts any origin, the opaque "null" one included, without credentials on a public prefix', async () => {
+      const app = await createApp(options);
+      const opaque = await request(app.getHttpServer()).get('/pub/img').set('Origin', 'null');
+      expect(opaque.status).toBe(200);
+      expect(opaque.headers['access-control-allow-origin']).toBe('null');
+      expect(opaque.headers['access-control-allow-credentials']).toBeUndefined();
+      const foreign = await request(app.getHttpServer()).get('/pub/img').set('Origin', 'https://evil.io');
+      expect(foreign.status).toBe(200);
+      expect(foreign.headers['access-control-allow-origin']).toBe('https://evil.io');
+      await app.close();
+    });
+
+    it('sets Cross-Origin-Resource-Policy: cross-origin on the public prefix only', async () => {
+      const app = await createApp(options);
+      const pub = await request(app.getHttpServer()).get('/pub/img');
+      expect(pub.headers['cross-origin-resource-policy']).toBe('cross-origin');
+      const other = await request(app.getHttpServer()).get('/ip');
+      expect(other.headers['cross-origin-resource-policy']).toBe('same-origin');
+      await app.close();
+    });
+
+    it('keeps the allow-list on every other route', async () => {
+      const app = await createApp(options);
+      const blocked = await request(app.getHttpServer()).get('/ip').set('Origin', 'null');
+      expect(blocked.status).toBe(403);
+      const evil = await request(app.getHttpServer()).get('/ip').set('Origin', 'https://evil.io');
+      expect(evil.status).toBe(403);
+      const allowed = await request(app.getHttpServer()).get('/ip').set('Origin', 'https://a.io');
+      expect(allowed.headers['access-control-allow-origin']).toBe('https://a.io');
+      expect(allowed.headers['access-control-allow-credentials']).toBe('true');
+      await app.close();
+    });
+
+    it('answers the preflight of a public path for any origin', async () => {
+      const app = await createApp(options);
+      const res = await request(app.getHttpServer())
+        .options('/pub/img')
+        .set('Origin', 'null')
+        .set('Access-Control-Request-Method', 'GET');
+      expect(res.status).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe('null');
+      await app.close();
+    });
+
+    it('does nothing by default and resolves blank prefixes away', () => {
+      expect(resolveHttpAppOptions({}, { FRONT_PORT: '1' }).publicCorsPaths).toEqual([]);
+      expect(resolveHttpAppOptions({ publicCorsPaths: [' /a/ ', ''] }, { FRONT_PORT: '1' }).publicCorsPaths).toEqual(['/a/']);
+    });
+
+    it('matches by prefix', () => {
+      expect(isPublicCorsPath('/pub/x', ['/pub/'])).toBe(true);
+      expect(isPublicCorsPath('/public', ['/pub/'])).toBe(false);
+    });
   });
 });
