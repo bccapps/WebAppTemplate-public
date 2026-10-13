@@ -15,6 +15,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { timestampColumnType } from '../../database/dbEngine';
 
 @Entity({ name: 'themes' })
 export class ThemeEntity {
@@ -40,9 +41,9 @@ export class ThemeEntity {
   @Column({ type: 'boolean', default: false })
   isDefault!: boolean;
 
-  @CreateDateColumn({ type: 'timestamptz' })
+  @CreateDateColumn({ type: timestampColumnType() })
   createdAt!: Date;
 
-  @UpdateDateColumn({ type: 'timestamptz' })
+  @UpdateDateColumn({ type: timestampColumnType() })
   updatedAt!: Date;
 }

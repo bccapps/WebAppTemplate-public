@@ -16,6 +16,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { jsonColumnType, timestampColumnType } from '../../database/dbEngine';
 import { VoiceProviderCatalogEntity } from './VoiceProviderCatalogEntity';
 
 @Entity({ name: 'voice_accesses' })
@@ -42,12 +43,12 @@ export class VoiceAccessEntity {
   @Column({ type: 'text', nullable: true })
   password!: string | null;
 
-  @Column({ name: 'provider_config', type: 'jsonb', nullable: true })
+  @Column({ name: 'provider_config', type: jsonColumnType(), nullable: true })
   providerConfig!: Record<string, any> | null;
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
+  @CreateDateColumn({ name: 'created_at', type: timestampColumnType() })
   createdAt!: Date;
 
-  @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
+  @UpdateDateColumn({ name: 'updated_at', type: timestampColumnType() })
   updatedAt!: Date;
 }

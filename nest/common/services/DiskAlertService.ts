@@ -15,6 +15,7 @@ import { ModuleConfigService } from './ModuleConfigService';
 import { CronLockService } from './CronLockService';
 import { InstanceRoleService } from './InstanceRoleService';
 import { CryptService } from './CryptService';
+import { isSqliteDataSource, portableQuery } from '../../database/dbEngine';
 
 const DISK_ALERT_KEY = 'disk-alert-sent';
 const DISK_THRESHOLD = 90;
@@ -51,54 +52,44 @@ export class DiskAlertService {
     const usagePercent = info.disk.usagePercent;
 
     if (usagePercent <= DISK_THRESHOLD) {
-      await this.dataSource.query(
-        'DELETE FROM polling_lock WHERE job_key = $1',
-        [DISK_ALERT_KEY],
-      );
+      await this.cronLockService.clearLastRun(DISK_ALERT_KEY);
       return;
     }
 
-    const rows: Array<{ last_run_at: Date }> = await this.dataSource.query(
-      'SELECT last_run_at FROM polling_lock WHERE job_key = $1',
-      [DISK_ALERT_KEY],
-    );
+    const lastSent = await this.cronLockService.getLastRunAt(DISK_ALERT_KEY);
 
     const nowUtc = new Date();
     const todayUtc = nowUtc.toISOString().slice(0, 10);
     const currentUtcHour = nowUtc.getUTCHours();
 
-    if (rows.length === 0) {
-      await this.dataSource.query(
-        'INSERT INTO polling_lock (job_key, last_run_at) VALUES ($1, NOW())',
-        [DISK_ALERT_KEY],
-      );
+    if (!lastSent) {
+      await this.cronLockService.markRun(DISK_ALERT_KEY);
       await this.sendToAdmins(usagePercent);
       return;
     }
 
-    const lastSentDate = rows[0].last_run_at.toISOString().slice(0, 10);
+    const lastSentDate = lastSent.toISOString().slice(0, 10);
     if (lastSentDate === todayUtc) return;
     if (currentUtcHour !== 6) return;
 
-    await this.dataSource.query(
-      'UPDATE polling_lock SET last_run_at = NOW() WHERE job_key = $1',
-      [DISK_ALERT_KEY],
-    );
+    await this.cronLockService.markRun(DISK_ALERT_KEY);
     await this.sendToAdmins(usagePercent);
   }
 
   private async sendToAdmins(usagePercent: number): Promise<void> {
-    const rows: Array<{ user_id: number; value: string | null; encrypted: boolean }> =
-      await this.dataSource.query(
-        `SELECT us.user_id, us.value, us.encrypted
+    const [sql, params] = portableQuery(
+      isSqliteDataSource(this.dataSource),
+      `SELECT us.user_id, us.value, us.encrypted
          FROM user_setting us
          INNER JOIN "user" u ON u.id = us.user_id
          WHERE u.admin = true
            AND us.key = $1
            AND us.value IS NOT NULL
            AND us.value != ''`,
-        [PROWL_KEY],
-      );
+      [PROWL_KEY],
+    );
+    const rows: Array<{ user_id: number; value: string | null; encrypted: boolean }> =
+      await this.dataSource.query(sql, params);
 
     if (rows.length === 0) {
       this.logger.debug('[DiskAlert] No admin Prowl keys configured — skipping notification');

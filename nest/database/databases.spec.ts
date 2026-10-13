@@ -15,7 +15,7 @@ import {
   buildMainDataSourceOptions,
   DbContext,
 } from './databases';
-import { isSqlite, jsonColumnType, timestampColumnType } from './dbEngine';
+import { isSqlite, isSqliteDataSource, jsonColumnType, portableQuery, timestampColumnType } from './dbEngine';
 
 const ENV_KEYS = [
   'DB_ENGINE', 'DATABASE_ENGINE', 'DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME',
@@ -192,6 +192,25 @@ describe('database options', () => {
       expect(timestampColumnType()).toBe('datetime');
       expect(isSqlite('archive')).toBe(false);
       expect(jsonColumnType('archive')).toBe('jsonb');
+    });
+  });
+
+  describe('raw query portability', () => {
+    it('detects a SQLite data source from its driver type', () => {
+      expect(isSqliteDataSource({ options: { type: 'better-sqlite3' } })).toBe(true);
+      expect(isSqliteDataSource({ options: { type: 'postgres' } })).toBe(false);
+      expect(isSqliteDataSource({})).toBe(false);
+    });
+
+    it('leaves a Postgres query untouched', () => {
+      expect(portableQuery(false, 'SELECT $1, $2', ['a', 'b'])).toEqual(['SELECT $1, $2', ['a', 'b']]);
+    });
+
+    it('rewrites numbered placeholders to positional ones, duplicating reused values', () => {
+      expect(portableQuery(true, 'SELECT * FROM t WHERE a = $2 AND b = $1 AND c = $2', ['x', 'y'])).toEqual([
+        'SELECT * FROM t WHERE a = ? AND b = ? AND c = ?',
+        ['y', 'x', 'y'],
+      ]);
     });
   });
 });

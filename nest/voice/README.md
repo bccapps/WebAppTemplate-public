@@ -50,7 +50,7 @@ Auth column: `Admin` = `AdminOnlyInterceptor`; `User` = `RequireUserInterceptor`
 - `id` (PK), `name`, `slug` (unique), `type`, `capabilities` (simple-array), `baseUrl`, `website`, `signupUrl`, `createdAt`
 
 ### VoiceAccessEntity (`voice_accesses`)
-- `id` (PK), `label`, `providerId` (FK), `baseUrlOverride`, `username`, `password`, `providerConfig` (jsonb), `createdAt`, `updatedAt`
+- `id` (PK), `label`, `providerId` (FK), `baseUrlOverride`, `username`, `password`, `providerConfig` (JSON portable : `jsonb` sur Postgres, `simple-json` sur SQLite), `createdAt`, `updatedAt`
 
 ### UserVoiceAccessEntity (`user_voice_accesses`)
 - Same as VoiceAccessEntity + `userId` (plain indexed `user_id` column, **no FK** to `users` since 2026-10: voice must not depend on `user`; users are never hard-deleted, only anonymized), unique constraint on (userId, label)

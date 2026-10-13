@@ -13,6 +13,7 @@ import {
   Entity,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import { timestampColumnType } from '../../database/dbEngine';
 
 @Entity({ name: 'voice_provider_catalog' })
 export class VoiceProviderCatalogEntity {
@@ -40,6 +41,6 @@ export class VoiceProviderCatalogEntity {
   @Column({ name: 'signup_url', type: 'text', nullable: true })
   signupUrl!: string | null;
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
+  @CreateDateColumn({ name: 'created_at', type: timestampColumnType() })
   createdAt!: Date;
 }

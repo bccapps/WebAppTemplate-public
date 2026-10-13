@@ -22,7 +22,7 @@ nestcommon), pour fonctionner dans n'importe quel projet quel que soit son lot d
 |------|---------|-------------|
 | Module | `DatabaseModule.ts` | `forRoot({ context, mainDataSource })` : enregistre la connexion `main` + les connexions nommées |
 | Helper | `databases.ts` | `buildMainDataSourceOptions`, `buildExtraDataSourceOptions`, `resolveEntityGlobs`, type `DbContext` |
-| Helper | `dbEngine.ts` | `isSqlite`, `resolveEngine`, types de colonnes portables `jsonColumnType`, `timestampColumnType` |
+| Helper | `dbEngine.ts` | `isSqlite`, `isSqliteDataSource`, `resolveEngine`, types de colonnes portables `jsonColumnType`, `timestampColumnType`, et `portableQuery` (SQL brut `$n` → `?` sous SQLite) |
 | Helper | `dbRouting.ts` | `dbFor`, `connectionToken`, `parseModuleRouting`, `parseConnectionNames`, `isRoutingActive`, `MAIN_CONNECTION` |
 | Barrel | `index.ts` | Ré-exporte tout le module |
 
@@ -115,6 +115,22 @@ Pour qu'une entité fonctionne sur les deux moteurs : `@Column({ type: jsonColum
 `simple-json`) et `@Column({ type: timestampColumnType() })` (`timestamptz` ou `datetime`). `isSqlite(connection = 'main')`
 indique le moteur d'une connexion. **Contrainte** : le moteur est fixé au démarrage du processus, car les
 décorateurs sont évalués à l'import ; l'environnement (`.env`) doit donc être chargé avant l'import des entités.
+
+Entités publiques déjà portées (noms de colonnes et types Postgres inchangés, donc aucune migration Postgres) :
+`common` (`EventFeedEntityBase`, `CookieConsentEntity`, `ThemeEntity`) et `voice` (`VoiceAccessEntity`,
+`UserVoiceAccessEntity`, `VoiceProviderCatalogEntity`). Les entités de vx-private restent Postgres.
+
+### SQL brut portable
+
+Un `dataSource.query()` n'est pas traduit par TypeORM : sous SQLite, `$1` n'est pas accepté (le pilote veut `?`),
+et `NOW()`, `TO_TIMESTAMP`, `ANY($1)`, `EXTRACT(EPOCH …)` n'existent pas. Préférer le QueryBuilder ; à défaut,
+`portableQuery(isSqliteDataSource(dataSource), sql, params)` convertit les placeholders, et les dates se
+passent en paramètres ISO-8601 plutôt qu'avec `NOW()`. `CronLockService` en est l'exemple (verrou en mémoire
+du processus sous SQLite : une seule instance par base). `common/utils/CrossEnvDbConnection.ts` (pool `pg`
+direct) reste Postgres uniquement.
+
+Test d'intégration SQLite en mémoire : `common/sqlite.integration.spec.ts` (nécessite `better-sqlite3`, non
+inclus dans `package.base.json`).
 
 ### Taille du pool (`DB_POOLSIZE`)
 

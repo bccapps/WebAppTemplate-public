@@ -8,6 +8,7 @@
  */
 
 import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { jsonColumnType, timestampColumnType } from '../../database/dbEngine';
 
 export type CookieConsentCategories = { necessary: true; audienceMeasurement: boolean };
 
@@ -33,10 +34,10 @@ export class CookieConsentEntity {
   @Column({ type: 'varchar', length: 256, nullable: true })
   userAgent!: string | null;
 
-  @Column({ type: 'jsonb' })
+  @Column({ type: jsonColumnType() })
   categories!: CookieConsentCategories;
 
-  @CreateDateColumn({ type: 'timestamptz' })
+  @CreateDateColumn({ type: timestampColumnType() })
   createdAt!: Date;
 }
 

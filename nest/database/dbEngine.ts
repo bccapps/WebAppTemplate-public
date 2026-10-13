@@ -53,3 +53,28 @@ export function timestampColumnType(
 ): 'timestamptz' | 'datetime' {
   return isSqlite(connection) ? 'datetime' : 'timestamptz';
 }
+
+/** True when a TypeORM data source runs on SQLite (looks at the live driver, not at the environment). */
+export function isSqliteDataSource(dataSource: { options?: { type?: string } }): boolean {
+  const type = dataSource.options?.type;
+  return type === 'better-sqlite3' || type === 'sqlite';
+}
+
+/**
+ * Adapt a raw query written with Postgres placeholders (`$1`, `$2`, …) to SQLite, whose driver only accepts
+ * positional `?`: each `$n` becomes `?` and the parameter list is re-ordered (a placeholder used twice
+ * duplicates its value). Returns the input untouched on Postgres.
+ */
+export function portableQuery(
+  sqlite: boolean,
+  sql: string,
+  params: readonly unknown[] = []
+): [string, unknown[]] {
+  if (!sqlite) return [sql, [...params]];
+  const ordered: unknown[] = [];
+  const text = sql.replace(/\$(\d+)/g, (_match, index: string) => {
+    ordered.push(params[Number(index) - 1]);
+    return '?';
+  });
+  return [text, ordered];
+}

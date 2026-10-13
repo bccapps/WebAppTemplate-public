@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 import { Column, CreateDateColumn, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { jsonColumnType, timestampColumnType } from '../../database/dbEngine';
 
 /**
  * Columns of an append-only event feed table (outbox read by consumer apps, see eventFeed.ts).
@@ -19,10 +20,10 @@ export abstract class EventFeedEntityBase {
   @Column({ type: 'varchar', length: 64 })
   type!: string;
 
-  @Column({ type: 'jsonb' })
+  @Column({ type: jsonColumnType() })
   payload!: Record<string, unknown>;
 
   @Index()
-  @CreateDateColumn({ type: 'timestamptz' })
+  @CreateDateColumn({ type: timestampColumnType() })
   createdAt!: Date;
 }
