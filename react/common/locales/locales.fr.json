@@ -64,5 +64,9 @@
   "common.ui.media.mic.denied": "L'accès au micro a été refusé. Autorisez-le dans les réglages du navigateur, puis réessayez.",
   "common.ui.media.mic.noDevice": "Aucun micro détecté.",
   "common.ui.media.mic.error": "L'enregistrement n'a pas pu démarrer.",
-  "common.ui.media.mic.unsupported": "L'enregistrement n'est pas pris en charge par ce navigateur."
+  "common.ui.media.mic.unsupported": "L'enregistrement n'est pas pris en charge par ce navigateur.",
+  "common.desktop.download.saved": "Téléchargement terminé",
+  "common.desktop.download.savedIn": "Enregistré dans Téléchargements : {0}",
+  "common.desktop.download.failed": "Échec du téléchargement",
+  "common.desktop.download.failedFile": "Le fichier {0} n'a pas pu être enregistré."
 }

@@ -1,0 +1,16 @@
+{
+  "name": "desktop-shell",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "scripts": {
+    "sync": "node scripts/sync-tauri-config.mjs",
+    "test": "node --test scripts/",
+    "tauri": "tauri",
+    "dev": "npm run sync && tauri dev",
+    "build": "npm run sync && tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.2"
+  }
+}

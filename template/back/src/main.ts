@@ -16,7 +16,7 @@ import { ProwlService } from 'src/modules_shared/common/services/ProwlService';
 import * as http from 'http';
 import * as https from 'https';
 import { ConfigurationService } from 'src/modules_shared/common/services/ConfigurationService';
-import { configureHttpApp, DEFAULT_GZIP_THRESHOLD, lazyCompression, resolveFrontDir, resolveListenHost, serveFrontend } from 'src/modules_shared/common/bootstrap';
+import { configureHttpApp, DEFAULT_GZIP_THRESHOLD, lazyCompression, resolveFrontDir, exitWhenParentGone, resolveListenHost, serveFrontend } from 'src/modules_shared/common/bootstrap';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const CacheableLookup = require('cacheable-lookup').default;
 
@@ -83,6 +83,8 @@ async function bootstrap() {
     const host = resolveListenHost();
     await app.listen(process.env.NODE_PORT, host);
     console.log(`Listening on ${host}:${process.env.NODE_PORT}`);
+    // Desktop shell only (DESKTOP_PARENT_PID): exit if the shell dies without stopping us.
+    exitWhenParentGone();
   } catch (err) {
     console.error('FATAL: app.listen() failed:', err);
     process.exit(1);

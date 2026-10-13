@@ -1,0 +1,306 @@
+// VXFramework
+//
+// Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
+// SPDX-License-Identifier: MIT
+//
+// Licensed under the MIT License. See LICENSE in the project root.
+
+//! Shell configuration (`desktop.config.json`): parsing and validation. Pure, no I/O.
+
+use std::collections::{BTreeMap, HashSet};
+
+use serde::Deserialize;
+
+pub const DEFAULT_HEALTH_PATH: &str = "/api/v1/health";
+pub const SERVER_NAME: &str = "server";
+
+/// One command, or an ordered list of candidates (first usable wins: absolute paths must exist, bare names
+/// are looked up in `PATH`). Lets one config serve both the packaged app and `desktop:dev`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum CommandSpec {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl CommandSpec {
+    pub fn candidates(&self) -> Vec<String> {
+        match self {
+            CommandSpec::One(c) => vec![c.clone()],
+            CommandSpec::Many(list) => list.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProcessConfig {
+    /// Required for sidecars; the server is always named `server`.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Display name in splash messages (defaults to `name`).
+    #[serde(default)]
+    pub label: Option<String>,
+    pub command: CommandSpec,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    /// Sidecars only: allocate a free loopback port, exposed as `{port}` / `{port:<name>}`.
+    #[serde(default)]
+    pub port: bool,
+    /// HTTP path polled until it answers 200. Server default: `/api/v1/health`. Sidecars: none (no wait).
+    #[serde(default)]
+    pub health_path: Option<String>,
+    #[serde(default = "default_ready_timeout")]
+    pub ready_timeout_sec: u64,
+    /// Name of an env var that receives the per-launch shared token (same value for every process asking).
+    #[serde(default)]
+    pub shared_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WindowConfig {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default = "default_width")]
+    pub width: f64,
+    #[serde(default = "default_height")]
+    pub height: f64,
+    #[serde(default = "default_min_width")]
+    pub min_width: f64,
+    #[serde(default = "default_min_height")]
+    pub min_height: f64,
+    /// `dark`, `light` or `system`.
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
+
+impl Default for WindowConfig {
+    fn default() -> Self {
+        Self {
+            title: None,
+            width: default_width(),
+            height: default_height(),
+            min_width: default_min_width(),
+            min_height: default_min_height(),
+            theme: default_theme(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResourcesConfig {
+    /// File (relative to the resources folder) that identifies it.
+    #[serde(default = "default_marker")]
+    pub marker: String,
+    /// Built front, relative to the resources folder (`SERVE_FRONT_DIR`).
+    #[serde(default = "default_front_dir")]
+    pub front_dir: String,
+}
+
+impl Default for ResourcesConfig {
+    fn default() -> Self {
+        Self { marker: default_marker(), front_dir: default_front_dir() }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrandConfig {
+    #[serde(default = "default_background")]
+    pub background: String,
+    #[serde(default = "default_foreground")]
+    pub foreground: String,
+    #[serde(default = "default_accent")]
+    pub accent: String,
+}
+
+impl Default for BrandConfig {
+    fn default() -> Self {
+        Self { background: default_background(), foreground: default_foreground(), accent: default_accent() }
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SplashConfig {
+    #[serde(default)]
+    pub brand: BrandConfig,
+    /// Per-language overrides of the default messages (`splash/messages.json`).
+    #[serde(default)]
+    pub texts: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DesktopConfig {
+    pub product_name: String,
+    pub identifier: String,
+    #[serde(default)]
+    pub window: WindowConfig,
+    #[serde(default)]
+    pub resources: ResourcesConfig,
+    #[serde(default = "default_db_file")]
+    pub db_file: String,
+    pub server: ProcessConfig,
+    #[serde(default)]
+    pub sidecars: Vec<ProcessConfig>,
+    #[serde(default)]
+    pub splash: SplashConfig,
+}
+
+fn default_ready_timeout() -> u64 {
+    120
+}
+fn default_width() -> f64 {
+    1280.0
+}
+fn default_height() -> f64 {
+    800.0
+}
+fn default_min_width() -> f64 {
+    900.0
+}
+fn default_min_height() -> f64 {
+    600.0
+}
+fn default_theme() -> String {
+    "dark".into()
+}
+fn default_marker() -> String {
+    "back/dist/main.js".into()
+}
+fn default_front_dir() -> String {
+    "front/dist".into()
+}
+fn default_db_file() -> String {
+    "app.db".into()
+}
+fn default_background() -> String {
+    "#0d0b0a".into()
+}
+fn default_foreground() -> String {
+    "#efe8e1".into()
+}
+fn default_accent() -> String {
+    "#ff5b37".into()
+}
+
+impl ProcessConfig {
+    pub fn name(&self) -> &str {
+        self.name.as_deref().unwrap_or(SERVER_NAME)
+    }
+
+    pub fn label(&self) -> &str {
+        self.label.as_deref().unwrap_or_else(|| self.name())
+    }
+}
+
+/// Parses and validates the JSON text of `desktop.config.json`.
+pub fn parse_config(text: &str) -> Result<DesktopConfig, String> {
+    let mut cfg: DesktopConfig = serde_json::from_str(text).map_err(|e| format!("desktop.config.json: {e}"))?;
+    cfg.server.name = Some(SERVER_NAME.into());
+    cfg.server.port = true;
+    cfg.server.health_path.get_or_insert_with(|| DEFAULT_HEALTH_PATH.into());
+    validate(&cfg)?;
+    Ok(cfg)
+}
+
+fn validate(cfg: &DesktopConfig) -> Result<(), String> {
+    if cfg.product_name.trim().is_empty() {
+        return Err("productName must not be empty".into());
+    }
+    if cfg.identifier.trim().is_empty() {
+        return Err("identifier must not be empty".into());
+    }
+    validate_process(&cfg.server)?;
+    let mut seen: HashSet<&str> = HashSet::from([SERVER_NAME]);
+    for sidecar in &cfg.sidecars {
+        let name = sidecar.name.as_deref().ok_or("every sidecar needs a name")?;
+        if !seen.insert(name) {
+            return Err(format!("duplicate or reserved process name: {name}"));
+        }
+        validate_process(sidecar)?;
+    }
+    Ok(())
+}
+
+fn validate_process(p: &ProcessConfig) -> Result<(), String> {
+    let name = p.name();
+    if p.command.candidates().iter().all(|c| c.trim().is_empty()) {
+        return Err(format!("{name}: command must not be empty"));
+    }
+    if let Some(path) = &p.health_path {
+        if !path.starts_with('/') {
+            return Err(format!("{name}: healthPath must start with '/'"));
+        }
+        if !p.port {
+            return Err(format!("{name}: healthPath requires \"port\": true"));
+        }
+    }
+    Ok(())
+}
+
+/// `#rrggbb` to its components.
+pub fn parse_hex_color(s: &str) -> Option<(u8, u8, u8)> {
+    let hex = s.strip_prefix('#')?;
+    if hex.len() != 6 || !hex.is_ascii() {
+        return None;
+    }
+    let part = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+    Some((part(0)?, part(2)?, part(4)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MINIMAL: &str = r#"{"productName":"A","identifier":"x.y","server":{"command":"node"}}"#;
+
+    #[test]
+    fn minimal_config_gets_defaults() {
+        let cfg = parse_config(MINIMAL).unwrap();
+        assert_eq!(cfg.server.name(), "server");
+        assert_eq!(cfg.server.health_path.as_deref(), Some(DEFAULT_HEALTH_PATH));
+        assert!(cfg.server.port);
+        assert_eq!(cfg.server.ready_timeout_sec, 120);
+        assert_eq!(cfg.resources.front_dir, "front/dist");
+        assert_eq!(cfg.window.theme, "dark");
+    }
+
+    #[test]
+    fn command_accepts_string_or_list() {
+        let cfg = parse_config(r#"{"productName":"A","identifier":"x","server":{"command":["a","b"]}}"#).unwrap();
+        assert_eq!(cfg.server.command.candidates(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn sidecar_rules_are_enforced() {
+        let with = |s: &str| format!(r#"{{"productName":"A","identifier":"x","server":{{"command":"n"}},"sidecars":[{s}]}}"#);
+        assert!(parse_config(&with(r#"{"command":"p"}"#)).unwrap_err().contains("needs a name"));
+        assert!(parse_config(&with(r#"{"name":"server","command":"p"}"#)).unwrap_err().contains("reserved"));
+        assert!(parse_config(&with(r#"{"name":"e","command":"p","healthPath":"/h"}"#)).unwrap_err().contains("requires"));
+        assert!(parse_config(&with(r#"{"name":"e","command":"p","port":true,"healthPath":"h"}"#)).unwrap_err().contains("start with"));
+        let ok = parse_config(&with(r#"{"name":"e","command":"p","port":true,"healthPath":"/h"}"#)).unwrap();
+        assert_eq!(ok.sidecars[0].label(), "e");
+    }
+
+    #[test]
+    fn rejects_unknown_fields_and_empty_names() {
+        assert!(parse_config(r#"{"productName":"A","identifier":"x","server":{"command":"n"},"oops":1}"#).is_err());
+        assert!(parse_config(r#"{"productName":" ","identifier":"x","server":{"command":"n"}}"#).is_err());
+    }
+
+    #[test]
+    fn hex_colors() {
+        assert_eq!(parse_hex_color("#0d0b0a"), Some((13, 11, 10)));
+        assert_eq!(parse_hex_color("0d0b0a"), None);
+        assert_eq!(parse_hex_color("#12345"), None);
+        assert_eq!(parse_hex_color("#zzzzzz"), None);
+    }
+}

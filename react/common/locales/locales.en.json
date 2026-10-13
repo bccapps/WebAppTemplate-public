@@ -64,5 +64,9 @@
   "common.ui.media.mic.denied": "Microphone access was refused. Allow it in the browser settings, then try again.",
   "common.ui.media.mic.noDevice": "No microphone found.",
   "common.ui.media.mic.error": "The recording could not start.",
-  "common.ui.media.mic.unsupported": "Recording is not supported by this browser."
+  "common.ui.media.mic.unsupported": "Recording is not supported by this browser.",
+  "common.desktop.download.saved": "Download complete",
+  "common.desktop.download.savedIn": "Saved to Downloads: {0}",
+  "common.desktop.download.failed": "Download failed",
+  "common.desktop.download.failedFile": "The file {0} could not be saved."
 }

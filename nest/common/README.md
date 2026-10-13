@@ -15,6 +15,7 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 | Email | `EmailService` envoie des emails via Brevo (SMTP relay) ou un serveur SMTP custom, configurable depuis l'admin via `emailConfigSchema`. Le transport est recréé automatiquement lorsqu'un paramètre change.
 | Démarrage HTTP | `bootstrap/configureHttpApp.ts` : `configureHttpApp(app, options?)` applique le durcissement commun (voir « Démarrage HTTP » plus bas). |
 | Service du front | `bootstrap/serveFrontend.ts` : `serveFrontend(app, dir)`, option activée par `SERVE_FRONT_DIR` (voir « Servir le front » plus bas). |
+| Arrêt avec le parent | `bootstrap/watchParentProcess.ts` : `exitWhenParentGone()`, active si `DESKTOP_PARENT_PID` est défini (voir « Arrêt si le parent disparaît » plus bas). |
 | Santé | `HealthController` : `GET /api/v1/health` public, agrège les contributeurs `HEALTH_CONTRIBUTORS`. |
 | Limiteur de débit | `throttle/` : garde globale `CommonThrottlerGuard`, inerte sauf `common_throttleEnabled`, stockage Redis à échec ouvert. Voir « Limiteur de débit » plus bas. |
 | Plugins | `plugins/` : `NestModulePlugin` (`module` ou fabrique, `modules`, `order`), `resolvePluginModules`. Voir « Plugins » plus bas. |
@@ -440,6 +441,10 @@ Option pour un déploiement même origine (bureau, conteneur unique) : URL d'API
 
 Tests : `bootstrap/serveFrontend.spec.ts` (dossier temporaire, supertest).
 
+### Arrêt si le parent disparaît (`DESKTOP_PARENT_PID`)
+
+La coquille de bureau (`template/desktop/`) lance le back et lui transmet son propre pid dans `DESKTOP_PARENT_PID`. Si la coquille meurt sans arrêt propre (kill -9, plantage), `exitWhenParentGone()` (appelée par `main.ts` du gabarit après `app.listen()`) détecte la disparition de ce pid (sonde `process.kill(pid, 0)` toutes les 2 s, minuterie `unref`) et termine le processus (code 0), pour ne laisser aucun orphelin. Variable absente ou invalide : aucune action. Helpers : `resolveParentPid`, `isProcessAlive`, `watchParentProcess(pid, onGone, { intervalMs, isAlive })` (renvoie la fonction d'arrêt de la surveillance). La coquille a en plus ses propres filets (sentinelle Unix, Job Object Windows) : voir `template/desktop/README.md`. Tests : `bootstrap/watchParentProcess.spec.ts`.
+
 ### Ordre d'enregistrement dans `main.ts`
 
 Nest ajoute son handler 404 et son filtre d'exceptions à la **fin** de `app.init()`. Tout middleware ou route ajouté à Express après `init()` est donc derrière eux et n'est jamais atteint (prouvé par `bootstrap/httpMiddlewareOrder.spec.ts` : `GET /api` donne 404 si Swagger est monté après `init()`, aucune compression). Ordre obligatoire :
@@ -448,7 +453,8 @@ Nest ajoute son handler 404 et son filtre d'exceptions à la **fin** de `app.ini
 2. `app.use(lazyCompression(getThreshold))` : le seuil `common_gzip_threshold` n'est en base qu'après `init()` (seed), `getThreshold` est donc appelée **à la première requête** et l'instance `compression` est mise en cache ; seuil invalide ou lecture en échec : 1024 octets (`DEFAULT_GZIP_THRESHOLD`) ;
 3. `SwaggerModule.setup('api', app, document)` ;
 4. `serveFrontend(app, dir)` si `SERVE_FRONT_DIR` ;
-5. `await app.init()`, puis `app.listen()`.
+5. `await app.init()`, puis `app.listen()` ;
+6. `exitWhenParentGone()` après l'écoute (sans effet sans `DESKTOP_PARENT_PID`).
 
 Une modification du seuil en base après la première requête n'est prise en compte qu'au redémarrage (comportement identique à l'ancien code, qui le lisait une fois).
 

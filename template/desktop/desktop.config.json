@@ -1,0 +1,30 @@
+{
+  "productName": "My App",
+  "identifier": "com.example.myapp",
+  "window": {
+    "title": null,
+    "width": 1280,
+    "height": 800,
+    "minWidth": 900,
+    "minHeight": 600,
+    "theme": "dark"
+  },
+  "resources": {
+    "marker": "back/dist/main.js",
+    "frontDir": "front/dist"
+  },
+  "dbFile": "app.db",
+  "server": {
+    "command": ["{resources}/runtime/node/node", "node"],
+    "args": ["dist/main.js"],
+    "cwd": "{resources}/back",
+    "env": {},
+    "healthPath": "/api/v1/health",
+    "readyTimeoutSec": 120
+  },
+  "sidecars": [],
+  "splash": {
+    "brand": { "background": "#0d0b0a", "foreground": "#efe8e1", "accent": "#ff5b37" },
+    "texts": { "fr": {}, "en": {} }
+  }
+}

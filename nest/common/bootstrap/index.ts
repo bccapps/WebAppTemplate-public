@@ -10,3 +10,4 @@
 export * from './configureHttpApp';
 export * from './serveFrontend';
 export * from './compressionMiddleware';
+export * from './watchParentProcess';

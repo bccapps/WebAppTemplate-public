@@ -131,6 +131,20 @@ même `FormData`). `headers` s'ajoute à la requête (un `Authorization` explici
 (`percent` vaut `null` tant que le total est inconnu, `toUploadProgress`) ; `signal` annule la requête. Pas de déduplication.
 Remplace les intercepteurs axios temporaires des apps (ex. `postFormData` de ComptaFacile). Tests : `core/http/HttpService.spec.ts`.
 
+## Coquille de bureau — `useDesktopDownloads`
+
+Dans l'application de bureau (`template/desktop/`), le navigateur embarqué ne montre rien quand un `<a download>` aboutit : la
+coquille enregistre le fichier dans le dossier Téléchargements puis déclenche sur `window` l'événement `desktop-download`
+(`detail: { path, success }`). `useDesktopDownloads(onDownload?)` (`hooks/useDesktopDownloads.ts`) l'écoute et, par défaut, affiche
+un toast `ToastService` (succès : `common.desktop.download.saved` / `savedIn` avec le nom du fichier ; échec : `failed` / `failedFile`,
+clés fr + en dans `locales/`). À monter **une fois** dans la mise en page de l'application ; sans coquille (navigateur) l'événement
+n'est jamais émis, le hook est inerte. Tant qu'il est monté il pose `window.__desktopHandlesDownloads = true`, ce qui supprime la
+notification de secours de la coquille. Un `onDownload` personnalisé remplace le toast.
+
+La logique pure (`parseDesktopDownload`, `downloadFileName`, `toDownloadToast`, `subscribeDesktopDownloads`, constantes
+`DESKTOP_DOWNLOAD_EVENT` et `DESKTOP_HANDLES_DOWNLOADS_FLAG`) est dans `core/desktop/desktopDownloads.ts` (sans dépendance React) ;
+le nom de l'événement et du drapeau est à garder identique à `downloads.rs` de la coquille. Tests : `core/desktop/desktopDownloads.spec.ts`.
+
 ## Transport chiffré — `CryptService`
 
 `CryptService` (`services/CryptService.ts`) négocie une session AES-256-GCM (ECDH P-256) avec le
