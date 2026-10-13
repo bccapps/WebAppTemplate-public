@@ -41,7 +41,26 @@ export interface HttpAppOptions {
    * allow-list.
    */
   publicCorsPaths?: string[];
+  /**
+   * Per-request CORS decision for an origin that is NOT in `CLIENT_ORIGINS` (those keep exactly their behaviour, every
+   * route). Receives the origin and the path and method of the request; for a preflight, the method asked by
+   * `Access-Control-Request-Method`. Returns `undefined` (default: the origin is refused with `CORS_FORBIDDEN`) or `false`
+   * (refused), `true` (allowed, with credentials) or `{ credentials }` (allowed, cookies on or off). Example: a browser
+   * extension origin allowed, with cookies, on its own routes only. Not consulted without an `Origin` header; the
+   * `publicCorsPaths` prefixes take precedence. Default: none.
+   */
+  corsOriginPolicy?: CorsOriginPolicy;
 }
+
+/** Request facts handed to {@link HttpAppOptions.corsOriginPolicy}. */
+export interface CorsPolicyRequest {
+  /** Path without the query string. */
+  path: string;
+  /** HTTP method; the requested one for a preflight. */
+  method: string;
+}
+
+export type CorsOriginPolicy = (origin: string, req: CorsPolicyRequest) => boolean | { credentials: boolean } | undefined;
 
 /** Subset of the `ValidationPipe` options exposed by {@link HttpAppOptions.validation}. */
 export interface ValidationOptions {
@@ -63,6 +82,7 @@ export interface ResolvedHttpAppOptions {
   /** Options of the global validation pipe, `false` when none is registered. */
   validation: false | ValidationOptions;
   publicCorsPaths: string[];
+  corsOriginPolicy?: CorsOriginPolicy;
 }
 
 const BASE_CORS_HEADERS = ['Content-Type', 'Authorization', 'x-crypt-session', 'x-crypt-accept-encoding'];
@@ -112,6 +132,7 @@ export function resolveHttpAppOptions(options: HttpAppOptions = {}, env: HttpApp
     allowedHeaders: [...new Set([...BASE_CORS_HEADERS, ...(options.extraCorsHeaders ?? []).map((h) => h.trim()).filter(Boolean)])],
     validation: options.validation === false ? false : { ...DEFAULT_VALIDATION, ...options.validation },
     publicCorsPaths: (options.publicCorsPaths ?? []).map((p) => p.trim()).filter(Boolean),
+    corsOriginPolicy: options.corsOriginPolicy,
   };
 }
 
@@ -149,10 +170,34 @@ export function isPublicCorsPath(path: string, prefixes: readonly string[]): boo
   return prefixes.some((prefix) => path.startsWith(prefix));
 }
 
-/** CORS configuration: the open policy on the public paths, `base` (the allow-list) elsewhere. */
-function corsOptions(base: CorsOptions, publicPaths: readonly string[]): CorsOptions | CorsOptionsDelegate<PathRequest> {
-  if (publicPaths.length === 0) return base;
-  return (req, callback) => callback(null, isPublicCorsPath(requestPath(req), publicPaths) ? PUBLIC_CORS : base);
+type CorsRequest = PathRequest & { method?: string; headers?: Record<string, string | string[] | undefined> };
+
+function headerValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+/** CORS options of one request: the policy's verdict for a foreign origin, `base` (allow-list) otherwise. */
+function policyOptions(base: CorsOptions, allowedOrigins: readonly string[], policy: CorsOriginPolicy, req: CorsRequest): CorsOptions {
+  const origin = headerValue(req.headers?.origin);
+  if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) return base;
+  const method = (req.method === 'OPTIONS' ? headerValue(req.headers?.['access-control-request-method']) : undefined) ?? req.method ?? 'GET';
+  const verdict = policy(origin, { path: requestPath(req), method: method.toUpperCase() });
+  if (!verdict) return base;
+  return { ...base, origin: true, credentials: verdict === true ? true : verdict.credentials };
+}
+
+/** CORS configuration: the open policy on the public paths, the origin policy for foreign origins, `base` (the allow-list) elsewhere. */
+function corsOptions(
+  base: CorsOptions,
+  publicPaths: readonly string[],
+  allowedOrigins: readonly string[],
+  policy: CorsOriginPolicy | undefined
+): CorsOptions | CorsOptionsDelegate<CorsRequest> {
+  if (publicPaths.length === 0 && !policy) return base;
+  return (req, callback) => {
+    if (publicPaths.length > 0 && isPublicCorsPath(requestPath(req), publicPaths)) return callback(null, PUBLIC_CORS);
+    return callback(null, policy ? policyOptions(base, allowedOrigins, policy, req) : base);
+  };
 }
 
 /** Sets `Cross-Origin-Resource-Policy: cross-origin` on the public paths (runs after helmet, which sets `same-origin`). */
@@ -184,7 +229,8 @@ function rawBodyMiddleware(paths: string[], limit: string) {
 /**
  * Applies the shared HTTP hardening to a Nest application: proxy trust, security headers, CORS,
  * body limits with raw-body capture, and the global validation pipe (`validation: false` skips it).
- * `publicCorsPaths` opens CORS and the cross-origin resource policy on those path prefixes only.
+ * `publicCorsPaths` opens CORS and the cross-origin resource policy on those path prefixes only; `corsOriginPolicy`
+ * decides per request for origins outside `CLIENT_ORIGINS`.
  *
  * Must run BEFORE `app.init()`: the middlewares have to sit ahead of Nest's own parsers and of the router
  * (CORS preflights would otherwise 404). Throws (instead of exiting) on an unsafe configuration; `main.ts`
@@ -204,7 +250,7 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions 
     allowedHeaders: resolved.allowedHeaders,
     exposedHeaders: ['x-crypt-encrypted', 'x-crypt-version', 'x-crypt-session'],
   };
-  app.enableCors(corsOptions(cors, resolved.publicCorsPaths) as CorsOptions);
+  app.enableCors(corsOptions(cors, resolved.publicCorsPaths, resolved.allowedOrigins, resolved.corsOriginPolicy) as CorsOptions);
   app.use(rawBodyMiddleware(resolved.rawBodyPaths, resolved.rawBodyLimit));
   app.use(bodyParser.json({ limit: resolved.jsonLimit }));
   app.use(bodyParser.urlencoded({ limit: resolved.jsonLimit, extended: true }));

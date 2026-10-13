@@ -273,4 +273,88 @@ describe('configureHttpApp', () => {
       expect(isPublicCorsPath('/public', ['/pub/'])).toBe(false);
     });
   });
+
+  describe('corsOriginPolicy', () => {
+    const EXT = 'chrome-extension://abc';
+    const calls: Array<[string, string, string]> = [];
+    const policy = (origin: string, req: { path: string; method: string }) => {
+      calls.push([origin, req.path, req.method]);
+      if (origin === EXT) return req.path === '/pub/img' || req.path === '/plain' ? true : undefined;
+      if (origin === 'https://nocookie.io') return { credentials: false };
+      if (origin === 'https://no.io') return false;
+      return undefined;
+    };
+    const options: HttpAppOptions = { clientOrigins: 'https://a.io', corsOriginPolicy: policy };
+
+    it('allows a foreign origin on a route the policy accepts, with credentials', async () => {
+      const app = await createApp(options);
+      const res = await request(app.getHttpServer()).get('/pub/img').set('Origin', EXT);
+      expect(res.status).toBe(200);
+      expect(res.headers['access-control-allow-origin']).toBe(EXT);
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+      await app.close();
+    });
+
+    it('refuses the same origin on another route (policy undefined)', async () => {
+      const app = await createApp(options);
+      const res = await request(app.getHttpServer()).get('/ip').set('Origin', EXT);
+      expect(res.status).toBe(403);
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
+      await app.close();
+    });
+
+    it('refuses on false and honours credentials: false', async () => {
+      const app = await createApp(options);
+      expect((await request(app.getHttpServer()).get('/ip').set('Origin', 'https://no.io')).status).toBe(403);
+      const res = await request(app.getHttpServer()).get('/ip').set('Origin', 'https://nocookie.io');
+      expect(res.status).toBe(200);
+      expect(res.headers['access-control-allow-origin']).toBe('https://nocookie.io');
+      expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+      await app.close();
+    });
+
+    it('passes the path and the requested method on a preflight', async () => {
+      const app = await createApp(options);
+      calls.length = 0;
+      const res = await request(app.getHttpServer())
+        .options('/plain')
+        .set('Origin', EXT)
+        .set('Access-Control-Request-Method', 'post')
+        .set('Access-Control-Request-Headers', 'content-type');
+      expect(res.status).toBe(204);
+      expect(res.headers['access-control-allow-origin']).toBe(EXT);
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+      expect(calls).toEqual([[EXT, '/plain', 'POST']]);
+      const denied = await request(app.getHttpServer())
+        .options('/ip')
+        .set('Origin', EXT)
+        .set('Access-Control-Request-Method', 'GET');
+      expect(denied.headers['access-control-allow-origin']).toBeUndefined();
+      await app.close();
+    });
+
+    it('does not consult the policy for CLIENT_ORIGINS nor without Origin, and keeps their behaviour', async () => {
+      const app = await createApp(options);
+      calls.length = 0;
+      const allowed = await request(app.getHttpServer()).get('/ip').set('Origin', 'https://a.io');
+      expect(allowed.headers['access-control-allow-origin']).toBe('https://a.io');
+      expect(allowed.headers['access-control-allow-credentials']).toBe('true');
+      expect((await request(app.getHttpServer()).get('/ip')).status).toBe(200);
+      expect(calls).toEqual([]);
+      await app.close();
+    });
+
+    it('keeps extraCorsHeaders, publicCorsPaths and the query string handling', async () => {
+      const app = await createApp({ ...options, extraCorsHeaders: ['x-company-id'], publicCorsPaths: ['/pub/'] });
+      const pre = await request(app.getHttpServer())
+        .options('/plain?x=1')
+        .set('Origin', EXT)
+        .set('Access-Control-Request-Method', 'POST');
+      expect(pre.headers['access-control-allow-headers']).toContain('x-company-id');
+      const pub = await request(app.getHttpServer()).get('/pub/img').set('Origin', 'https://evil.io');
+      expect(pub.headers['access-control-allow-origin']).toBe('https://evil.io');
+      expect(pub.headers['access-control-allow-credentials']).toBeUndefined();
+      await app.close();
+    });
+  });
 });
