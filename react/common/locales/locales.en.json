@@ -30,5 +30,7 @@
   "common.admin.tokenGate.label": "Admin key",
   "common.admin.tokenGate.submit": "Unlock",
   "common.admin.tokenGate.invalid": "Invalid admin key.",
-  "common.admin.tokenGate.logout": "Lock admin"
+  "common.admin.tokenGate.logout": "Lock admin",
+  "common.nav.sidebar.collapse": "Collapse menu",
+  "common.nav.sidebar.expand": "Expand menu"
 }

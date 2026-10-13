@@ -18,6 +18,9 @@ import { PageLayout } from '@/components/PageLayout';
 import { configurationService } from './modules_shared/common/services/ConfigurationService';
 import { cryptService } from '@/modules_shared/common/services/CryptService';
 import { localeService } from '@/modules_shared/common/services/LocaleService';
+import { buildPreloadPlan } from '@/modules_shared/common/core/preload/preloadPlan';
+import { withPluginProviders } from '@/modules_shared/common/plugins/pluginProviders';
+import type { PreloadEntry } from '@/modules_shared/common/plugins/AppPlugin';
 import { BrowserRouter } from 'react-router-dom';
 import { appPlugins } from './plugins';
 
@@ -25,26 +28,17 @@ interface AppProps {
   children?: ReactNode;
 }
 
-const withPreloadKey = <T,>(service: T, key: string): T => {
-  (service as { preloadKey?: string }).preloadKey = key;
-  return service;
-};
-
-// Common services + the ones declared by linked module plugins (e.g. UserService with `user`).
-const preloadServices = [
-  withPreloadKey(configurationService, 'ConfigurationService'),
-  withPreloadKey(cryptService, 'CryptService'),
-  withPreloadKey(localeService, 'LocaleService'),
-  ...appPlugins.flatMap((p) => p.preload ?? []).map((entry) => withPreloadKey(entry.service, entry.key)),
+/**
+ * Services of the core, always loaded (blocking). An app that does not need one removes it here (e.g. `crypt` when it
+ * does not use transport encryption); plugins add theirs through `preload` (`mode: 'background'` = not awaited).
+ */
+export const coreServices: PreloadEntry[] = [
+  { key: 'ConfigurationService', service: configurationService },
+  { key: 'CryptService', service: cryptService },
+  { key: 'LocaleService', service: localeService },
 ];
 
-/** Wrap `tree` with the plugin Providers; `appPlugins` is sorted by ascending `order` (first = outermost). */
-function withPluginProviders(tree: ReactNode): ReactNode {
-  return appPlugins.reduceRight<ReactNode>(
-    (acc, plugin) => (plugin.Provider ? <plugin.Provider key={plugin.id}>{acc}</plugin.Provider> : acc),
-    tree,
-  );
-}
+const preloadPlan = buildPreloadPlan(coreServices, appPlugins);
 
 function App({ children }: AppProps) {
   return (
@@ -53,17 +47,22 @@ function App({ children }: AppProps) {
         <ThemeModeProvider>
           <CssBaseline />
           <BrowserRouter>
-            <PreloaderGate services={preloadServices}>
+            <PreloaderGate services={preloadPlan.blocking} background={preloadPlan.background}>
               <VisualThemeProvider>
                 <ThemeShell appName="{{SITE_NAME}}">
-                  <PageLayout>
-                    {children ?? <Router />}
-                  </PageLayout>
+                  {withPluginProviders(
+                    <PageLayout>
+                      {children ?? <Router />}
+                    </PageLayout>,
+                    appPlugins,
+                    'inner',
+                  )}
                 </ThemeShell>
               </VisualThemeProvider>
             </PreloaderGate>
           </BrowserRouter>
         </ThemeModeProvider>,
+        appPlugins,
       )}
     </>
   );

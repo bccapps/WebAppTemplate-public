@@ -13,6 +13,9 @@ export default class Preloader extends EventObject {
   services: any[] = [];
   services_names: string[] = [];
   loaded_items: any = {};
+  /** Started after the configuration like the others, but never awaited (`ready()` ignores them). */
+  background_services: any[] = [];
+  private background_names: string[] = [];
 
   constructor() {
     super();
@@ -65,6 +68,31 @@ export default class Preloader extends EventObject {
     this.loaded_items[serviceName] = false;
   };
 
+  /** Register a service that must not delay the first render: it starts with the second wave and is never awaited. */
+  addBackground = (service: any) => {
+    const serviceName = this.resolveName(service);
+    if (this.services_names.includes(serviceName) || this.background_names.includes(serviceName)) return;
+    this.background_services.push(service);
+    this.background_names.push(serviceName);
+  };
+
+  private backgroundStarted = false;
+
+  /** Start the background services once (the gate effect may run twice under StrictMode); a failure never reaches the others. */
+  private startBackground() {
+    if (this.backgroundStarted) return;
+    this.backgroundStarted = true;
+    for (const service of this.background_services) {
+      const name = this.resolveName(service);
+      console.log('Loading background service: ', name);
+      try {
+        service.init(() => console.log('Background service loaded: ', name));
+      } catch (e) {
+        console.error('Preloader: background service failed to start', name, e);
+      }
+    }
+  }
+
   /**
    * Two waves instead of a fully serial chain (PERFORMANCE_PLAN.md §1.1):
    * `ConfigurationService` alone first — it's the only real dependency, every
@@ -83,6 +111,7 @@ export default class Preloader extends EventObject {
     const servicesToLoad = [...this.services];
 
     if (servicesToLoad.length === 0) {
+      this.startBackground();
       try {
         this.dispatchEvent('ready', {});
       } catch (e) {
@@ -116,6 +145,7 @@ export default class Preloader extends EventObject {
     const configIndex = servicesToLoad.findIndex((s) => this.resolveName(s) === 'ConfigurationService');
     if (configIndex === -1) {
       servicesToLoad.forEach(startService);
+      this.startBackground();
       return;
     }
 
@@ -127,6 +157,7 @@ export default class Preloader extends EventObject {
     configService.init(apiUrl, () => {
       markLoaded(configName);
       rest.forEach(startService);
+      this.startBackground();
     });
   }
 

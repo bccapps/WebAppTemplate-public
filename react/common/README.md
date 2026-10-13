@@ -36,6 +36,9 @@ config values ConfigurationService sets up, they aren't dependencies of each oth
 correct under concurrent completions (see `Preloader.spec.ts`). If your app doesn't pass
 a `ConfigurationService`, everything just loads in parallel from the start.
 
+**Background services** — `preloader.addBackground(service)` (`PreloaderGate` prop `background`, normally fed by `buildPreloadPlan`
+from the plugins' `preload: [{ ..., mode: 'background' }]`): started with the second wave, never awaited by `ready()`.
+
 **Keep barrier-blocking services to the strict minimum.** Only put a service in the
 `PreloaderGate`/`AppPreloaderGate` `services` array if something renders incorrectly
 without its data. `CryptService` in particular should NOT be listed — it self-heals
@@ -255,9 +258,67 @@ Dépendances : aucune vers `user` (module privé). Les composants admin de `comm
 - `components/ui/admin/AdminTokenGate.tsx` : enveloppe `AdminPage`, `AdminDashboard`, `AdminThemes`. Admin ⇒ contenu ; mode `anonymous` ⇒
   formulaire « Admin key » (affiché après la détection du mode local de confiance, sans clignotement ; en mode `local-trust` le contenu s'affiche directement) ; mode `users` non admin ⇒ comportement historique (`<Unauthorized />`, ou la prop `unauthorized`).
   Clés i18n : `common.admin.tokenGate.{title,label,submit,invalid,logout}`.
-- `plugins/AppPlugin.ts` : contrat des plugins d'app (`id`, `order`, `preload`, `Provider`, `HeaderActions`, `routes`, `adminRoutes`, `adminMenu`)
-  et `collectPlugins(modules)` (filtre + tri par `order`). Un module expose `export const plugin: AppPlugin` depuis `<module>/plugin.tsx`.
+- `plugins/` : contrat des plugins d'app, détaillé dans « Plugins du front » plus bas.
 - Le module `user` appelle `registerSessionAuth` à l'import de `UserService` : les apps existantes n'ont rien à changer.
+
+## Plugins du front — `plugins/`
+
+Un module lié expose `export const plugin` depuis `<module>/plugin.tsx` ; `front/src/plugins.ts` (gabarit) les collecte
+(`collectPlugins(modules, pluginOptions)`) et les enregistre (`registerAppPlugins`, pour les composants de `common` qui les lisent).
+
+```ts
+interface AppPlugin {
+  id: string;
+  order?: number;                              // croissant ; défaut 100 ; égalité = ordre de shared-modules.json
+  preload?: { key: string; service: unknown; mode?: 'blocking' | 'background' }[];
+  Provider?: ComponentType<{ children }>;
+  providerPlacement?: 'outer' | 'inner';       // défaut 'outer'
+  HeaderActions?: ComponentType<{ isAuth: boolean; isAdmin: boolean }>;
+  routes?: PluginRoute[];                      // layout 'page' par défaut
+  adminRoutes?: PluginRoute[];                 // layout 'admin' par défaut
+  navMenu?: MenuSection[];                     // barre latérale, tous les visiteurs
+  adminMenu?: MenuSection[];                   // barre latérale, pages 'admin', administrateurs
+}
+type PluginRoute = { path: string; guard?: RouteGuard; layout?: 'page' | 'fullscreen' | 'admin' }
+  & ({ element: ReactElement } | { lazy: () => Promise<{ default: ComponentType }> });   // exactement l'un des deux
+interface MenuSection { id: string; labelId: string; items: { id; labelId; to; icon; visible?(ctx: MenuContext): boolean }[] }
+interface MenuContext { isAdmin: boolean; isAuth: boolean; hasFeature(id: string): boolean }
+```
+
+Rétrocompatible : un plugin `{ id, order, preload: [{ key, service }], Provider, HeaderActions, routes, adminRoutes, adminMenu }` (le
+plugin `user` d'avant) fonctionne tel quel.
+
+- **Fabrique et options** : `plugin` peut être `(options) => AppPlugin` (`AppPluginFactory`). `collectPlugins` l'appelle avec
+  `pluginOptions[<id>]`, l'identifiant étant `factory.pluginId` ou, à défaut, le dossier du module (`./modules_shared/<id>/plugin.tsx`).
+  L'app fournit `front/src/config/pluginOptions.ts` (`export const pluginOptions: PluginOptions = {}`, vide par défaut, même principe que
+  `back/src/config/pluginOptions.ts`). La fabrique valide avec `requirePluginOptions(id, options, ['clé'])` (`PluginOptionsError` :
+  « Plugin "<id>" needs options ... (missing: ... ) »). Ex. prévu : `{ user: { walletMode: 'lazy' } }`.
+- **Préchargement** (`core/preload/preloadPlan.ts`) : `buildPreloadPlan(coreServices, plugins)` fusionne les services du cœur
+  (`coreServices` exporté par `App.tsx` du gabarit : l'app en retire un, par exemple `crypt`, en supprimant sa ligne) et les `preload` des
+  plugins (première déclaration d'une clé gagnante) en `{ blocking, background }`. `PreloaderGate` reçoit `services={blocking}` et
+  `background={background}` : un service `background` démarre juste après `ConfigurationService` (ou tout de suite sans configuration),
+  n'entre pas dans `ready()` ni dans le libellé de chargement, et une erreur de démarrage est journalisée sans toucher les autres.
+  `ready()` exige toujours au moins un service bloquant (la configuration, en pratique).
+- **Providers** : `withPluginProviders(tree, plugins, placement)`. `outer` (défaut) : autour du thème, du routeur et du préchargeur ;
+  `inner` : à l'intérieur (configuration chargée, routeur et thème disponibles), autour de `PageLayout`.
+- **Routes** (`resolveRoutes`) : `resolveRoutes({ appRoutes, plugins, overrides, strict })` renvoie `{ path, element, layout, source }[]` :
+  routes de l'app, puis `routes` et `adminRoutes` des plugins dans l'ordre. `lazy` devient un élément `React.lazy` (à rendre dans un
+  `Suspense`, ce que fait `Router.tsx`), `guard` enveloppe l'élément. Un chemin déclaré deux fois lève `RouteConfigError` si `strict` (dev),
+  sinon `console.error` et la première route gagne. `overrides` (`front/src/config/pluginRoutes.ts`, `PluginRouteOverrides`) : par chemin,
+  `false` supprime une route de plugin, un objet remplace ses champs (`element`/`lazy`, `guard`, `layout`) ; les routes de l'app ne
+  s'écrasent pas par ce biais. `layoutForPath(routes, pathname)` (`routeLayout.ts`) donne la mise en page de la page courante.
+  Mises en page : `page` (en-tête, barre latérale, pied), `admin` (idem, la barre latérale ajoute `adminMenu`), `fullscreen` (la page seule).
+- **Gardes** (`guards.tsx`) : `RequireAdmin` (via `AdminTokenGate` : clé admin en mode anonyme), `RequireAuth` (tout principal authentifié),
+  `RequireFeature(id)` (fabrique de garde). Point d'extension : `registerFeatureChecker(fn)` (`featureAccess.ts`), que le plugin `user` appellera ;
+  sans vérificateur (pas de `user`), `RequireFeature` et `hasFeature` laissent tout passer (`isFeatureGatingActive()` = faux).
+- **Menus** (`menus.ts`, `useMenuContext.ts`) : `resolveMenu(sections, ctx, { adminOnly? })` garde les entrées dont `visible(ctx)` n'est pas faux
+  et retire les sections vides ; `mergeMenuSections(...listes)` fusionne les sections de même `id` (l'app d'abord). `useMenuContext()` donne
+  `ctx` et se met à jour avec la session. `AppSidebar` (gabarit) lit `config/navigation.ts` (`appNavMenu`, `appAdminMenu`) puis les plugins ;
+  sans entrée visible, pas de barre latérale.
+- **En-tête** : `<PluginHeaderActions placement="end" />` rend les `HeaderActions` de tous les plugins, avec `{ isAuth, isAdmin }`, dans
+  n'importe quel en-tête (celui du gabarit, la barre supérieure d'une app).
+- Tests : `AppPlugin.spec.ts`, `resolveRoutes.spec.ts`, `menus.spec.ts`, `featureAccess.spec.ts`, `core/preload/preloadPlan.spec.ts`,
+  `core/preload/Preloader.spec.ts`. Clés i18n ajoutées : `common.nav.sidebar.{collapse,expand}`.
 
 ## Module Configuration Schema
 

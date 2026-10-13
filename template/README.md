@@ -106,7 +106,7 @@ User management is enabled **only by listing `user` in `shared-modules.json`** (
 
 How it works: every shared module may expose a plugin (`plugin.ts` on the back, `plugin.tsx` on the front). `link-shared.mjs`
 generates `back/src/modules_shared/plugins.generated.ts`; `front/src/plugins.ts` uses `import.meta.glob`. `AppModule.ts`, `App.tsx`,
-`Router.tsx`, `Header.tsx` and `AdminSidebar.tsx` read the plugins, so adding a module needs no edit there. The npm dependencies of a
+`Router.tsx`, `Header.tsx` and `AppSidebar.tsx` read the plugins, so adding a module needs no edit there. The npm dependencies of a
 module (e.g. wagmi/Reown for `user`) live in its `package.fragment.json`, merged by `build-package.mjs` when the module is linked.
 
 Back plugin format (`NestModulePlugin`, details in `nest/common/README.md`, « Plugins »): `{ id, module?, modules?, order?, auth? }`.

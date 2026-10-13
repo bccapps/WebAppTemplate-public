@@ -30,5 +30,7 @@
   "common.admin.tokenGate.label": "Clé d'administration",
   "common.admin.tokenGate.submit": "Déverrouiller",
   "common.admin.tokenGate.invalid": "Clé d'administration invalide.",
-  "common.admin.tokenGate.logout": "Verrouiller l'administration"
+  "common.admin.tokenGate.logout": "Verrouiller l'administration",
+  "common.nav.sidebar.collapse": "Réduire le menu",
+  "common.nav.sidebar.expand": "Déplier le menu"
 }

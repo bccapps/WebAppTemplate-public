@@ -163,3 +163,55 @@ describe('Preloader — two-wave parallel load (PERFORMANCE_PLAN.md §1.1)', () 
     expect(preloader.ready()).toBe(false); // 0/0 — matches pre-existing ready() semantics (nb_loaded > 0 required)
   });
 });
+
+describe('Preloader — background services', () => {
+  it('starts them after the configuration, and ready() does not wait for them', () => {
+    const order = { seq: 0 };
+    const preloader = new Preloader();
+    const config = new ControlledService('ConfigurationService', order);
+    const blocking = new FakeService('Blocking', order);
+    const background = new ControlledService('Slow', order);
+    preloader.add(config);
+    preloader.add(blocking);
+    preloader.addBackground(background);
+
+    preloader.load('/api');
+    expect(background.startedAt).toBeNull();
+    config.settle();
+    expect(background.startedAt).not.toBeNull();
+    expect(background.startedAt).toBeGreaterThan(config.startedAt as number);
+    expect(preloader.ready()).toBe(false); // Blocking not done yet
+    return Promise.resolve().then(() => {
+      expect(preloader.ready()).toBe(true); // Slow never settled
+      expect(preloader.getLoadLabel()).toBe('Loading');
+    });
+  });
+
+  it('starts them once even when load() runs twice, ignores duplicates, and survives a throwing service', () => {
+    const order = { seq: 0 };
+    const preloader = new Preloader();
+    const boom = { preloadKey: 'Boom', init: () => { throw new Error('boom'); } };
+    const ok = new ControlledService('Ok', order);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    preloader.add(new FakeService('Blocking', order));
+    preloader.addBackground(boom);
+    preloader.addBackground(ok);
+    preloader.addBackground(ok);
+    preloader.load('/api');
+    preloader.load('/api');
+    expect(preloader.background_services).toHaveLength(2);
+    expect(ok.startedAt).toBe(2); // after the blocking service, and only once
+    expect(errors).toHaveBeenCalledTimes(1);
+    errors.mockRestore();
+  });
+
+  it('starts them right away when there is no ConfigurationService', () => {
+    const order = { seq: 0 };
+    const preloader = new Preloader();
+    const background = new ControlledService('Slow', order);
+    preloader.add(new ControlledService('A', order));
+    preloader.addBackground(background);
+    preloader.load('/api');
+    expect(background.startedAt).not.toBeNull();
+  });
+});

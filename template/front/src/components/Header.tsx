@@ -25,7 +25,10 @@ import AdminPanelSettingsRoundedIcon from '@mui/icons-material/AdminPanelSetting
 import DashboardCustomizeRoundedIcon from '@mui/icons-material/DashboardCustomizeRounded';
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
 import { detectLocalTrust, sessionAuth } from '@/modules_shared/common/auth/sessionAuth';
-import { appPlugins, userManagementEnabled } from '@/plugins';
+import { userManagementEnabled } from '@/plugins';
+import { PluginHeaderActions } from '@/modules_shared/common/plugins/PluginHeaderActions';
+import { SwitchLanguage } from '@/modules_shared/common/components/ui/languages/SwitchLanguage';
+import { ThemeSwitch } from '@/modules_shared/common/components/ui/theme/ThemeSwitch';
 import { Title } from './Title';
 // {{#PWA}}
 import { PwaInstallButton } from './PwaInstallButton';
@@ -173,7 +176,10 @@ export function Header({ alertsCount = 0 }: HeaderProps) {
             {/* {{#PWA}} */}
             <PwaInstallButton />
             {/* {{/PWA}} */}
-            {appPlugins.map((p) => (p.HeaderActions ? <p.HeaderActions key={p.id} /> : null))}
+            <SwitchLanguage />
+            <ThemeSwitch />
+            {/* Header actions of the plugins (wallet button with `user`, cart with `commerce`, ...). */}
+            <PluginHeaderActions placement="end" />
           </Box>
         </Box>
       </Toolbar>
