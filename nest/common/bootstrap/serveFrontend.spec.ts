@@ -52,8 +52,8 @@ describe('serveFrontend', () => {
     writeFileSync(join(dir, 'assets', 'a.js'), 'console.log(1)');
     const moduleRef = await Test.createTestingModule({ imports: [ApiModule] }).compile();
     app = moduleRef.createNestApplication();
-    await app.init();
     serveFrontend(app, dir);
+    await app.init();
   });
 
   afterAll(async () => {
@@ -71,6 +71,12 @@ describe('serveFrontend', () => {
   it('does not intercept the API', async () => {
     const res = await request(app.getHttpServer()).get('/api/v1/health').set('Accept', 'text/html');
     expect(res.body).toEqual({ status: 'ok' });
+  });
+
+  it('keeps the Nest 404 (JSON, not the index) on unknown /api/* paths', async () => {
+    const res = await request(app.getHttpServer()).get('/api/v1/nope').set('Accept', 'text/html');
+    expect(res.status).toBe(404);
+    expect(res.body).toMatchObject({ statusCode: 404 });
   });
 
   it('does not answer /api and unknown /api/* with the index', async () => {

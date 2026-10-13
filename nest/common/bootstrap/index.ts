@@ -9,3 +9,4 @@
 
 export * from './configureHttpApp';
 export * from './serveFrontend';
+export * from './compressionMiddleware';

@@ -423,14 +423,26 @@ Limites ajustables par option (`jsonLimit`, `rawBodyLimit`). Tests : `bootstrap/
 
 ### Servir le front (`serveFrontend`)
 
-Option pour un déploiement même origine (bureau, conteneur unique) : URL d'API relatives, pas de CORS. `main.ts` lit `resolveFrontDir()` (variable `SERVE_FRONT_DIR`, chemin relatif résolu depuis le dossier de travail du back) et appelle `serveFrontend(app, dir)` **après `app.init()`** si elle est définie. Sans variable, rien n'est monté.
+Option pour un déploiement même origine (bureau, conteneur unique) : URL d'API relatives, pas de CORS. `main.ts` lit `resolveFrontDir()` (variable `SERVE_FRONT_DIR`, chemin relatif résolu depuis le dossier de travail du back) et appelle `serveFrontend(app, dir)` **avant `app.init()`** si elle est définie. Sans variable, rien n'est monté.
 
 - Fichiers statiques via `express.static` (aucune dépendance ajoutée) ; `index.html` répond `Cache-Control: no-cache`, `/assets/*` répond `public, max-age=31536000, immutable` (noms hachés par Vite).
 - Repli SPA : tout `GET` qui accepte du HTML et n'est ni `/api`, ni `/api/*` (Swagger sur `/api`, API sur `/api/v1`), ni `/assets/*` reçoit `index.html`. Un fichier absent sous `/assets/` donne un 404, jamais l'index. Les autres méthodes et les requêtes `Accept: application/json` ne sont pas interceptées.
-- Nest enregistre son handler 404 à la fin de `app.init()` : `serveFrontend` replace donc ses deux middlewares devant lui dans la pile Express (sans effet si la pile n'a pas la forme attendue). Elle **lève** une erreur si `dir/index.html` est absent (démarrage en échec plutôt que 404 silencieux).
+- Elle s'enregistre avant `app.init()` : le repli SPA ignore `/api` et `/api/*`, donc il ne masque ni les routes Nest ni le 404 JSON de Nest sur un chemin `/api/...` inconnu (testé). Elle **lève** une erreur si `dir/index.html` est absent (démarrage en échec plutôt que 404 silencieux).
 - Hors périmètre : la CSP (posée par le front ou nginx), la compression des fichiers statiques (`compression` de `main.ts`).
 
 Tests : `bootstrap/serveFrontend.spec.ts` (dossier temporaire, supertest).
+
+### Ordre d'enregistrement dans `main.ts`
+
+Nest ajoute son handler 404 et son filtre d'exceptions à la **fin** de `app.init()`. Tout middleware ou route ajouté à Express après `init()` est donc derrière eux et n'est jamais atteint (prouvé par `bootstrap/httpMiddlewareOrder.spec.ts` : `GET /api` donne 404 si Swagger est monté après `init()`, aucune compression). Ordre obligatoire :
+
+1. `configureHttpApp(app)` (proxy, helmet, CORS, corps, pipe) ;
+2. `app.use(lazyCompression(getThreshold))` : le seuil `common_gzip_threshold` n'est en base qu'après `init()` (seed), `getThreshold` est donc appelée **à la première requête** et l'instance `compression` est mise en cache ; seuil invalide ou lecture en échec : 1024 octets (`DEFAULT_GZIP_THRESHOLD`) ;
+3. `SwaggerModule.setup('api', app, document)` ;
+4. `serveFrontend(app, dir)` si `SERVE_FRONT_DIR` ;
+5. `await app.init()`, puis `app.listen()`.
+
+Une modification du seuil en base après la première requête n'est prise en compte qu'au redémarrage (comportement identique à l'ancien code, qui le lisait une fois).
 
 ## Services exportés
 

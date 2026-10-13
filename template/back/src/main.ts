@@ -13,12 +13,10 @@ import 'reflect-metadata';
 import { installFileLogging } from './fileLogger';
 import { AppModule } from './modules/app/AppModule';
 import { ProwlService } from 'src/modules_shared/common/services/ProwlService';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const compression = require('compression');
 import * as http from 'http';
 import * as https from 'https';
 import { ConfigurationService } from 'src/modules_shared/common/services/ConfigurationService';
-import { configureHttpApp, resolveFrontDir, resolveListenHost, serveFrontend } from 'src/modules_shared/common/bootstrap';
+import { configureHttpApp, DEFAULT_GZIP_THRESHOLD, lazyCompression, resolveFrontDir, resolveListenHost, serveFrontend } from 'src/modules_shared/common/bootstrap';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const CacheableLookup = require('cacheable-lookup').default;
 
@@ -49,12 +47,17 @@ async function bootstrap() {
   const { allowedOrigins } = configureHttpApp(app);
   console.log('Client origins: ' + allowedOrigins.join(','));
 
-  // Bootstrap lifecycle hooks (OnApplicationBootstrap) — seeds config to DB
-  await app.init();
-  const configurationService = app.get(ConfigurationService);
-  const gzipThreshold = Number(configurationService.get('common_gzip_threshold') ?? 1024);
-  app.use(compression({ threshold: gzipThreshold }));
-  console.log(`Gzip compression enabled (threshold: ${gzipThreshold} bytes)`);
+  // Everything below must be registered BEFORE app.init(): Nest appends its 404 handler and exception filter at the
+  // end of init(), so a middleware or route added afterwards (compression, Swagger, front) is never reached.
+
+  // Gzip. The threshold is stored in the DB (seeded by init), so it is read lazily on the first request.
+  app.use(
+    lazyCompression(() => {
+      const threshold = Number(app.get(ConfigurationService).get('common_gzip_threshold') ?? DEFAULT_GZIP_THRESHOLD);
+      console.log(`Gzip compression enabled (threshold: ${threshold} bytes)`);
+      return threshold;
+    })
+  );
 
   // configuration swagger
   const config = new DocumentBuilder()
@@ -72,6 +75,9 @@ async function bootstrap() {
     serveFrontend(app, frontDir);
     console.log('Serving front from ' + frontDir);
   }
+
+  // Bootstrap lifecycle hooks (OnApplicationBootstrap) — seeds config to DB
+  await app.init();
 
   try {
     const host = resolveListenHost();
