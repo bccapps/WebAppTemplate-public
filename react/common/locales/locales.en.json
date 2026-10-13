@@ -48,5 +48,21 @@
   "common.ui.dropzone.reject.size": "This file is too large.",
   "common.ui.dropzone.reject.count": "Only one file can be added at a time.",
   "common.ui.schemaForm.reset": "Defaults",
-  "common.ui.schemaForm.advanced": "Advanced"
+  "common.ui.schemaForm.advanced": "Advanced",
+  "common.ui.media.waveform.position": "Playback position",
+  "common.ui.media.audio.play": "Play",
+  "common.ui.media.audio.pause": "Pause",
+  "common.ui.media.audio.rate": "Playback speed",
+  "common.ui.media.lightbox.title": "Viewer",
+  "common.ui.media.lightbox.close": "Close",
+  "common.ui.media.lightbox.previous": "Previous",
+  "common.ui.media.lightbox.next": "Next",
+  "common.ui.media.lightbox.showDetails": "Show details",
+  "common.ui.media.lightbox.hideDetails": "Hide details",
+  "common.ui.media.poster.open": "Open the clip",
+  "common.ui.media.poster.video": "video",
+  "common.ui.media.mic.denied": "Microphone access was refused. Allow it in the browser settings, then try again.",
+  "common.ui.media.mic.noDevice": "No microphone found.",
+  "common.ui.media.mic.error": "The recording could not start.",
+  "common.ui.media.mic.unsupported": "Recording is not supported by this browser."
 }

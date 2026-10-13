@@ -48,5 +48,21 @@
   "common.ui.dropzone.reject.size": "Ce fichier est trop volumineux.",
   "common.ui.dropzone.reject.count": "Un seul fichier peut être ajouté à la fois.",
   "common.ui.schemaForm.reset": "Valeurs par défaut",
-  "common.ui.schemaForm.advanced": "Avancé"
+  "common.ui.schemaForm.advanced": "Avancé",
+  "common.ui.media.waveform.position": "Position de lecture",
+  "common.ui.media.audio.play": "Lecture",
+  "common.ui.media.audio.pause": "Pause",
+  "common.ui.media.audio.rate": "Vitesse de lecture",
+  "common.ui.media.lightbox.title": "Visionneuse",
+  "common.ui.media.lightbox.close": "Fermer",
+  "common.ui.media.lightbox.previous": "Précédent",
+  "common.ui.media.lightbox.next": "Suivant",
+  "common.ui.media.lightbox.showDetails": "Afficher les détails",
+  "common.ui.media.lightbox.hideDetails": "Masquer les détails",
+  "common.ui.media.poster.open": "Ouvrir le clip",
+  "common.ui.media.poster.video": "vidéo",
+  "common.ui.media.mic.denied": "L'accès au micro a été refusé. Autorisez-le dans les réglages du navigateur, puis réessayez.",
+  "common.ui.media.mic.noDevice": "Aucun micro détecté.",
+  "common.ui.media.mic.error": "L'enregistrement n'a pas pu démarrer.",
+  "common.ui.media.mic.unsupported": "L'enregistrement n'est pas pris en charge par ce navigateur."
 }
