@@ -608,9 +608,22 @@ reconnecte et se réabonne seul. Après un retour à `ok`, relire les ressources
 
 - **Limiteur de débit** : le contrôleur porte `@SkipThrottle()` de `@nestjs/throttler` **si le paquet est installé**
   (sinon aucun effet, `common` n'en dépend pas). D1 déplacera le limiteur dans `common` : rien à changer ici.
-- **Proxys** : `proxy_buffering off` et un délai de lecture long sur `/api/v1/events/` (C3 : `nginx.conf` du gabarit,
-  `back-lb`).
-- Options (tests, réglage) : `{ provide: EVENT_STREAM_OPTIONS, useValue: { heartbeatMs, maxTopicsPerConnection, ... } }`.
+- **Contre-pression** : un client qui ne lit plus fait grossir le tampon de sa socket côté serveur. À chaque trame et à
+  chaque pulsation, le contrôleur compare `res.writableLength` à `maxPendingBytes` (1 Mo par défaut) ; au-delà, la
+  connexion est détachée du service et sa socket détruite. Le client se reconnecte (backoff) et reçoit `resync` si
+  la reprise est impossible. `EventStreamService.connectionCount` donne le nombre de connexions ouvertes du processus.
+- **Proxys** (`template/front/nginx.conf`, bloc `back-lb` de `template/scripts/docker-compose.yml`) : `location
+  /api/v1/events/` avant `/api/`, avec `proxy_buffering off`, `proxy_cache off`, `gzip off`, `proxy_read_timeout 3600s`,
+  `proxy_http_version 1.1` et `Connection ""` (pas de `upgrade`). `docker-compose-cloud.yml` ne tamponne pas déjà
+  (`proxy_buffering off`, délais de 3600 s sur `/`) : pas de règle dédiée. Les apps reçoivent ces fichiers par lien
+  (`front/nginx.conf` et `scripts/` pointent vers le gabarit) : vérifier qu'une app n'en garde pas une copie.
+  Le serveur envoie aussi `X-Accel-Buffering: no` et `Cache-Control: ... no-transform` (Nest), ce qui écarte la
+  compression `compression` de `main.ts` et le tampon de nginx même sans règle dédiée.
+- **Cloudflare** : coupe une connexion inactive vers 100 s ; la pulsation `: ping` de 20 s la maintient. Rien à régler
+  (pas de règle de cache ni de « Rocket Loader » sur `/api/`).
+- **Proxy de dev Vite** (`viteConfig.ts`) : `http-proxy` relaie le flux sans le tamponner et Vite n'ajoute aucune
+  compression ; la compression est celle du back (écartée par `no-transform`). Aucun réglage requis.
+- Options (tests, réglage) : `{ provide: EVENT_STREAM_OPTIONS, useValue: { heartbeatMs, maxTopicsPerConnection, maxPendingBytes, ... } }`.
 
 ## Plugins
 

@@ -201,8 +201,11 @@ Comportement du client :
   continuent en arrière-plan après 3 échecs ; `ready` remet l'état à `open`.
 - **Analyseur SSE** maison (`SseParser`, `readSse`) : lignes multiples, commentaires, `id`, `event`, `retry`,
   terminateurs `\n`, `\r`, `\r\n` coupés n'importe où.
-- Limites connues : les sujets refusés (`denied` de la trame `ready`) ne sont pas exposés ; une ressource dont le sujet
-  est refusé ne se met donc pas à jour (pas de repli automatique).
+- **Sujets refusés** : le champ `denied` de `ready` est exposé par abonné : option `onDenied(denied)` de `subscribe`
+  (appelée à chaque changement, `[]` quand il disparaît ; vidée à la déconnexion de session) et
+  `getDeniedTopics(topics)`. Un sujet refusé ne reçoit jamais d'événement : `LiveResourceController`/`useLiveResource`
+  interrogent alors la ressource toutes les `fallbackPollMs`, même flux `open`, et s'arrêtent dès que plus aucun de ses
+  sujets n'est refusé (pas d'interrogation si `fallbackPollMs` vaut 0).
 
 Tests : `sseParser.spec.ts`, `EventStreamClient.spec.ts`, `liveResourceController.spec.ts` (logique des hooks, sans
 DOM) et la section `streamGet` de `core/http/HttpService.spec.ts`.

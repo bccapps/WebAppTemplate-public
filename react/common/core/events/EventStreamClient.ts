@@ -38,6 +38,9 @@ interface Subscription {
   topics: string[];
   handler: ServerEventHandler;
   onResync?: () => void;
+  onDenied?: (denied: string[]) => void;
+  /** Last denied list delivered to `onDenied`, as a key. */
+  deniedKey: string;
 }
 
 /**
@@ -67,6 +70,7 @@ export class EventStreamClient {
   private expired = false;
   private openedAt = 0;
   private identity: string | null | undefined;
+  private denied = new Set<string>();
 
   constructor(private readonly deps: EventStreamDeps) {
     this.cleanups = [
@@ -77,7 +81,8 @@ export class EventStreamClient {
 
   /** Follows `topics` until the returned function is called. Cheap: identical topics share the connection. */
   subscribe(topics: string[], handler: ServerEventHandler, options: SubscribeOptions = {}): () => void {
-    const subscription: Subscription = { topics: [...new Set(topics)], handler, onResync: options.onResync };
+    const subscription: Subscription = { topics: [...new Set(topics)], handler, onResync: options.onResync, onDenied: options.onDenied, deniedKey: '' };
+    subscription.deniedKey = this.deniedOf(subscription).join(',');
     this.subscriptions.add(subscription);
     subscription.topics.forEach((t) => this.refCounts.set(t, (this.refCounts.get(t) ?? 0) + 1));
     this.scheduleSync();
@@ -93,6 +98,11 @@ export class EventStreamClient {
     return () => {
       this.stateListeners.delete(listener);
     };
+  }
+
+  /** The topics among `topics` that the server refused on the current connection (empty until `ready`). */
+  getDeniedTopics(topics: string[]): string[] {
+    return topics.filter((topic) => this.denied.has(topic));
   }
 
   /** Number of subscriptions currently following `topic`. */
@@ -224,7 +234,31 @@ export class EventStreamClient {
     this.failures = 0;
     this.openedAt = Date.now();
     this.degraded = (payload as { transport?: string } | null)?.transport === 'degraded';
+    this.setDenied((payload as { denied?: unknown } | null)?.denied);
     this.refreshState();
+  }
+
+  private setDenied(list: unknown): void {
+    this.denied = new Set(Array.isArray(list) ? list.filter((t): t is string => typeof t === 'string') : []);
+    this.notifyDenied();
+  }
+
+  private deniedOf(subscription: Subscription): string[] {
+    return subscription.topics.filter((topic) => this.denied.has(topic));
+  }
+
+  private notifyDenied(): void {
+    for (const subscription of [...this.subscriptions]) {
+      const denied = this.deniedOf(subscription);
+      const key = denied.join(',');
+      if (key === subscription.deniedKey) continue;
+      subscription.deniedKey = key;
+      try {
+        subscription.onDenied?.(denied);
+      } catch (error) {
+        console.warn('[EventStreamClient] denied handler failed', error);
+      }
+    }
   }
 
   private setDegraded(degraded: boolean): void {
@@ -275,6 +309,7 @@ export class EventStreamClient {
     this.lastEventId = undefined;
     this.unavailable = false;
     this.failures = 0;
+    this.setDenied([]);
     if (this.signedOut) return this.stop();
     this.restart();
   }

@@ -27,4 +27,9 @@ export type ServerEventHandler = (event: ServerEvent) => void;
 export interface SubscribeOptions {
   /** Called when the server asks to reload everything (replay impossible after a reconnection). */
   onResync?: () => void;
+  /**
+   * Called with the subset of this subscription's topics the server refused (authorizer said no), each time the
+   * `ready` frame changes it (also with `[]` when it clears). Refused topics never receive events: poll instead.
+   */
+  onDenied?: (denied: string[]) => void;
 }

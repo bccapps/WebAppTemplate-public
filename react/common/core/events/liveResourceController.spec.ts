@@ -21,6 +21,8 @@ function setup(options: Partial<LiveResourceControllerOptions> = {}, load?: () =
   let onEvent: (e: ServerEvent) => void = () => undefined;
   let onResync: () => void = () => undefined;
   let onState: (s: StreamState) => void = () => undefined;
+  let onDenied: (d: string[]) => void = () => undefined;
+  let denied: string[] = [];
   let onVisible: () => void = () => undefined;
   let visible = true;
   const unsubscribe = vi.fn();
@@ -28,8 +30,10 @@ function setup(options: Partial<LiveResourceControllerOptions> = {}, load?: () =
     subscribe: (_topics, handler, opts) => {
       onEvent = handler;
       onResync = opts?.onResync ?? (() => undefined);
+      onDenied = opts?.onDenied ?? (() => undefined);
       return unsubscribe;
     },
+    getDeniedTopics: () => denied,
     getState: () => state,
     onStateChange: (l) => {
       onState = l;
@@ -58,6 +62,13 @@ function setup(options: Partial<LiveResourceControllerOptions> = {}, load?: () =
     setState: (s: StreamState) => {
       state = s;
       onState(s);
+    },
+    initialDenied: (d: string[]) => {
+      denied = d;
+    },
+    deny: (d: string[]) => {
+      denied = d;
+      onDenied(d);
     },
     setVisible: (v: boolean) => {
       visible = v;
@@ -191,5 +202,41 @@ describe('LiveResourceController', () => {
     await tick(10_000);
     expect(t.unsubscribe).toHaveBeenCalledTimes(1);
     expect(t.loader).toHaveBeenCalledTimes(1);
+  });
+
+  it('polls while a topic is denied even though the stream is open, and stops when it is no longer denied', async () => {
+    const t = setup();
+    t.controller.start();
+    await tick(0);
+    expect(t.loader).toHaveBeenCalledTimes(1);
+    await tick(5000);
+    expect(t.loader).toHaveBeenCalledTimes(1);
+    t.deny(['a.x']);
+    await tick(5000);
+    expect(t.loader).toHaveBeenCalledTimes(2);
+    t.deny([]);
+    await tick(10_000);
+    expect(t.loader).toHaveBeenCalledTimes(2);
+    t.controller.stop();
+  });
+
+  it('polls from the start when the topic is already known as denied', async () => {
+    const t = setup();
+    t.initialDenied(['a.x']);
+    t.controller.start();
+    await tick(0);
+    await tick(5000);
+    expect(t.loader).toHaveBeenCalledTimes(2);
+    t.controller.stop();
+  });
+
+  it('does not poll for denied topics when fallbackPollMs is 0', async () => {
+    const t = setup({ fallbackPollMs: 0 });
+    t.controller.start();
+    await tick(0);
+    t.deny(['a.x']);
+    await tick(60_000);
+    expect(t.loader).toHaveBeenCalledTimes(1);
+    t.controller.stop();
   });
 });

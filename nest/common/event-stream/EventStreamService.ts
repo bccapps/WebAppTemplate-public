@@ -25,6 +25,7 @@ import { RedisService } from '../services/RedisService';
 import { hasAudience, matchesAudience, compileTopicPattern } from './audience';
 import {
   EVENT_STREAM_OPTIONS,
+  MAX_PENDING_BYTES,
   HEARTBEAT_MS,
   MAX_CONNECTIONS_PER_PRINCIPAL,
   MAX_EVENT_BYTES,
@@ -112,6 +113,7 @@ export class EventStreamService implements OnModuleInit, OnModuleDestroy {
       maxConnectionsPerPrincipal: options?.maxConnectionsPerPrincipal ?? MAX_CONNECTIONS_PER_PRINCIPAL,
       maxEventBytes: options?.maxEventBytes ?? MAX_EVENT_BYTES,
       replayBufferSize: options?.replayBufferSize ?? REPLAY_BUFFER_SIZE,
+      maxPendingBytes: options?.maxPendingBytes ?? MAX_PENDING_BYTES,
     };
     this.replay = new ReplayBuffer(this.instanceId, this.limits.replayBufferSize);
   }
@@ -146,6 +148,15 @@ export class EventStreamService implements OnModuleInit, OnModuleDestroy {
 
   get heartbeatMs(): number {
     return this.limits.heartbeatMs;
+  }
+
+  /** Number of open connections on this process (monitoring, tests). */
+  get connectionCount(): number {
+    return this.connections.size;
+  }
+
+  get maxPendingBytes(): number {
+    return this.limits.maxPendingBytes;
   }
 
   get currentTransportState(): TransportState {

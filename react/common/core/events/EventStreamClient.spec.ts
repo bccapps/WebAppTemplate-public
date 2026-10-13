@@ -255,4 +255,19 @@ describe('EventStreamClient', () => {
     expect(last(warn.mock.calls)?.[0]).toContain('handler failed');
     warn.mockRestore();
   });
+
+  it('exposes the topics denied by the ready frame, per subscriber, and clears them on sign-out', async () => {
+    const { client, connections } = setup();
+    const a = vi.fn();
+    const b = vi.fn();
+    client.subscribe(['a.x', 'c.z'], () => undefined, { onDenied: a });
+    client.subscribe(['b.y'], () => undefined, { onDenied: b });
+    await tick(60);
+    expect(client.getDeniedTopics(['a.x'])).toEqual([]);
+    connections[0].send(frame('ready', { topics: ['b.y', 'c.z'], denied: ['a.x'], transport: 'ok' }));
+    await tick(0);
+    expect(a).toHaveBeenCalledWith(['a.x']);
+    expect(b).not.toHaveBeenCalled();
+    expect(client.getDeniedTopics(['a.x', 'b.y'])).toEqual(['a.x']);
+  });
 });

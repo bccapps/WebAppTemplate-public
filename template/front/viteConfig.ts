@@ -100,6 +100,8 @@ export function createViteConfig(opts: ViteConfigOptions = {}): UserConfig {
       fs: {
         allow: [cwd, ...libRoots(cwd)],
       },
+      // Streams (SSE, /events/stream) pass through unbuffered and uncompressed: http-proxy forwards chunks as they
+      // come and Vite adds no compression; the back marks them `no-transform`.
       proxy: {
         [apiProxyPath]: {
           target: 'http://localhost:' + env.VITE_API_PORT,

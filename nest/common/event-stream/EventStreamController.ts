@@ -44,7 +44,10 @@ export class EventStreamController {
     const topics = String(req.query['topics'] ?? '').split(',');
     const subject = new ReplaySubject<MessageEvent>();
     const sink = {
-      send: (frame: StreamFrame) => subject.next(toMessage(frame)),
+      send: (frame: StreamFrame) => {
+        subject.next(toMessage(frame));
+        this.dropIfBackedUp(res, sink);
+      },
       end: () => subject.complete(),
     };
     const connection = await this.events.openConnection(principal, topics, sink, lastEventId);
@@ -59,9 +62,20 @@ export class EventStreamController {
     });
   }
 
+  /**
+   * A client that stops reading makes the socket buffer grow in server memory. Past `maxPendingBytes` the connection
+   * is released and its socket destroyed; the client reconnects and receives `resync`.
+   */
+  private dropIfBackedUp(res: Response, sink: { end(): void }): void {
+    if (res.destroyed || res.writableLength <= this.events.maxPendingBytes) return;
+    sink.end();
+    res.destroy();
+  }
+
   private startTimers(principal: AuthPrincipal, req: Request, res: Response, sink: { send(f: StreamFrame): void; end(): void }): NodeJS.Timeout[] {
     const heartbeat = setInterval(() => {
       if (res.headersSent && !res.writableEnded) res.write(': ping\n\n');
+      this.dropIfBackedUp(res, sink);
     }, this.events.heartbeatMs);
     const timers: NodeJS.Timeout[] = [heartbeat];
     const expiry = resolveExpiryMs(principal, req.headers.authorization);

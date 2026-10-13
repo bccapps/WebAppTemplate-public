@@ -59,7 +59,7 @@ describe('EventStreamController over HTTP', () => {
   let port: number;
   const readers: Reader[] = [];
 
-  async function boot(env: Record<string, string>, userMode = false, heartbeatMs = 20_000): Promise<void> {
+  async function boot(env: Record<string, string>, userMode = false, heartbeatMs = 20_000, extra: Record<string, number> = {}): Promise<void> {
     Object.assign(process.env, { HOST: '127.0.0.1', NODE_PORT: '3000', ADMIN_TOKEN: ADMIN_KEY }, env);
     const mod = await Test.createTestingModule({
       imports: [AuthCoreModule.forRoot(userMode ? { provider: FakeUserAuth } : {})],
@@ -67,7 +67,7 @@ describe('EventStreamController over HTTP', () => {
       providers: [
         EventStreamService,
         { provide: RedisService, useValue: { getClient: () => null } },
-        { provide: EVENT_STREAM_OPTIONS, useValue: { heartbeatMs } },
+        { provide: EVENT_STREAM_OPTIONS, useValue: { heartbeatMs, ...extra } },
       ],
     }).compile();
     app = mod.createNestApplication();
@@ -183,6 +183,33 @@ describe('EventStreamController over HTTP', () => {
     const reader = await open('/api/v1/events/stream?topics=x.a', { Authorization: `Bearer ${userToken(1, 1)}` });
     await reader.until((t) => t.includes('event: expired'), 4000);
     await reader.until(() => reader.ended, 2000);
+  });
+
+  it('closes a connection whose client does not read once the pending output exceeds maxPendingBytes', async () => {
+    await boot({}, false, 20_000, { maxPendingBytes: 64 * 1024, maxEventBytes: 16 * 1024 });
+    const serverSockets: import('net').Socket[] = [];
+    app.getHttpServer().on('connection', (sock: import('net').Socket) => serverSockets.push(sock));
+    const reader = await new Promise<Reader>((resolve, reject) => {
+      const req = http.get({ host: '127.0.0.1', port, path: '/api/v1/events/stream?topics=x.a', headers: { Host: 'localhost:3000', ...admin } });
+      const r = new Reader(req);
+      readers.push(r);
+      req.on('response', (res) => {
+        r.status = res.statusCode ?? 0;
+        res.pause(); // never reads: socket buffers fill up
+        resolve(r);
+      });
+      req.on('error', () => (r.ended = true));
+      req.on('error', (e) => (r.status ? undefined : reject(e)));
+    });
+    expect(reader.status).toBe(200);
+    expect(events.connectionCount).toBe(1);
+    const payload = 'x'.repeat(15_000);
+    for (let i = 0; i < 3000 && events.connectionCount > 0; i++) {
+      events.publish('x.a', { type: 'big', data: { payload } }, { public: true });
+      if (i % 50 === 0) await new Promise((r) => setImmediate(r));
+    }
+    expect(events.connectionCount).toBe(0);
+    expect(serverSockets.every((sock) => sock.destroyed)).toBe(true);
   });
 
   it('resumes from Last-Event-ID', async () => {

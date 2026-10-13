@@ -12,6 +12,8 @@ export const MAX_CONNECTIONS_PER_PRINCIPAL = 10;
 export const MAX_EVENT_BYTES = 16 * 1024;
 export const REPLAY_BUFFER_SIZE = 500;
 export const HEARTBEAT_MS = 20_000;
+/** Bytes queued on one connection's socket (client not reading) above which the server closes it. */
+export const MAX_PENDING_BYTES = 1024 * 1024;
 /** Valid concrete topic: `<module>.<resource>[:<key>]`. No wildcard, no comma. */
 export const TOPIC_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+(:[A-Za-z0-9_.:@-]+)?$/;
 
@@ -23,4 +25,6 @@ export interface EventStreamOptions {
   maxConnectionsPerPrincipal?: number;
   maxEventBytes?: number;
   replayBufferSize?: number;
+  /** Close a connection whose unsent output (`res.writableLength`) exceeds this many bytes. */
+  maxPendingBytes?: number;
 }

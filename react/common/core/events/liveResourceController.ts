@@ -16,13 +16,15 @@ export interface LiveStreamSource {
   subscribe(topics: string[], handler: ServerEventHandler, options?: SubscribeOptions): () => void;
   getState(): StreamState;
   onStateChange(listener: (state: StreamState) => void): () => void;
+  /** Topics among `topics` refused by the server on the current connection (optional: absent = none). */
+  getDeniedTopics?(topics: string[]): string[];
 }
 
 export interface LiveResourceControllerOptions {
   topics: string[];
   /** Only events for which this returns true trigger a refetch (default: every event of the topics). */
   match?: (event: ServerEvent) => boolean;
-  /** Polling interval while the stream is in `fallback`. 0 disables polling. */
+  /** Polling interval while the stream is in `fallback` or while one of `topics` is refused. 0 disables polling. */
   fallbackPollMs: number;
   /** Refetch when the server asks for a resync and when the stream comes back from `fallback` (default true). */
   refetchOnResync?: boolean;
@@ -49,6 +51,8 @@ export class LiveResourceController {
   private dirty = false;
   private stopped = false;
   private lastState: StreamState = 'connecting';
+  /** Topics of this resource the server refused: they never receive events, so the resource is polled. */
+  private deniedTopics: string[] = [];
 
   constructor(
     private readonly options: LiveResourceControllerOptions,
@@ -62,10 +66,12 @@ export class LiveResourceController {
     this.cleanups.push(
       source.subscribe(this.options.topics, (event) => this.onEvent(event), {
         onResync: () => refetchOnResync && this.schedule(),
+        onDenied: (denied) => this.onDenied(denied),
       }),
       source.onStateChange((state) => this.onState(state)),
       this.deps.watchVisible(() => this.schedule()),
     );
+    this.deniedTopics = source.getDeniedTopics?.(this.options.topics) ?? [];
     this.applyPolling(this.lastState);
     void this.run();
   }
@@ -95,8 +101,14 @@ export class LiveResourceController {
     if (left && this.options.refetchOnResync !== false) this.schedule();
   }
 
+  private onDenied(denied: string[]): void {
+    this.deniedTopics = denied;
+    this.applyPolling(this.lastState);
+  }
+
   private applyPolling(state: StreamState): void {
-    const wanted = state === 'fallback' && this.options.fallbackPollMs > 0;
+    const needed = state === 'fallback' || this.deniedTopics.length > 0;
+    const wanted = needed && this.options.fallbackPollMs > 0;
     if (!wanted && this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
