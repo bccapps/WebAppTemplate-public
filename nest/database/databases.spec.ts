@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { mkdtempSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
