@@ -271,10 +271,14 @@ Deux sources, fusionnées dans `i18n` par `LocaleService.init()` :
 2. **Servies par le back** (`GET /locales?lang=`) : `common.<lang>.json`, `custom.<lang>.json` et les `locales/` des modules **Nest** liés.
    Leur contenu s'ajoute aux clés embarquées et gagne sur une clé identique (c'est ainsi qu'une app personnalise un libellé).
 
+**Mode `localesLocation: 'local'`** : plus aucune requête vers `/locales` ; `LocaleService` lit les fichiers statiques
+`/locales/<catégorie>.<langue>.json` (dossier `public/locales/` du front) pour chaque langue de `localesLanguages` et chaque catégorie de
+`localesCategories` (défaut `common,custom`), fusionnés par langue (la dernière catégorie gagne sur une clé commune). Tous les fichiers listés
+doivent exister : un fichier manquant fait échouer le lot (les libellés embarqués restent servis). `getLocales('custom')` ne lit que cette catégorie.
 Conséquences : les clés d'un module front (dont `react/common`) sont disponibles dans toutes les apps, que `localesLocation` soit `remote` ou
 `local`, et même si la requête échoue ; **il ne faut jamais** les recopier dans les `common.*.json` partagés (hors dépôt). Le `/locales` du back
 ne les contient pas, par construction : pour vérifier une clé de module front, regarder le bundle, pas la réponse du back. Tests :
-`services/LocaleService.spec.ts`, `services/moduleLocales.spec.ts`.
+`services/LocaleService.spec.ts`, `services/LocaleService.local.spec.ts` (mode local), `services/moduleLocales.spec.ts`.
 
 ---
 

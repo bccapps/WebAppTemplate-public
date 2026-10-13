@@ -433,9 +433,10 @@ Limites ajustables par option (`jsonLimit`, `rawBodyLimit`).
 | Option | Défaut | Effet |
 | --- | --- | --- |
 | `extraCorsHeaders` | aucun | En-têtes de requête ajoutés à `allowedHeaders` du CORS (ex. `['x-company-id']`), en plus de `Content-Type`, `Authorization`, `x-crypt-session`, `x-crypt-accept-encoding`. Une app n'a plus besoin de réécrire `enableCors`. |
+| `publicCorsPaths` | aucun | Préfixes de chemin (ex. `['/api/v1/inline-image/']`) servis à toute origine : CORS ouvert **sans credentials** (l'origine opaque `null` d'une iframe `sandbox` incluse, reflétée telle quelle) et `Cross-Origin-Resource-Policy: cross-origin` (helmet pose `same-origin`, qui empêche un `<img>` d'une autre origine). Pour des routes publiques sans identifiants (images, pixels de suivi) ; les autres routes gardent la liste `CLIENT_ORIGINS`, y compris pour `Origin: null`. Correspondance par préfixe sur le chemin sans query string. |
 | `validation` | `{ whitelist: true, transform: true }` | Options du `ValidationPipe` global (`whitelist`, `transform`, `forbidNonWhitelisted`) ; les champs donnés remplacent les défauts. `false` : aucun pipe global (une app sans `ValidationPipe` à migrer, dont les DTO sans décorateurs perdraient leurs champs sous `whitelist`). |
 
-Tests : `bootstrap/configureHttpApp.spec.ts`.
+Tests : `bootstrap/configureHttpApp.spec.ts`, `throttle/CommonThrottlerGuard.spec.ts` (suivi par utilisateur, throttlers nommés), `auth/GlobalAuthInterceptor.spec.ts`.
 
 ### Servir le front (`serveFrontend`)
 
@@ -699,9 +700,30 @@ bascule depuis l'admin sans redémarrage).
 | `common_throttleDefaultLimit` | `300` | requêtes par identité et par fenêtre |
 | `common_throttleDefaultTtlMs` | `60000` | fenêtre, en ms |
 
-- **Identité** : l'utilisateur authentifié (`req.user.id`, posé par l'intercepteur d'auth global) sinon l'adresse IP (`req.ip` : voir
-  `TRUST_PROXY`). Un contrôleur s'exclut avec `@SkipThrottle()` (le flux SSE `EventStreamController` l'est) ; une route peut
+- **Identité** : l'utilisateur authentifié (`user:<id>`) sinon l'adresse IP (`ip:<adresse>`, `req.ip` : voir `TRUST_PROXY`). La garde
+  s'exécute **avant** l'intercepteur d'auth global (`req.user` n'est donc pas encore posé) : elle résout elle-même le principal par
+  `AUTH_PORT` (optionnel : sans port, tout est compté par IP), sans rien écrire sur la requête (`req.user` reste posé par l'intercepteur).
+  Jeton absent, inconnu ou rejeté (le `resolveToken` du port qui lève, ex. JWT expiré) : IP. Sans jeton, en mode `anonymous`,
+  `resolveRequest` (mode local de confiance) donne `user:0`. Le résultat de `resolveToken` est mémorisé sur la requête
+  (`resolveTokenOnce`, `auth/authRequest.ts`) : l'intercepteur ne résout pas le jeton une seconde fois et relève la même erreur. Un contrôleur s'exclut avec `@SkipThrottle()` (le flux SSE `EventStreamController` l'est) ; une route peut
   surcharger la limite avec `@Throttle({ default: { limit, ttl } })`.
+- **Throttlers nommés** (`ThrottleRegistry`, exporté par `CommonModule`) : en plus de `default`, une app déclare des limiteurs supplémentaires,
+  chacun avec ses compteurs, ses en-têtes (`X-RateLimit-Limit-<nom>`, `Retry-After-<nom>`) et sa clé (utilisateur ou IP). Enregistrement
+  au démarrage, avant la première requête (constructeur d'un module de l'app, ou `app.get(ThrottleRegistry)` dans `main.ts` avant `app.init()`) :
+
+  ```ts
+  registry.register({
+    name: 'indicatorSeries',                 // unique ; « default » est réservé
+    limit: (ctx) => Number(config.get('blockchainIndicator_throttleLimit') ?? 60), // nombre, ou fonction lue à chaque requête
+    ttlMs: 60_000,                           // fenêtre en ms (nombre ou fonction)
+    paths: ['/api/v1/indicatorvalues'],      // optionnel : ne s'applique qu'aux chemins commençant par l'un de ces préfixes
+    skipIf: (ctx) => false,                  // optionnel : prédicat, évalué après `paths`
+  });
+  ```
+
+  Sans `paths` ni `skipIf`, la règle s'applique à toutes les routes. Comme dans `@nestjs/throttler`, une route surcharge un throttler par nom :
+  `@Throttle({ indicatorSeries: { limit: 10, ttl: 60_000 } })`, ou l'ignore : `@SkipThrottle({ indicatorSeries: true })`. Un nom en double, `default`,
+  une limite ou fenêtre non positive : erreur à l'enregistrement. Toutes les règles s'appliquent à la fois (une requête doit passer chacune).
 - **Stockage** : `FailOpenThrottlerStorage` compte dans Redis (client partagé `RedisService`, script Lua atomique, fenêtre fixe) quand
   `REDIS_URL` est définie, sinon (ou si une commande Redis échoue) dans une table en mémoire du processus : **échec ouvert**, jamais
   de rejet à cause du stockage. Sans Redis et avec N réplicas, la limite effective est N fois la limite configurée.
