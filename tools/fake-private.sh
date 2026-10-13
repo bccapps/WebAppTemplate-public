@@ -10,7 +10,9 @@
 # Writes a tiny stand-in for WebAppTemplate-private into <dir>: one module `fakemod`
 # (nest + react) that imports `common`. With --users it also writes minimal stand-ins of
 # `user`, `commerce`, `infra` and `tenant` (they compile against `common`, and carry the same
-# module.json questions as the real ones, reduced). Used by CI sandboxes.
+# module.json questions as the real ones, reduced), and two plugin fixtures: `fakemulti` (a plugin with `module` +
+# several `modules` and an `order`) and `fakefactory` (a plugin whose `module` is a factory fed by
+# `back/src/config/pluginOptions.ts`). Used by CI sandboxes.
 # Usage: tools/fake-private.sh <dir> [--users]
 set -euo pipefail
 DIR="${1:?usage: fake-private.sh <dir> [--users]}"
@@ -127,4 +129,61 @@ JSON
   write_stub nest infra InfraModule Infrastructure core '["common"]' "${INFRA_Q}"
   write_stub react infra InfraModule Infrastructure core '["common"]' '[]'
   write_stub nest tenant TenantModule Tenant users '["user"]' '[]'
+  # Plugin fixtures (nest only): `fakemulti` registers 3 modules, early; `fakefactory` needs options.
+  mkdir -p "${DIR}/nest/fakemulti" "${DIR}/nest/fakefactory"
+  cat > "${DIR}/nest/fakemulti/FakeMultiModule.ts" <<'TS'
+import { Module } from '@nestjs/common';
+@Module({})
+export class FakeMultiAModule {}
+@Module({})
+export class FakeMultiBModule {}
+@Module({})
+export class FakeMultiCModule {}
+TS
+  cat > "${DIR}/nest/fakemulti/plugin.ts" <<'TS'
+import type { NestModulePlugin } from '../common/plugins/NestModulePlugin';
+import { FakeMultiAModule, FakeMultiBModule, FakeMultiCModule } from './FakeMultiModule';
+export const plugin: NestModulePlugin = {
+  id: 'fakemulti',
+  order: 10,
+  module: FakeMultiAModule,
+  modules: [FakeMultiBModule, FakeMultiCModule],
+};
+TS
+  cat > "${DIR}/nest/fakefactory/FakeFactoryModule.ts" <<'TS'
+import { DynamicModule, Module } from '@nestjs/common';
+export interface FakeFactoryOptions {
+  label: string;
+}
+export const FAKE_FACTORY_LABEL = 'FAKE_FACTORY_LABEL';
+@Module({})
+export class FakeFactoryModule {
+  static forRoot(options: FakeFactoryOptions): DynamicModule {
+    return { module: FakeFactoryModule, providers: [{ provide: FAKE_FACTORY_LABEL, useValue: options.label }] };
+  }
+}
+TS
+  cat > "${DIR}/nest/fakefactory/plugin.ts" <<'TS'
+import type { NestModulePlugin } from '../common/plugins/NestModulePlugin';
+import { requirePluginOptions } from '../common/plugins/resolvePlugins';
+import { FakeFactoryModule, type FakeFactoryOptions } from './FakeFactoryModule';
+export const plugin: NestModulePlugin<FakeFactoryOptions> = {
+  id: 'fakefactory',
+  module: (options) => FakeFactoryModule.forRoot(requirePluginOptions('fakefactory', options, ['label'])),
+};
+TS
+  for id in fakemulti fakefactory; do
+    cat > "${DIR}/nest/${id}/module.json" <<JSON
+{
+  "id": "${id}",
+  "title": "${id}",
+  "description": "CI plugin fixture.",
+  "visibility": "private",
+  "category": "other",
+  "requires": ["common"],
+  "env": [],
+  "questions": []
+}
+JSON
+  done
 fi

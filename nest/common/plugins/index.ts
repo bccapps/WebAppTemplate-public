@@ -8,3 +8,4 @@
  */
 
 export * from './NestModulePlugin';
+export * from './resolvePlugins';

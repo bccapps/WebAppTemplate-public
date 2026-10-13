@@ -278,6 +278,8 @@
   "common.gzip_threshold.description": "Minimum response size in bytes above which gzip compression is applied (0 = always compress)",
   "common.transport_deflate_threshold": "Encrypted transport deflate threshold",
   "common.transport_deflate_threshold.description": "Minimum plaintext size in bytes above which encrypted responses are deflated before AES-GCM (only for clients announcing deflate support)",
+  "common.throttleEnabled": "Rate limiter enabled",
+  "common.throttleEnabled.description": "Turns on the global rate limiter of the common module. Leave it off when the app registers its own ThrottlerModule and ThrottlerGuard (two global guards would count every request twice)",
   "common.throttleDefaultLimit": "Default rate limit (requests)",
   "common.throttleDefaultLimit.description": "Number of requests allowed per identity (authenticated user if a valid token is present, IP address otherwise) within the sliding window below, across every route not covered by a more specific limit",
   "common.throttleDefaultTtlMs": "Default rate limit window (ms)",

@@ -278,6 +278,8 @@
   "common.gzip_threshold.description": "Taille minimale de la réponse en octets au-delà de laquelle la compression gzip est appliquée (0 = toujours compresser)",
   "common.transport_deflate_threshold": "Seuil de compression du transport chiffré",
   "common.transport_deflate_threshold.description": "Taille minimale du clair en octets au-delà de laquelle les réponses chiffrées sont deflatées avant l'AES-GCM (uniquement pour les clients annonçant le support de deflate)",
+  "common.throttleEnabled": "Limiteur de débit activé",
+  "common.throttleEnabled.description": "Active le limiteur de débit global du module common. À laisser désactivé quand l'app déclare son propre ThrottlerModule et ThrottlerGuard (deux gardes globales compteraient chaque requête deux fois)",
   "common.throttleDefaultLimit": "Limite de débit par défaut (requêtes)",
   "common.throttleDefaultLimit.description": "Nombre de requêtes autorisées par identité (utilisateur authentifié si un token valide est présent, sinon adresse IP) sur la fenêtre glissante ci-dessous, pour toute route sans limite plus spécifique",
   "common.throttleDefaultTtlMs": "Fenêtre de limite de débit par défaut (ms)",

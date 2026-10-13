@@ -107,6 +107,17 @@ export const commonConfigSchema: ModuleConfigSchema = {
       group: 'monitoring',
     },
     {
+      // Master switch of the global rate limiter of `common` (throttle/). Off by default so that apps keeping
+      // their own ThrottlerModule + ThrottlerGuard (TradeKong, PapangWorkspace) do not count every request twice;
+      // new apps turn it on (see README, "Limiteur de débit").
+      key: 'common_throttleEnabled',
+      label: 'common.throttleEnabled',
+      description: 'common.throttleEnabled.description',
+      type: 'boolean',
+      defaultValue: false,
+      group: 'performance',
+    },
+    {
       // App-wide default rate limit (ThrottlerModule, keyed by authenticated
       // user when a valid token is present, IP otherwise — see AppModule).
       // Generous on purpose: this is the safety net for every route, not the

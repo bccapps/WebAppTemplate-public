@@ -16,6 +16,8 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 | Démarrage HTTP | `bootstrap/configureHttpApp.ts` : `configureHttpApp(app, options?)` applique le durcissement commun (voir « Démarrage HTTP » plus bas). |
 | Service du front | `bootstrap/serveFrontend.ts` : `serveFrontend(app, dir)`, option activée par `SERVE_FRONT_DIR` (voir « Servir le front » plus bas). |
 | Santé | `HealthController` : `GET /api/v1/health` public, agrège les contributeurs `HEALTH_CONTRIBUTORS`. |
+| Limiteur de débit | `throttle/` : garde globale `CommonThrottlerGuard`, inerte sauf `common_throttleEnabled`, stockage Redis à échec ouvert. Voir « Limiteur de débit » plus bas. |
+| Plugins | `plugins/` : `NestModulePlugin` (`module` ou fabrique, `modules`, `order`), `resolvePluginModules`. Voir « Plugins » plus bas. |
 | Flux d'événements | `EventStreamService` + `EventStreamController` (`event-stream/`) : poussée serveur → navigateur en SSE (`GET /api/v1/events/stream`). Voir « Flux d'événements serveur » plus bas. |
 | Stockage d'images | `ImageStorageService` écrit sur disque local (défaut) ou sur un bucket Cloudflare R2, configurable depuis l'admin via `storageConfigSchema`. Voir « Stockage R2 » plus bas.
 
@@ -606,8 +608,8 @@ reconnecte et se réabonne seul. Après un retour à `ok`, relire les ressources
 
 ### Raccords
 
-- **Limiteur de débit** : le contrôleur porte `@SkipThrottle()` de `@nestjs/throttler` **si le paquet est installé**
-  (sinon aucun effet, `common` n'en dépend pas). D1 déplacera le limiteur dans `common` : rien à changer ici.
+- **Limiteur de débit** : le contrôleur porte `@SkipThrottle()` de `@nestjs/throttler` (dépendance de `common`) : une
+  reconnexion du flux ne compte pas dans la limite (voir « Limiteur de débit »).
 - **Contre-pression** : un client qui ne lit plus fait grossir le tampon de sa socket côté serveur. À chaque trame et à
   chaque pulsation, le contrôleur compare `res.writableLength` à `maxPendingBytes` (1 Mo par défaut) ; au-delà, la
   connexion est détachée du service et sa socket détruite. Le client se reconnecte (backoff) et reçoit `resync` si
@@ -627,7 +629,59 @@ reconnecte et se réabonne seul. Après un retour à `ok`, relire les ressources
 
 ## Plugins
 
-`common/plugins/NestModulePlugin.ts` définit le descripteur `NestModulePlugin { id, module?, auth? }` que chaque module lié peut exporter (`<module>/plugin.ts`, export `plugin`). L'AppModule importe les `module` listés ; au plus un plugin fournit `auth` (`AuthCoreOptions`), qui remplace le fournisseur anonyme dans `AuthCoreModule.forRoot(auth)`. Exemples : `user/plugin.ts` (fournisseur d'auth `UserAuthProvider`), `voice/plugin.ts`.
+`common/plugins/NestModulePlugin.ts` définit le descripteur que chaque module lié peut exporter (`<module>/plugin.ts`, export `plugin`) :
+
+```ts
+interface NestModulePlugin<TOptions = never> {
+  id: string;
+  module?: Type | DynamicModule | ((options: TOptions) => DynamicModule); // module, ou fabrique
+  modules?: (Type | DynamicModule)[];  // autres modules du même dossier, enregistrés après `module`
+  order?: number;                       // défaut 100 (DEFAULT_PLUGIN_ORDER) ; croissant ; égalité = ordre de shared-modules.json
+  auth?: AuthCoreOptions;               // au plus un plugin ; remplace le fournisseur anonyme
+}
+```
+
+- **Génération** : `link-shared.mjs` écrit `src/modules_shared/plugins.generated.ts` : `sharedPlugins` (descripteurs, ordre de
+  `shared-modules.json`) et `sharedPluginModules = resolvePluginModules(sharedPlugins, pluginOptions)`, la liste à importer dans
+  `AppModule`. `pluginOptions` est importé de `src/config/pluginOptions.ts` seulement si ce fichier existe (les apps qui câblent
+  à la main, ou dont le fichier généré date d'avant, continuent de marcher telles quelles).
+- **Fabrique et options** : l'app fournit `export const pluginOptions: PluginOptions = { '<id>': { ... } }` ; la fabrique reçoit
+  `pluginOptions[id]` (`undefined` si absent) et doit appeler `requirePluginOptions(id, options, ['cléRequise'])`, qui lève
+  `PluginOptionsError` (« Plugin "<id>" needs options (missing: ...) ») : l'application s'arrête au démarrage avec un message clair.
+  Une fabrique est reconnue au fait que ce n'est pas une classe (`class …` dans sa source).
+- **API** (`plugins/resolvePlugins.ts`) : `sortPlugins(plugins)` (tri stable par `order`), `pluginModules(plugin, options)`,
+  `resolvePluginModules(plugins, options)`, `requirePluginOptions(id, options, requiredKeys)`, `PluginOptionsError`.
+- **Règle des bibliothèques** : un module que d'autres modules importent eux-mêmes (dépendance) n'a **pas** de plugin ; il reste
+  listé dans `shared-modules.json` (le lien symbolique est ce dont dépendent les imports). **Jamais** de plugin qui appelle un
+  `forRoot` qu'un autre module appelle aussi : Nest créerait une seconde instance (services et tâches planifiées en double).
+- Exemples : `user/plugin.ts` (fournisseur d'auth `UserAuthProvider`), `voice/plugin.ts` (`{ id, module }`, format historique inchangé).
+
+## Limiteur de débit (`throttle/`)
+
+`CommonModule` enregistre une garde globale (`APP_GUARD`, `CommonThrottlerGuard`, dérivée de `ThrottlerGuard` de `@nestjs/throttler`,
+dépendance de `package.base.json`). Elle est **inerte tant que `common_throttleEnabled` n'est pas vrai** (lu à chaque requête :
+bascule depuis l'admin sans redémarrage).
+
+| Clé | Défaut | Rôle |
+| --- | --- | --- |
+| `common_throttleEnabled` | `false` | interrupteur général |
+| `common_throttleDefaultLimit` | `300` | requêtes par identité et par fenêtre |
+| `common_throttleDefaultTtlMs` | `60000` | fenêtre, en ms |
+
+- **Identité** : l'utilisateur authentifié (`req.user.id`, posé par l'intercepteur d'auth global) sinon l'adresse IP (`req.ip` : voir
+  `TRUST_PROXY`). Un contrôleur s'exclut avec `@SkipThrottle()` (le flux SSE `EventStreamController` l'est) ; une route peut
+  surcharger la limite avec `@Throttle({ default: { limit, ttl } })`.
+- **Stockage** : `FailOpenThrottlerStorage` compte dans Redis (client partagé `RedisService`, script Lua atomique, fenêtre fixe) quand
+  `REDIS_URL` est définie, sinon (ou si une commande Redis échoue) dans une table en mémoire du processus : **échec ouvert**, jamais
+  de rejet à cause du stockage. Sans Redis et avec N réplicas, la limite effective est N fois la limite configurée.
+- **Pourquoi `false` par défaut** : TradeKong et PapangWorkspace déclarent déjà `ThrottlerModule` + `ThrottlerGuard` dans leur
+  `AppModule` ; deux gardes globales compteraient chaque requête deux fois. Les fournisseurs de `common` (options, stockage) sont
+  limités à `CommonModule` : ils ne touchent pas à `ThrottlerModule` de l'app.
+- **Bascule d'une app existante** (tâches D9 et D10) : supprimer `ThrottlerModule.forRoot(...)`, `ThrottlerRedisStorage` et
+  l'`APP_GUARD ThrottlerGuard` de son `AppModule`, puis régler `common_throttleEnabled = true` (et limite/fenêtre) dans la
+  configuration. Les `@Throttle()` / `@SkipThrottle()` déjà posés sur les routes continuent de s'appliquer. Les variables
+  `THROTTLE_DEFAULT_TTL` / `THROTTLE_DEFAULT_LIMIT` de TradeKong sont remplacées par les clés de configuration.
+- Un nouveau projet du gabarit active la clé selon ses besoins (aucune graine par défaut : `defaultConfig.ts` reste vide).
 
 ## Redis partagé (`RedisService`)
 
@@ -650,7 +704,7 @@ signal de santé. Généralise le pattern qu'avait `CryptSessionService` avant c
 - `onModuleDestroy()` ferme proprement la connexion (`quit()`).
 
 **Consommateurs actuels** : `CryptSessionService` (sessions de transport — repli mémoire
-inchangé), le store de `ThrottlerModule` (`RedisFailOpenThrottlerStorage`, module `app`),
+inchangé), le stockage du limiteur de débit (`FailOpenThrottlerStorage`, voir « Limiteur de débit »),
 `SeriesAccessMetricsService` (`nestcommon/blockchainIndicator`, compteurs de détection
 `HINCRBY`/HyperLogLog `PFADD`/`PFCOUNT`), et `RedisCacheStore` (a project-specific module,
 cache des signaux résolus). Tous suivent le même contrat fail-open : sans `REDIS_URL`,

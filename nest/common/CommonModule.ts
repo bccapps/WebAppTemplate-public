@@ -8,7 +8,7 @@
  */
 
 import { Module } from '@nestjs/common';
-import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 // Controllers
@@ -59,6 +59,9 @@ import { CookieConsentRetentionCronService } from './services/CookieConsentReten
 import { ThemeEntity } from './entities/ThemeEntity';
 import { CookieConsentEntity } from './entities/CookieConsentEntity';
 
+// Rate limiting
+import { CommonThrottlerGuard, throttleProviders } from './throttle';
+
 // Exceptions
 import { AppExceptionFilter } from './exceptions/AppExceptionFilter';
 
@@ -103,6 +106,13 @@ import ConfigurationEntity from './entities/ConfigurationEntity';
     CookieConsentService,
     CookieConsentRetentionCronService,
     AppExceptionFilter,
+    ...throttleProviders,
+    CommonThrottlerGuard,
+    {
+      // Pass-through unless `common_throttleEnabled` is true (off by default: apps with their own limiter).
+      provide: APP_GUARD,
+      useExisting: CommonThrottlerGuard,
+    },
     {
       provide: APP_FILTER,
       useExisting: AppExceptionFilter,

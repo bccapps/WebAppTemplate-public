@@ -23,7 +23,7 @@
 #                compiles and boots with its optional extension points absent. Same private library
 #                options as multi-users.
 #   multi-users  multi-user accounts + sales screens + voice, with a private library: by default
-#                a fake one (tools/fake-private.sh --users: user, commerce, infra, tenant, fakemod
+#                a fake one (tools/fake-private.sh --users: user, commerce, infra, tenant, fakemod, fakemulti, fakefactory
 #                stand-ins); SANDBOX_PRIVATE=<dir> uses a copy of a real vx-private checkout
 #                (dir containing nest/ and react/), e.g. the WebAppTemplate-private clone.
 #
@@ -70,7 +70,7 @@ if [[ "${MODE}" == "multi-users" || "${MODE}" == "users-only" ]]; then
   else
     PRIVATE_SRC="${SB}/.fake-private"
     "${REPO}/tools/fake-private.sh" "${PRIVATE_SRC}" --users
-    MODULES="${SANDBOX_MODULES:-voice,fakemod}"
+    MODULES="${SANDBOX_MODULES:-voice,fakemod,fakemulti,fakefactory}"
     EXPECT_ENTITY="ConfigurationEntity,FakeEntity"
   fi
   PRIVATE_ARGS=(--private-dir "${PRIVATE_SRC}")
@@ -98,6 +98,14 @@ info "create-project.mjs --answers (${MODULES})"
 node "${REPO}/template/scripts/create-project.mjs" --vendor-libs --no-install --no-github --no-commit \
   --public-dir "${REPO}" ${PRIVATE_ARGS[@]+"${PRIVATE_ARGS[@]}"} --answers "${ANSWERS}" --parent-dir "${SB}"
 APP="${SB}/app"
+
+# Plugin fixtures (fake private library): the factory plugin gets its options from the app's pluginOptions.ts.
+if [[ "${MODULES}" == *fakefactory* ]]; then
+  cat > "${APP}/back/src/config/pluginOptions.ts" <<'TS'
+import type { PluginOptions } from 'src/modules_shared/common/plugins/NestModulePlugin';
+export const pluginOptions: PluginOptions = { fakefactory: { label: 'ci' } };
+TS
+fi
 
 if [[ "${MODE}" == "multi-users" || "${MODE}" == "users-only" ]]; then
   grep -q '"user"' "${APP}/shared-modules.json" || { echo "user module missing from shared-modules.json" >&2; exit 1; }
@@ -131,6 +139,21 @@ if [[ "${MODE}" == "users-only" ]]; then
   if [[ -n "${SANDBOX_PRIVATE:-}" ]]; then
     grep -q "./user/plugin" "${APP}/back/src/modules_shared/plugins.generated.ts" || { echo "user plugin not wired" >&2; exit 1; }
   fi
+fi
+
+if [[ "${MODULES}" == *fakemulti* ]]; then
+  # Multi-module plugin and options factory: wired by the generated file, resolved in order (fakemulti is early).
+  info "back: plugin resolution (modules, order, factory options)"
+  ( cd "${APP}/back" && node -e "
+    require('reflect-metadata');
+    const g = require('./dist/modules_shared/plugins.generated');
+    const names = g.sharedPluginModules.map((m) => (m.module ?? m).name);
+    const want = ['FakeMultiAModule', 'FakeMultiBModule', 'FakeMultiCModule'];
+    if (names.slice(0, 3).join() !== want.join()) { console.error('plugin order/modules wrong: ' + names); process.exit(1); }
+    const dyn = g.sharedPluginModules.find((m) => m.module && m.module.name === 'FakeFactoryModule');
+    if (!dyn || dyn.providers[0].useValue !== 'ci') { console.error('factory options not applied'); process.exit(1); }
+    console.log('plugins OK: ' + names.join(', '));
+  " )
 fi
 
 # Entity autoloading through the .libs symlinks, in the two modes: TypeScript sources

@@ -88,8 +88,7 @@ if so, it belongs in the base instead, so all apps track one version instead
 of drifting apart silently.
 
 Web3 / auth dependencies (`wagmi`, `viem`, `@reown/*`, `@openfort/openfort-js`, `@tanstack/react-query`,
-`@base-org/account`, and on the back `bip322-js`, `jsonwebtoken`, `otplib`, `qrcode`, `tweetnacl`, `viem`,
-`@nestjs/throttler`) are NOT in this baseline anymore: they live in the `user` module's `package.fragment.json`
+`@base-org/account`, and on the back `bip322-js`, `jsonwebtoken`, `otplib`, `qrcode`, `tweetnacl`, `viem`) are NOT in this baseline anymore: they live in the `user` module's `package.fragment.json`
 (react and nest) and are merged by `build-package.mjs` only when `user` is listed in `shared-modules.json`.
 The version pins and the rationale for the `@wagmi/core` overrides are documented in `reactcommon/user/README.md`.
 
@@ -109,6 +108,19 @@ How it works: every shared module may expose a plugin (`plugin.ts` on the back, 
 generates `back/src/modules_shared/plugins.generated.ts`; `front/src/plugins.ts` uses `import.meta.glob`. `AppModule.ts`, `App.tsx`,
 `Router.tsx`, `Header.tsx` and `AdminSidebar.tsx` read the plugins, so adding a module needs no edit there. The npm dependencies of a
 module (e.g. wagmi/Reown for `user`) live in its `package.fragment.json`, merged by `build-package.mjs` when the module is linked.
+
+Back plugin format (`NestModulePlugin`, details in `nest/common/README.md`, « Plugins »): `{ id, module?, modules?, order?, auth? }`.
+`module` is a Nest module or a **factory** `(options) => DynamicModule`; `modules` adds further modules of the same folder; `order`
+(default 100, lower first, ties in `shared-modules.json` order) sets the registration order. `AppModule.ts` imports
+`sharedPluginModules` (generated). The options of factory plugins are given by the app in `back/src/config/pluginOptions.ts`
+(created empty by the template, typed `PluginOptions`, keyed by plugin id); a missing option stops the app at startup with the plugin id
+and the missing keys. Listed modules without a plugin are libraries imported by other modules: never write a plugin for them.
+
+**Rate limiter**: `common` ships a global limiter (`@nestjs/throttler`, in `package.base.json`), OFF by default
+(`common_throttleEnabled`, admin configuration). Turn it on for a new app together with `common_throttleDefaultLimit` (300) and
+`common_throttleDefaultTtlMs` (60000); `REDIS_URL` shares the counters between replicas. An app that already registers its own
+`ThrottlerModule` + `ThrottlerGuard` must keep `common_throttleEnabled` off (or drop its own and switch the key on), otherwise each
+request is counted twice.
 
 ## Optional shared modules (`infra`, `commerce`, `oauth`)
 

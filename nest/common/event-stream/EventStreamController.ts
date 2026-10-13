@@ -14,7 +14,7 @@ import { RequireAuthInterceptor, type AuthPrincipal } from '../auth';
 import { NoTransportCrypt } from '../decorators/NoTransportCrypt';
 import { EventStreamService } from './EventStreamService';
 import { resolveExpiryMs } from './tokenExpiry';
-import { SkipThrottleIfAvailable } from './skipThrottle';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { StreamFrame } from './types';
 
 type AuthedRequest = Request & { user?: AuthPrincipal };
@@ -29,7 +29,7 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 @Controller('api/v1/events')
 @NoTransportCrypt()
 @UseInterceptors(RequireAuthInterceptor)
-@SkipThrottleIfAvailable()
+@SkipThrottle()
 export class EventStreamController {
   constructor(private readonly events: EventStreamService) {}
 
