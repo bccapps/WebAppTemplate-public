@@ -23,6 +23,7 @@ import {
   applyPrincipal,
   ensureRequestMembers,
   extractBearerToken,
+  resolveTokenOnce,
   unrecognizedTokenError,
   type AuthRequest,
 } from './authRequest';
@@ -61,7 +62,8 @@ export class GlobalAuthInterceptor implements NestInterceptor {
       return handler.handle();
     }
     ensureRequestMembers(req);
-    const principal = await this.port.resolveToken(token);
+    const { principal, error } = await resolveTokenOnce(this.port, req, token);
+    if (error !== undefined) throw error;
     if (!principal) throw unrecognizedTokenError(token);
     applyPrincipal(req, principal);
     return handler.handle();

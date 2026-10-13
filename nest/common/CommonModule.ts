@@ -60,7 +60,7 @@ import { ThemeEntity } from './entities/ThemeEntity';
 import { CookieConsentEntity } from './entities/CookieConsentEntity';
 
 // Rate limiting
-import { CommonThrottlerGuard, throttleProviders } from './throttle';
+import { CommonThrottlerGuard, ThrottleRegistry, throttleProviders } from './throttle';
 
 // Exceptions
 import { AppExceptionFilter } from './exceptions/AppExceptionFilter';
@@ -107,6 +107,7 @@ import ConfigurationEntity from './entities/ConfigurationEntity';
     CookieConsentRetentionCronService,
     AppExceptionFilter,
     ...throttleProviders,
+    ThrottleRegistry,
     CommonThrottlerGuard,
     {
       // Pass-through unless `common_throttleEnabled` is true (off by default: apps with their own limiter).
@@ -151,6 +152,7 @@ import ConfigurationEntity from './entities/ConfigurationEntity';
     DiskAlertService,
     ImageStorageService,
     AppExceptionFilter,
+    ThrottleRegistry,
   ],
 })
 export class CommonModule {}

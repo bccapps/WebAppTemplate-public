@@ -9,6 +9,7 @@
 
 import { FunctionalException } from '../exceptions/FunctionalException';
 import { SecurityException } from '../exceptions/SecurityException';
+import type { AuthPort } from './AuthPort';
 import type { AuthPrincipal } from './AuthPrincipal';
 
 /** Minimal shape of the HTTP request touched by the auth interceptors. */
@@ -53,4 +54,28 @@ export function applyPrincipal(req: AuthRequest, principal: AuthPrincipal): void
     (target as Record<string, unknown>)['user'] = principal;
   }
   req.user = principal;
+}
+
+/** Outcome of resolving a token: the principal, or the error the port threw. Never both. */
+export interface TokenOutcome {
+  principal: AuthPrincipal | null;
+  error?: unknown;
+}
+
+const outcomes = new WeakMap<object, { token: string; outcome: Promise<TokenOutcome> }>();
+
+/**
+ * Resolves `token` through the port at most once per request: the rate-limit guard (which runs before the global
+ * auth interceptor) and the interceptor share the result. Never throws: a rejection becomes `outcome.error`.
+ * Free of side effects on the request (`req.user` is only set by {@link applyPrincipal}).
+ */
+export function resolveTokenOnce(port: AuthPort, req: object, token: string): Promise<TokenOutcome> {
+  const cached = outcomes.get(req);
+  if (cached && cached.token === token) return cached.outcome;
+  const outcome = port.resolveToken(token).then(
+    (principal): TokenOutcome => ({ principal }),
+    (error: unknown): TokenOutcome => ({ principal: null, error }),
+  );
+  outcomes.set(req, { token, outcome });
+  return outcome;
 }

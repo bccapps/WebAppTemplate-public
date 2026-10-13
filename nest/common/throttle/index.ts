@@ -10,3 +10,5 @@
 export { CommonThrottlerGuard } from './CommonThrottlerGuard';
 export { FailOpenThrottlerStorage } from './FailOpenThrottlerStorage';
 export { buildThrottlerOptions, throttleProviders } from './throttleProviders';
+export { ThrottleRegistry, toThrottlerOptions } from './ThrottleRegistry';
+export type { ThrottleRule, ThrottleValue } from './ThrottleRegistry';

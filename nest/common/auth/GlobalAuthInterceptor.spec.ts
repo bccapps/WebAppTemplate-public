@@ -13,6 +13,7 @@ import { Reflector } from '@nestjs/core';
 import { SecurityException } from '../exceptions/SecurityException';
 import type { AuthPort } from './AuthPort';
 import type { AuthPrincipal } from './AuthPrincipal';
+import { resolveTokenOnce } from './authRequest';
 import { GlobalAuthInterceptor } from './GlobalAuthInterceptor';
 
 type Req = Record<string, any>;
@@ -111,6 +112,27 @@ describe('GlobalAuthInterceptor', () => {
       await interceptor.intercept(ctx(req), handler);
       expect(req.user).toEqual(admin);
       expect(req.query.uid).toBe(0);
+    });
+  });
+
+  describe('shared resolution with the rate-limit guard', () => {
+    it('does not resolve a token a second time when the guard already did', async () => {
+      const { port, interceptor } = build('users', user);
+      const req = bearer('tok');
+      await resolveTokenOnce(port, req, 'tok');
+      await interceptor.intercept(ctx(req), handler);
+      expect(port.resolveToken).toHaveBeenCalledTimes(1);
+      expect(req.user).toBe(user);
+    });
+
+    it('rethrows the error the port raised, also when the guard resolved first', async () => {
+      const { port, interceptor } = build('users', null);
+      const failure = new SecurityException('AUT', 'Invalid or expired token');
+      (port.resolveToken as jest.Mock).mockRejectedValue(failure as never);
+      const req = bearer('tok');
+      await resolveTokenOnce(port, req, 'tok');
+      await expect(interceptor.intercept(ctx(req), handler)).rejects.toBe(failure);
+      expect(port.resolveToken).toHaveBeenCalledTimes(1);
     });
   });
 });
