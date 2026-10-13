@@ -22,6 +22,7 @@ nestcommon), pour fonctionner dans n'importe quel projet quel que soit son lot d
 |------|---------|-------------|
 | Module | `DatabaseModule.ts` | `forRoot({ context, mainDataSource })` : enregistre la connexion `main` + les connexions nommées |
 | Helper | `databases.ts` | `buildMainDataSourceOptions`, `buildExtraDataSourceOptions`, `resolveEntityGlobs`, type `DbContext` |
+| Helper | `dbEngine.ts` | `isSqlite`, `resolveEngine`, types de colonnes portables `jsonColumnType`, `timestampColumnType` |
 | Helper | `dbRouting.ts` | `dbFor`, `connectionToken`, `parseModuleRouting`, `parseConnectionNames`, `isRoutingActive`, `MAIN_CONNECTION` |
 | Barrel | `index.ts` | Ré-exporte tout le module |
 
@@ -82,11 +83,38 @@ imports: [
 |----------|-----------|-------------|
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | main | Connexion par défaut (inchangé) |
 | `DB_SSLMODE` / `DB_SSLROOTCERT` / `DB_POOLSIZE` | main | SSL + pool |
-| `DATABASE_ENGINE` (`postgres`/`cloud`/`neon`/`supabase`) / `TYPEORM_SYNC` | main | Moteur + synchronize |
+| `DB_ENGINE` ou `DATABASE_ENGINE` (`postgres`/`cloud`/`neon`/`supabase`/`sqlite`) / `TYPEORM_SYNC` | main | Moteur (défaut `postgres`) + synchronize |
+| `DB_PATH` | main | SQLite : fichier de base (relatif au dossier `back/`, ou absolu, ou `:memory:`) |
+| `DB_MIGRATIONS_RUN=true` | main | Exécute les migrations au démarrage (tous moteurs ; usage typique : app de bureau) |
 | `DB_CONNECTIONS=analytics,archive` | — | Liste des connexions nommées additionnelles |
 | `DB__<NAME>__HOST` / `__PORT` / `__USER` / `__PASSWORD` / `__NAME` | nommée | Idem `DB_*` mais pour la connexion `<NAME>` |
-| `DB__<NAME>__SSLMODE` / `__SSLROOTCERT` / `__POOLSIZE` / `__ENGINE` / `__SYNC` | nommée | Options de la connexion `<NAME>` |
+| `DB__<NAME>__SSLMODE` / `__SSLROOTCERT` / `__POOLSIZE` / `__ENGINE` / `__SYNC` / `__PATH` | nommée | Options de la connexion `<NAME>` |
 | `DB_MODULE_ROUTING={"token-trader":"analytics"}` | — | Route un `moduleId` vers une connexion |
+
+## Moteurs
+
+| Moteur | Pilote TypeORM | Variables utilisées |
+|--------|----------------|---------------------|
+| `postgres` (défaut), `cloud`, `neon`, `supabase` | `postgres` | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, SSL, pool |
+| `sqlite` | `better-sqlite3` | `DB_PATH` uniquement (SSL, pool, hôte ignorés) |
+
+SQLite : le dossier parent du fichier est créé s'il manque, le mode WAL et `foreign_keys = ON` sont activés
+au démarrage. Une seule instance applicative doit écrire dans la base. `better-sqlite3` est une dépendance
+native **non incluse** dans `package.base.json` : l'ajouter au `package.local.json` du projet qui choisit SQLite
+(`databases.ts` ne l'importe jamais, TypeORM le charge). Exemple `.env` :
+
+```
+DB_ENGINE=sqlite
+DB_PATH=data/app.db
+DB_MIGRATIONS_RUN=true
+```
+
+### Types de colonnes portables
+
+Pour qu'une entité fonctionne sur les deux moteurs : `@Column({ type: jsonColumnType() })` (`jsonb` ou
+`simple-json`) et `@Column({ type: timestampColumnType() })` (`timestamptz` ou `datetime`). `isSqlite(connection = 'main')`
+indique le moteur d'une connexion. **Contrainte** : le moteur est fixé au démarrage du processus, car les
+décorateurs sont évalués à l'import ; l'environnement (`.env`) doit donc être chargé avant l'import des entités.
 
 ### Taille du pool (`DB_POOLSIZE`)
 
@@ -128,6 +156,7 @@ TypeOrmModule.forFeature([TokenEntity], DB)
 
 ## Points d'extension
 
+- Nouveau moteur SQL : une fonction `build<Moteur>Options` dans `databases.ts` + le dispatch de `buildConnectionOptions`.
 - Nouveau moteur cloud → étendre la liste `isCloud` dans `databases.ts`.
 - Partition d'entités personnalisée → `resolveEntityGlobs`.
 

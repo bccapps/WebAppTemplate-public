@@ -17,15 +17,16 @@
  * Env per connection:
  *   main:        DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME /
  *                DB_SSLMODE / DB_SSLROOTCERT / DB_POOLSIZE /
- *                DATABASE_ENGINE / TYPEORM_SYNC
+ *                DATABASE_ENGINE / TYPEORM_SYNC / DB_MIGRATIONS_RUN
+ *                (sqlite: DB_PATH instead of host/port/user/password/ssl/pool)
  *   named "<N>": DB__<N>__HOST / DB__<N>__PORT / DB__<N>__USER /
  *                DB__<N>__PASSWORD / DB__<N>__NAME / DB__<N>__SSLMODE /
  *                DB__<N>__SSLROOTCERT / DB__<N>__POOLSIZE /
- *                DB__<N>__ENGINE / DB__<N>__SYNC
+ *                DB__<N>__ENGINE / DB__<N>__SYNC / DB__<N>__PATH
  */
 
-import { existsSync, readFileSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'fs';
+import { dirname, isAbsolute, join } from 'path';
 import { DataSourceOptions } from 'typeorm';
 import {
   MAIN_CONNECTION,
@@ -33,6 +34,7 @@ import {
   isRoutingActive,
   parseConnectionNames,
 } from './dbRouting';
+import { connectionEnvPrefix, readConnectionEnv, resolveEngine } from './dbEngine';
 
 /** Project-specific locations, resolved by the consuming project. */
 export interface DbContext {
@@ -90,18 +92,72 @@ export function resolveEntityGlobs(baseDir: string): Map<string, string[]> {
   return map;
 }
 
-/** Build `DataSourceOptions` for a single connection from its env prefix. */
-function buildConnectionOptions(
+type EnvGetter = (key: string, legacy?: string) => string | undefined;
+
+/** Resolve `synchronize` (dev default on, production default off, env override). */
+function resolveSynchronize(get: EnvGetter): boolean {
+  const syncRaw = get('SYNC', 'TYPEORM_SYNC')?.trim().toLowerCase();
+  // Default: enabled in development, DISABLED in production to prevent accidental data loss.
+  // Set DB_SYNC=true (or TYPEORM_SYNC=true) in back/.env to override during a controlled migration.
+  const syncDefault = process.env.NODE_ENV !== 'production';
+  const synchronize = syncRaw ? syncRaw === 'true' || syncRaw === '1' : syncDefault;
+  if (!synchronize && !syncRaw) {
+    console.warn(
+      '[DB] synchronize=false (production default). ' +
+      'Schema changes will NOT be applied automatically. ' +
+      'Set DB_SYNC=true in back/.env if you need to run a controlled schema migration.',
+    );
+  }
+  return synchronize;
+}
+
+/** `migrationsRun` is only emitted when enabled, so default options are unchanged. */
+function migrationsRunOption(get: EnvGetter): { migrationsRun?: true } {
+  const raw = get('MIGRATIONS_RUN')?.trim().toLowerCase();
+  return raw === 'true' || raw === '1' ? { migrationsRun: true } : {};
+}
+
+/** SQLite options (better-sqlite3): file path, WAL, foreign keys; no network/pool/SSL options. */
+function buildSqliteOptions(
   name: string,
   entities: string[],
-  ctx: DbContext
+  ctx: DbContext,
+  get: EnvGetter
 ): DataSourceOptions {
   const isMain = name === MAIN_CONNECTION;
-  const prefix = isMain ? 'DB_' : `DB__${name.toUpperCase()}__`;
-  const get = (key: string, legacy?: string): string | undefined =>
-    process.env[prefix + key] ?? (isMain && legacy ? process.env[legacy] : undefined);
+  const rawPath = get('PATH')?.trim();
+  if (!rawPath) {
+    throw new Error(`${connectionEnvPrefix(name)}PATH is required when the engine is sqlite`);
+  }
+  const memory = rawPath === ':memory:';
+  const database = memory || isAbsolute(rawPath) ? rawPath : join(ctx.certBaseDir ?? process.cwd(), rawPath);
+  if (!memory) mkdirSync(dirname(database), { recursive: true });
+  return {
+    ...(isMain ? {} : { name }),
+    type: 'better-sqlite3',
+    database,
+    entities,
+    migrations: isMain ? ctx.migrationGlobs : [],
+    synchronize: resolveSynchronize(get),
+    ...migrationsRunOption(get),
+    logging: ['error'],
+    // WAL: concurrent readers while writing. foreign_keys is also forced by the driver.
+    prepareDatabase: (db: { pragma: (sql: string) => unknown }) => {
+      if (!memory) db.pragma('journal_mode = WAL');
+      db.pragma('foreign_keys = ON');
+    },
+  } as DataSourceOptions;
+}
 
-  const engine = (get('ENGINE', 'DATABASE_ENGINE') ?? 'postgres').toLowerCase();
+/** Postgres options (selfhosted and cloud/neon/supabase variants). */
+function buildPostgresOptions(
+  name: string,
+  entities: string[],
+  ctx: DbContext,
+  get: EnvGetter,
+  engine: string
+): DataSourceOptions {
+  const isMain = name === MAIN_CONNECTION;
   const isCloud = ['cloud', 'neon', 'supabase'].includes(engine);
 
   const host = get('HOST') ?? 'localhost';
@@ -173,18 +229,7 @@ function buildConnectionOptions(
     console.log(`[DB] "${name}" pool: max=${extra.max} (${engine}, ${port === 5432 ? 'session mode — counts against the project-wide pool_size' : 'transaction mode — no total-client cap'})`);
   }
 
-  const syncRaw = get('SYNC', 'TYPEORM_SYNC')?.trim().toLowerCase();
-  // Default: enabled in development, DISABLED in production to prevent accidental data loss.
-  // Set DB_SYNC=true (or TYPEORM_SYNC=true) in back/.env to override during a controlled migration.
-  const syncDefault = process.env.NODE_ENV !== 'production';
-  const synchronize = syncRaw ? syncRaw === 'true' || syncRaw === '1' : syncDefault;
-  if (!synchronize && !syncRaw) {
-    console.warn(
-      '[DB] synchronize=false (production default). ' +
-      'Schema changes will NOT be applied automatically. ' +
-      'Set DB_SYNC=true in back/.env if you need to run a controlled schema migration.',
-    );
-  }
+  const synchronize = resolveSynchronize(get);
 
   return {
     ...(isMain ? {} : { name }),
@@ -197,11 +242,25 @@ function buildConnectionOptions(
     entities,
     migrations: isMain ? ctx.migrationGlobs : [],
     synchronize,
+    ...migrationsRunOption(get),
     logging: ['error'],
     ...(poolSize && Number.isFinite(poolSize) ? { poolSize } : {}),
     ...(sslConfig ? { ssl: sslConfig } : {}),
     ...(extra ? { extra } : {}),
   } as DataSourceOptions;
+}
+
+/** Build `DataSourceOptions` for a single connection from its env prefix. */
+function buildConnectionOptions(
+  name: string,
+  entities: string[],
+  ctx: DbContext
+): DataSourceOptions {
+  const get: EnvGetter = (key, legacy) => readConnectionEnv(name, key, legacy);
+  const engine = resolveEngine(name);
+  return engine === 'sqlite'
+    ? buildSqliteOptions(name, entities, ctx, get)
+    : buildPostgresOptions(name, entities, ctx, get, engine);
 }
 
 /** Options for the "main" (default) connection — also used by the TypeORM CLI. */

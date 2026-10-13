@@ -51,9 +51,10 @@ Two git repositories hold the code reused across projects, each mounted TWICE (a
 
 ## 3. Backend Stack
 
-- **Tech**: NestJS, TypeORM, Postgres, ScheduleModule for crons
+- **Tech**: NestJS, TypeORM, Postgres (or SQLite), ScheduleModule for crons
 - **Entry**: `src/main.ts` → AppModule, Swagger at `/api`, CORS enabled
 - **Modules**: new domains under `src/modules/<feature>` mirroring `modules_shared`; same-module imports by relative path only
+- **Database engine**: Postgres by default, SQLite (`DB_ENGINE=sqlite` + `DB_PATH`) as an option; engines, variables and portable column types (`jsonColumnType()`, `timestampColumnType()`) are documented in `modules_shared/database/README.md`.
 - **TypeORM**: `Datasource.ts` uses `DB_*` env vars, auto-loads entities. `synchronize: true` for dev, migrations for prod.
 - **TypeORM sync safety (MANDATORY)**: before modifying any entity (renaming/removing a column, changing a type, removing an entity), **STOP and warn the user**: with `synchronize: true` TypeORM silently drops and recreates columns/tables, destroying production data. List every destructive change, explain the impact, and **do not proceed** without explicit confirmation. Safe changes (nullable column, new entity) may proceed.
 - **Global config**: `defaultConfig.ts` → `ConfigSeederService` seeds to DB → `ConfigurationService` reads

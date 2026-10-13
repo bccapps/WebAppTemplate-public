@@ -8,5 +8,6 @@
  */
 
 export * from './dbRouting';
+export * from './dbEngine';
 export * from './databases';
 export * from './DatabaseModule';
