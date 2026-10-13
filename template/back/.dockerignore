@@ -13,6 +13,8 @@ tmp
 logs
 .npm
 .pnpm-store
+# Secrets never enter the build context: compose's env_file reads back/.env client-side at deploy time.
+.env
 .env.dev
 .env.preprod
 .env.local
