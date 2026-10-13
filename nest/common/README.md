@@ -13,6 +13,8 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 | Redis partagé | `RedisService` expose **un** client `ioredis` partagé pour tout le backend (PERFORMANCE_PLAN.md §7.9). Voir « Redis partagé » plus bas.
 | Notifications | `ProwlService` publie des alertes push via l'API Prowl.
 | Email | `EmailService` envoie des emails via Brevo (SMTP relay) ou un serveur SMTP custom, configurable depuis l'admin via `emailConfigSchema`. Le transport est recréé automatiquement lorsqu'un paramètre change.
+| Démarrage HTTP | `bootstrap/configureHttpApp.ts` : `configureHttpApp(app, options?)` applique le durcissement commun (voir « Démarrage HTTP » plus bas). |
+| Santé | `HealthController` : `GET /api/v1/health` public, agrège les contributeurs `HEALTH_CONTRIBUTORS`. |
 | Stockage d'images | `ImageStorageService` écrit sur disque local (défaut) ou sur un bucket Cloudflare R2, configurable depuis l'admin via `storageConfigSchema`. Voir « Stockage R2 » plus bas.
 
 ## Intégrations clés
@@ -92,7 +94,7 @@ d'infrastructure, ne portant aucune donnée métier, en sont exemptées via un d
   `@RequireFeature`/`FeatureGuard`. L'exemption court-circuite aussi le lookup Redis
   (`CryptSessionService.peekSession`) : ces routes ne paient plus le `GET` par requête. Liste
   exhaustive et fermée (ne pas en ajouter sans mettre à jour PERFORMANCE_PLAN.md §2.0) :
-  `GET /api/v1/configurations`, `GET /api/v1/locales[/:category]`, `GET /api/v1/indicators/available`
+  `GET /api/v1/health`, `GET /api/v1/configurations`, `GET /api/v1/locales[/:category]`, `GET /api/v1/indicators/available`
   (module `blockchainIndicator`, décorée au niveau méthode uniquement). Toute route de **valeurs**
   (`/indicatorvalues/**`, séries du workshop) reste chiffrée.
 - **`@CacheControl({ visibility, maxAgeConfigKey, staleWhileRevalidateConfigKey?, vary? })`**
@@ -112,6 +114,15 @@ d'infrastructure, ne portant aucune donnée métier, en sont exemptées via un d
   qu'une requête avec `x-crypt-session` sur une route exemptée revient en clair (pas de
   `x-crypt-encrypted`, pas d'appel à `peekSession`) tandis qu'une route non exemptée reste
   chiffrée. `CacheControlInterceptor.spec.ts` couvre le format de l'en-tête.
+
+### Santé (`HealthController`)
+| Méthode | Endpoint | Auth | Description |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/health` | Public | Sonde de vivacité pour Docker/compose et la supervision externe. Réponse `{ status: 'ok' \| 'degraded' \| 'down', timestamp, uptime, version, checks }` ; `checks` contient une entrée par contributeur (`{ <key>: { status, ...détails } }`). **Exemptée du chiffrement de transport** (`@NoTransportCrypt`, route d'infrastructure sans donnée métier). 200 sauf si un contributeur est `down` (ou lève une erreur, ou ne répond pas en 3 s) : 503. `degraded` reste 200. |
+
+Sans contributeur, la route répond `{ status: 'ok', checks: {} }` : un projet public seul a donc un healthcheck valide. `version` vient de `APP_VERSION`, sinon `npm_package_version`, sinon `unknown`.
+
+**Point d'extension `HEALTH_CONTRIBUTORS`** (`types/ExtensionPoints.ts`) : un module qui sait sonder quelque chose fournit un `HealthContributor { key, check() }` (ou un tableau) sous ce token (`{ provide: HEALTH_CONTRIBUTORS, useExisting: MonContributeur }`) et l'exporte depuis un scope global ; `HealthController` l'injecte en `@Optional()`. Un seul fournisseur du token par projet (celui du dernier module chargé l'emporte) : un module qui a plusieurs sondes fournit un tableau. **Une seule route `/api/v1/health` doit exister** : un module ne déclare jamais son propre contrôleur sur ce chemin (`infra` fournit le contributeur `infra`, plus de contrôleur). Exemple : `infra` (vx-private).
 
 ### Email (`EmailController`)
 | Méthode | Endpoint | Auth | Description |
@@ -395,6 +406,19 @@ Exemples :
 - `commerce_defaultCurrency`
 
 ---
+
+## Démarrage HTTP (`bootstrap/`)
+
+`configureHttpApp(app, options?)` est appelée par `template/back/src/main.ts` **avant `app.init()`** (les middlewares doivent précéder les parseurs de Nest et le routeur, sinon un preflight CORS répond 404) ; une app qui a un `main.ts` personnalisé l'appelle de la même façon. Elle applique, dans l'ordre : `trust proxy`, `helmet` (CSP désactivée : l'API sert du JSON et Swagger, le front pose sa propre CSP), CORS, capture du `rawBody`, limites de corps, `ValidationPipe({ whitelist: true, transform: true })` global. Elle **lève** une erreur (au lieu de quitter) sur une configuration dangereuse : `main.ts` laisse le rejet de `bootstrap()` arrêter le processus. Elle retourne les options résolues. `resolveListenHost()` renvoie l'hôte d'écoute.
+
+| Variable | Défaut | Effet |
+| --- | --- | --- |
+| `CLIENT_ORIGINS` | `http://localhost:<FRONT_PORT>` | Liste CORS séparée par des virgules. `*` reflète toute origine sans credentials ; **refusé** avec `NODE_ENV=production`. |
+| `HOST` | `0.0.0.0` | Adresse d'écoute (`resolveListenHost`). |
+| `TRUST_PROXY` | `1` en production, désactivé sinon | `true`, `false`, nombre de sauts ou nom de sous-réseau (`loopback`). Nécessaire pour un `req.ip` correct derrière nginx. |
+| `RAW_BODY_PATHS` | `/webhook` | Fragments de chemin dont le corps JSON est aussi disponible en `req.rawBody` (signatures de webhooks), limite 50 Mo. Correspondance par sous-chaîne sur le chemin sans query string. Les autres routes : 5 Mo. |
+
+Limites ajustables par option (`jsonLimit`, `rawBodyLimit`). Tests : `bootstrap/configureHttpApp.spec.ts`.
 
 ## Services exportés
 

@@ -8,7 +8,7 @@ An opinionated full-stack web application template: a **NestJS + TypeORM + Postg
 | Path | Content |
 |---|---|
 | `template/` | The app template: shared scripts (`run.sh`, deploy, backup, `create-project.sh`...), Dockerfiles, base `package.base.json`, lint/TS config, minimal back/front skeleton |
-| `nest/common`, `react/common` | Core modules (configuration, i18n, HTTP, crypto transport, email, theming...) |
+| `nest/common`, `react/common` | Core modules (configuration, i18n, HTTP, crypto transport, email, theming, hardened HTTP bootstrap `configureHttpApp`, public `GET /api/v1/health`...) |
 | `nest/database` | Multi-connection TypeORM helpers |
 | `nest/voice`, `react/voice` | Voice module |
 | `tools/` | `check-boundaries.mjs`, `license-headers.mjs`, `ci-sandbox.sh`, `ci-git-flow.sh`, `allowed.json` |

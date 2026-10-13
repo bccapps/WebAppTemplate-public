@@ -7,19 +7,24 @@
   "requires": [],
   "env": [
     "ADMIN_TOKEN",
+    "APP_VERSION",
     "APP_ENV",
+    "CLIENT_ORIGINS",
     "CRYPT_DB_DERIVATION_SALT",
     "CRYPT_DB_MASTER_KEY",
     "CRYPT_SESSION_PRIVATE_KEY",
     "CRYPT_SESSION_TTL_MS",
     "CRYPT_STRICT",
     "DISABLE_TRANSPORT_CRYPTO",
+    "HOST",
     "NODE_ROLE",
     "PROJECT_NAME",
     "PROWL_API_KEY",
     "PROWL_API_URL",
+    "RAW_BODY_PATHS",
     "REDIS_URL",
-    "SHARED_DIRECTORY"
+    "SHARED_DIRECTORY",
+    "TRUST_PROXY"
   ],
   "questions": []
 }

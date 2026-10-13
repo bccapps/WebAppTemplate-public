@@ -42,3 +42,23 @@ export interface TierPricingProvider {
   /** True when an active + recurring commerce Product grants this tier. */
   hasActiveRecurringProduct(tierId: number): Promise<boolean>;
 }
+
+/**
+ * Health contributors aggregated by `GET /api/v1/health` (`common`). A module that knows how to probe something
+ * (database, cache, an upstream API) provides one contributor, or an array of them, under this token
+ * (`{ provide: HEALTH_CONTRIBUTORS, useExisting: MyContributor }`) and exports it from a global scope.
+ * Absent => the endpoint only reports process liveness. Only one provider per project: a module that needs
+ * several contributors provides an array.
+ */
+export const HEALTH_CONTRIBUTORS = 'HEALTH_CONTRIBUTORS';
+export type HealthState = 'ok' | 'degraded' | 'down';
+export interface HealthContribution {
+  /** `down` makes the endpoint answer 503; `degraded` stays 200. */
+  status: HealthState;
+  [detail: string]: unknown;
+}
+export interface HealthContributor {
+  /** Key under which the contribution appears in the `checks` object of the response. */
+  readonly key: string;
+  check(): Promise<HealthContribution> | HealthContribution;
+}

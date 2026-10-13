@@ -21,6 +21,7 @@ import { BugReportController } from './controllers/BugReportController';
 import { SystemInfoController } from './controllers/SystemInfoController';
 import { ThemeController } from './controllers/ThemeController';
 import { CookieConsentController } from './controllers/CookieConsentController';
+import { HealthController } from './controllers/HealthController';
 
 // Services
 import { ConfigurationService } from './services/ConfigurationService';
@@ -65,7 +66,7 @@ import ConfigurationEntity from './entities/ConfigurationEntity';
 
 @Module({
   imports: [TypeOrmModule.forFeature([ConfigurationEntity, ThemeEntity, CookieConsentEntity])],
-  controllers: [ConfigurationController, LocaleController, CryptController, ModuleConfigController, EmailController, BugReportController, SystemInfoController, ThemeController, CookieConsentController],
+  controllers: [ConfigurationController, LocaleController, CryptController, ModuleConfigController, EmailController, BugReportController, SystemInfoController, ThemeController, CookieConsentController, HealthController],
   providers: [
     ConfigurationService,
     ConfigSeederService,

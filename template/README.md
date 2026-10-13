@@ -57,7 +57,8 @@ Requires `back/.env` (production).
 | **Database** | `DATABASE_ENGINE`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_NAME`, `DB_PASSWORD` | Postgres connection (`DATABASE_ENGINE`: `postgres`, `cloud`, `supabase`, `neon`) |
 | **DB options** | `DB_SSLMODE`, `DB_SSLROOTCERT`, `DB_POOLSIZE`, `TYPEORM_SYNC`, `DB_MIGRATIONS_RUN` | SSL, pool tuning, schema sync, migrations at startup |
 | **SQLite** | `DATABASE_ENGINE=sqlite` (or `DB_ENGINE=sqlite`), `DB_PATH` | Local file database instead of Postgres, single instance (see `modules_shared/database/README.md`). Written by the wizard (`DB_PATH=data/<project>.db`); `better-sqlite3` is added to `back/package.local.json` |
-| **Security** | `ADMIN_TOKEN`, `CRYPT_DB_MASTER_KEY`, `CRYPT_DB_DERIVATION_SALT`, `CRYPT_SESSION_PRIVATE_KEY`, `CLIENT_ORIGINS` | Anonymous-mode admin key, encryption keys, CORS |
+| **Security** | `ADMIN_TOKEN`, `CRYPT_DB_MASTER_KEY`, `CRYPT_DB_DERIVATION_SALT`, `CRYPT_SESSION_PRIVATE_KEY`, `CLIENT_ORIGINS` | Anonymous-mode admin key, encryption keys, CORS (`*` refused in production) |
+| **HTTP server** | `HOST`, `TRUST_PROXY`, `RAW_BODY_PATHS`, `APP_VERSION`, `LOG_DIR`, `LOG_TO_FILE` | Listen address, proxy trust, webhook raw-body paths, version in `/api/v1/health`, file logs (all optional, see `back/.env.example` and `nest/common/README.md`) |
 | **With the `user` module only** | `VITE_REOWN_PROJECT_ID`, `VITE_AUTH_CHAIN_POLICY`, `ADMIN_WALLET`, `TECH_TOKEN`, `JWT_SECRET` | Reown/WalletConnect auth, wallet admin, JWT (see `back/.env.example`) |
 | **Deployment** | `FRONT_HOSTS`, `BACK_HOSTS`, `REMOTE_USER`, `REMOTE_SSH_PORT`, `SSH_KEY_FILE`, `REMOTE_CONTEXT_NAME`, `REMOTE_APP_DIR` | Remote Docker deployment |
 | **Notifications** | `PROWL_API_KEY` | Push notifications (optional) |
@@ -116,8 +117,10 @@ each ships a `plugin.ts` that `link-shared.mjs` collects into `plugins.generated
 | Module | Adds | Without it |
 |---|---|---|
 | `commerce` | products, orders, subscriptions; a tier is paid when an active recurring product grants it (`TIER_PRICING_PROVIDER`) | every tier is free |
-| `infra` | health checks, Redis cache (`KEY_VALUE_CACHE`), Prometheus incl. `app_total_users` / `app_active_users_24h` (`USER_METRICS_SINK`) | tiers are read from the DB each time, no user gauges |
+| `infra` | health contributor (`HEALTH_CONTRIBUTORS`; `GET /api/v1/health` itself ships with `common`, so Docker healthchecks work without `infra`), Redis cache (`KEY_VALUE_CACHE`), Prometheus incl. `app_total_users` / `app_active_users_24h` (`USER_METRICS_SINK`) | tiers are read from the DB each time, no user gauges |
 | `oauth` | OAuth2 token toolkit (parsing, refresh, PKCE) | n/a |
+
+`helmet` is in the base `package.json` of every generated project (HTTP hardening in `common/bootstrap`); an existing project gets it the next time its `package.json` is regenerated (`build-package.mjs`).
 
 The extension-point tokens are defined in `nest/common/types/ExtensionPoints.ts`; the optional module provides them globally and
 `user` injects them with `@Optional() @Inject(TOKEN)`. The wizard adds `commerce` when you answer "selling", `infra` when you

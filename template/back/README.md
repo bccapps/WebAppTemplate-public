@@ -17,7 +17,7 @@ un vrai fichier à cet emplacement (override projet conservé).
 | Type | Mécanisme | Exemples |
 |---|---|---|
 | Identiques | symlink pur | `config/Datasource.ts`, `fileLogger.ts`, `test-setup.ts`, `.env.example`, `tsconfig.build.json`, `.dockerignore`, `.gitignore` |
-| Env-injection | symlink + ENV | `main.ts` (Swagger/body/DB/CORS via env) |
+| Env-injection | symlink + ENV | `main.ts` (Swagger/body/DB/CORS via env) ; l'essentiel du démarrage HTTP (helmet, CORS, rawBody, ValidationPipe, `HOST`, `TRUST_PROXY`, `RAW_BODY_PATHS`) vit dans `modules_shared/common/bootstrap` (`configureHttpApp`) |
 | Base + extends | `extends` natif TS | `tsconfig.base.json` ← `tsconfig.json` projet |
 | Base + inject | symlink ou local | `nest-cli.base.json` (+ assets proto si besoin) |
 | ARG | symlink + build-arg | `Dockerfile.base`, `Dockerfile` (`ARG NESTCLI_VERSION`) |
