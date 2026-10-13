@@ -152,6 +152,10 @@ pub struct DesktopConfig {
     pub sidecars: Vec<ProcessConfig>,
     #[serde(default)]
     pub splash: SplashConfig,
+    /// Read by the packaging scripts (`scripts/desktop/`) only; the shell ignores it.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub packaging: Option<serde_json::Value>,
 }
 
 fn default_ready_timeout() -> u64 {

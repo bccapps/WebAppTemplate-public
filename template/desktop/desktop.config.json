@@ -22,6 +22,10 @@
     "healthPath": "/api/v1/health",
     "readyTimeoutSec": 120
   },
+  "packaging": {
+    "nodeVersion": null,
+    "extraResources": []
+  },
   "sidecars": [],
   "splash": {
     "brand": { "background": "#0d0b0a", "foreground": "#efe8e1", "accent": "#ff5b37" },
