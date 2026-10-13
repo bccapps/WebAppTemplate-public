@@ -655,6 +655,10 @@ interface NestModulePlugin<TOptions = never> {
   `pluginOptions[id]` (`undefined` si absent) et doit appeler `requirePluginOptions(id, options, ['cléRequise'])`, qui lève
   `PluginOptionsError` (« Plugin "<id>" needs options (missing: ...) ») : l'application s'arrête au démarrage avec un message clair.
   Une fabrique est reconnue au fait que ce n'est pas une classe (`class …` dans sa source).
+- **Exclusion par l'app** : `pluginOptions[id] = false` désactive le plugin ; `pluginOptions[id] = { excludeModules: ['NomDeClasse', …] }`
+  retire des entrées de `modules` (nom de classe, y compris celle d'un module dynamique ; un nom qui ne correspond à rien est une
+  erreur explicite au démarrage). Les fabriques reçoivent leurs options sans la clé `excludeModules`. Usage : écarter les tâches
+  planifiées d'un dossier multi-modules que l'app n'utilise pas (ex. `tradingplatform` : `PlatformMarketCacheModule`, `MarketDownloadModule`).
 - **API** (`plugins/resolvePlugins.ts`) : `sortPlugins(plugins)` (tri stable par `order`), `pluginModules(plugin, options)`,
   `resolvePluginModules(plugins, options)`, `requirePluginOptions(id, options, requiredKeys)`, `PluginOptionsError`.
 - **Règle des bibliothèques** : un module que d'autres modules importent eux-mêmes (dépendance) n'a **pas** de plugin ; il reste

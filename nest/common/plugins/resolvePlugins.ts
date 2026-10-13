@@ -46,13 +46,45 @@ export function sortPlugins<T extends NestModulePlugin<never>>(plugins: readonly
     .map(({ plugin }) => plugin);
 }
 
-/** Modules of one plugin: `module` (built by its factory when it is one), then `modules`. */
+/** Name of the class behind a plugin module (a class, or the `module` of a dynamic module). */
+function moduleClassName(module: PluginModule): string {
+  return 'module' in module ? module.module.name : module.name;
+}
+
+/** Reads the app's entry for a plugin: `false` disables it, `{ excludeModules }` filters its modules. */
+function splitOptions(entry: unknown): { disabled: boolean; exclude: string[]; rest: unknown } {
+  if (entry === false) return { disabled: true, exclude: [], rest: undefined };
+  if (typeof entry !== 'object' || entry === null || !('excludeModules' in entry)) return { disabled: false, exclude: [], rest: entry };
+  const { excludeModules, ...rest } = entry as { excludeModules?: unknown } & Record<string, unknown>;
+  const exclude = Array.isArray(excludeModules) ? (excludeModules as string[]) : [];
+  return { disabled: false, exclude, rest };
+}
+
+/**
+ * Modules of one plugin: `module` (built by its factory when it is one), then `modules`.
+ * `options[id] === false` disables the plugin; `options[id].excludeModules` removes modules by class name (an unknown name is
+ * an error); the factory receives the options without that key.
+ */
 export function pluginModules(plugin: NestModulePlugin<never>, options: PluginOptions = {}): PluginModule[] {
+  const { disabled, exclude, rest } = splitOptions(options[plugin.id]);
+  if (disabled) return [];
   const result: PluginModule[] = [];
   if (plugin.module) {
-    result.push(isFactory(plugin.module) ? plugin.module(options[plugin.id] as never) : plugin.module);
+    result.push(isFactory(plugin.module) ? plugin.module(rest as never) : plugin.module);
   }
-  return result.concat(plugin.modules ?? []);
+  return filterModules(plugin.id, result.concat(plugin.modules ?? []), exclude);
+}
+
+function filterModules(pluginId: string, modules: PluginModule[], exclude: string[]): PluginModule[] {
+  if (!exclude.length) return modules;
+  const names = modules.map(moduleClassName);
+  const unknown = exclude.filter((name) => !names.includes(name));
+  if (unknown.length) {
+    throw new Error(
+      `Plugin "${pluginId}": excludeModules names no module of this plugin (${unknown.join(', ')}); its modules are: ${names.join(', ')}`,
+    );
+  }
+  return modules.filter((module) => !exclude.includes(moduleClassName(module)));
 }
 
 /** A Nest module class is a function too: tell it from a factory by its `class` source (targets are ES2017+). */

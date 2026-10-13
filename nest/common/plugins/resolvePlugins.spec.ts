@@ -84,6 +84,39 @@ describe('pluginModules', () => {
   });
 });
 
+describe('pluginModules: app exclusions', () => {
+  const multi: NestModulePlugin = { id: 'multi', module: AModule, modules: [BModule, CModule] };
+
+  it('disables a plugin with false', () => {
+    expect(pluginModules(multi, { multi: false })).toEqual([]);
+    expect(pluginModules({ id: 'f', module: () => dyn('x') }, { f: false })).toEqual([]);
+  });
+
+  it('removes modules by class name', () => {
+    expect(pluginModules(multi, { multi: { excludeModules: ['BModule', 'CModule'] } })).toEqual([AModule]);
+  });
+
+  it('matches the class behind a dynamic module, including the one built by a factory', () => {
+    const plugin: NestModulePlugin<{ port: string }> = { id: 'p', module: (o) => dyn(o.port), modules: [BModule] };
+    expect(pluginModules(plugin, { p: { port: 'x', excludeModules: ['AModule'] } })).toEqual([BModule]);
+  });
+
+  it('gives the factory its options without excludeModules', () => {
+    const received: unknown[] = [];
+    const plugin: NestModulePlugin<{ port: string }> = { id: 'p', module: (o) => (received.push(o), dyn(o.port)), modules: [BModule] };
+    pluginModules(plugin, { p: { port: 'x', excludeModules: ['BModule'] } });
+    expect(received).toEqual([{ port: 'x' }]);
+  });
+
+  it('fails when a name matches no module of the plugin', () => {
+    expect(() => pluginModules(multi, { multi: { excludeModules: ['Nope'] } })).toThrow(/"multi".*Nope.*AModule, BModule, CModule/);
+  });
+
+  it('is applied by resolvePluginModules', () => {
+    expect(resolvePluginModules([multi, { id: 'other', module: BModule }], { multi: { excludeModules: ['AModule', 'CModule'] }, other: false })).toEqual([BModule]);
+  });
+});
+
 describe('requirePluginOptions', () => {
   it('returns the options when complete', () => {
     const opts = { a: 1, b: 2 };
