@@ -119,6 +119,8 @@
   "common.browser": "Navigateur",
   "common.nav.home": "Accueil",
   "common.nav.adminDashboard": "Tableau de bord admin",
+  "common.nav.adminPage": "Paramètres admin",
+  "common.nav.adminUser": "Administration des utilisateurs",
   "common.dashboard": "Tableau de bord",
   "common.dashboard.title": "Tableaux de bord",
   "common.dashboard.subtitle": "Surveillez les métriques globales et les dashboards des modules",

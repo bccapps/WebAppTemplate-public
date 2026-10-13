@@ -119,6 +119,8 @@
   "common.browser": "Browser",
   "common.nav.home": "Home",
   "common.nav.adminDashboard": "Admin dashboard",
+  "common.nav.adminPage": "Admin settings",
+  "common.nav.adminUser": "User administration",
   "common.dashboard": "Dashboard",
   "common.dashboard.title": "Dashboards",
   "common.dashboard.subtitle": "Monitor global metrics and module dashboards",
