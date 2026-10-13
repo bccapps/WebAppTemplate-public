@@ -91,6 +91,29 @@ describe('configuration seeding on a fresh SQLite database', () => {
   });
 });
 
+describe('seed precedence: defaultConfig.ts of the app over module schema defaults', () => {
+  const run = (order: 'defaults-first' | 'modules-first' | 'concurrent') => {
+    const defaults = new ConfigSeederService(repo);
+    const modules = new ModuleConfigSeederService(repo);
+    if (order === 'defaults-first') return defaults.onApplicationBootstrap().then(() => modules.seedSchema(SCHEMA));
+    if (order === 'modules-first') return modules.seedSchema(SCHEMA).then(() => defaults.onApplicationBootstrap());
+    return Promise.all([defaults.onApplicationBootstrap(), modules.seedSchema(SCHEMA)]);
+  };
+
+  it.each(['defaults-first', 'modules-first', 'concurrent'] as const)('a key declared on both sides takes the app value (%s)', async (order) => {
+    await run(order);
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect((await repo.findOneByOrFail({ name: 'shared_key' })).value).toBe('from-defaults');
+    expect((await repo.findOneByOrFail({ name: 'demo_flag' })).value).toBe('true'); // module-only key still seeded
+  });
+
+  it.each(['defaults-first', 'modules-first', 'concurrent'] as const)('a value already in the database is never overwritten (%s)', async (order) => {
+    await repo.insert({ name: 'shared_key', value: 'operator', description: '' });
+    await run(order);
+    expect((await repo.findOneByOrFail({ name: 'shared_key' })).value).toBe('operator');
+  });
+});
+
 describe('insertConfigIfAbsent on Postgres (SQL only, no connection)', () => {
   it('generates ON CONFLICT DO NOTHING, the same idempotent insert as SQLite OR IGNORE', async () => {
     const pg = new DataSource({ type: 'postgres', entities: [ConfigurationEntity] });
