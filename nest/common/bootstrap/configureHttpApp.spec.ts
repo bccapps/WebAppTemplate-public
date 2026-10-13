@@ -89,6 +89,20 @@ describe('resolveHttpAppOptions', () => {
   });
 });
 
+describe('resolveHttpAppOptions (headers and validation)', () => {
+  it('defaults to the built-in headers and the whitelist + transform pipe', () => {
+    const r = resolveHttpAppOptions({}, { FRONT_PORT: '1' });
+    expect(r.allowedHeaders).toEqual(['Content-Type', 'Authorization', 'x-crypt-session', 'x-crypt-accept-encoding']);
+    expect(r.validation).toEqual({ whitelist: true, transform: true });
+  });
+
+  it('appends extra headers without duplicates and honours validation: false', () => {
+    const r = resolveHttpAppOptions({ extraCorsHeaders: ['x-company-id', ' Authorization ', ''], validation: false }, { FRONT_PORT: '1' });
+    expect(r.allowedHeaders).toEqual(['Content-Type', 'Authorization', 'x-crypt-session', 'x-crypt-accept-encoding', 'x-company-id']);
+    expect(r.validation).toBe(false);
+  });
+});
+
 describe('parseTrustProxy', () => {
   it.each([
     [undefined, false, false],
@@ -126,6 +140,35 @@ describe('configureHttpApp', () => {
     expect(ok.body.body).toEqual({ name: 'x' });
     const bad = await request(app.getHttpServer()).post('/plain').send({ name: 5 });
     expect(bad.status).toBe(400);
+    await app.close();
+  });
+
+  it('registers no validation pipe with validation: false (unknown properties kept, invalid body accepted)', async () => {
+    const app = await createApp({ clientOrigins: 'https://a.io', validation: false });
+    const ok = await request(app.getHttpServer()).post('/plain').send({ name: 'x', extra: 1 });
+    expect(ok.body.body).toEqual({ name: 'x', extra: 1 });
+    const bad = await request(app.getHttpServer()).post('/plain').send({ name: 5 });
+    expect(bad.status).toBe(201);
+    await app.close();
+  });
+
+  it('merges partial validation options over the defaults', async () => {
+    const app = await createApp({ clientOrigins: 'https://a.io', validation: { forbidNonWhitelisted: true } });
+    const res = await request(app.getHttpServer()).post('/plain').send({ name: 'x', extra: 1 });
+    expect(res.status).toBe(400);
+    await app.close();
+  });
+
+  it('allows extra CORS request headers in the preflight, besides the built-in ones', async () => {
+    const app = await createApp({ clientOrigins: 'https://a.io', extraCorsHeaders: ['x-company-id'] });
+    const res = await request(app.getHttpServer())
+      .options('/plain')
+      .set('Origin', 'https://a.io')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'x-company-id, authorization');
+    const allowed = String(res.headers['access-control-allow-headers']).toLowerCase();
+    expect(allowed).toContain('x-company-id');
+    expect(allowed).toContain('authorization');
     await app.close();
   });
 

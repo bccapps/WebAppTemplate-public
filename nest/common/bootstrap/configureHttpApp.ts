@@ -26,6 +26,20 @@ export interface HttpAppOptions {
   jsonLimit?: string;
   /** Body size limit of the raw-body routes. Default `50mb`. */
   rawBodyLimit?: string;
+  /** Request headers allowed by CORS in addition to the built-in ones (e.g. `x-company-id`). Default none. */
+  extraCorsHeaders?: string[];
+  /**
+   * Global `ValidationPipe`. Default `{ whitelist: true, transform: true }`; each field given overrides its default.
+   * `false` registers no global pipe (the app validates by itself, or a whitelist would strip fields it relies on).
+   */
+  validation?: false | ValidationOptions;
+}
+
+/** Subset of the `ValidationPipe` options exposed by {@link HttpAppOptions.validation}. */
+export interface ValidationOptions {
+  whitelist?: boolean;
+  transform?: boolean;
+  forbidNonWhitelisted?: boolean;
 }
 
 export type HttpAppEnv = Record<string, string | undefined>;
@@ -37,8 +51,13 @@ export interface ResolvedHttpAppOptions {
   rawBodyPaths: string[];
   jsonLimit: string;
   rawBodyLimit: string;
+  allowedHeaders: string[];
+  /** Options of the global validation pipe, `false` when none is registered. */
+  validation: false | ValidationOptions;
 }
 
+const BASE_CORS_HEADERS = ['Content-Type', 'Authorization', 'x-crypt-session', 'x-crypt-accept-encoding'];
+const DEFAULT_VALIDATION: ValidationOptions = { whitelist: true, transform: true };
 const DEFAULT_RAW_BODY_PATHS = ['/webhook'];
 
 /** Splits a comma-separated list, trimming blanks and dropping empty entries. */
@@ -81,6 +100,8 @@ export function resolveHttpAppOptions(options: HttpAppOptions = {}, env: HttpApp
     rawBodyPaths: options.rawBodyPaths ?? (envPaths.length > 0 ? envPaths : DEFAULT_RAW_BODY_PATHS),
     jsonLimit: options.jsonLimit ?? '5mb',
     rawBodyLimit: options.rawBodyLimit ?? '50mb',
+    allowedHeaders: [...new Set([...BASE_CORS_HEADERS, ...(options.extraCorsHeaders ?? []).map((h) => h.trim()).filter(Boolean)])],
+    validation: options.validation === false ? false : { ...DEFAULT_VALIDATION, ...options.validation },
   };
 }
 
@@ -124,7 +145,7 @@ function rawBodyMiddleware(paths: string[], limit: string) {
 
 /**
  * Applies the shared HTTP hardening to a Nest application: proxy trust, security headers, CORS,
- * body limits with raw-body capture, and the global validation pipe.
+ * body limits with raw-body capture, and the global validation pipe (`validation: false` skips it).
  *
  * Must run BEFORE `app.init()`: the middlewares have to sit ahead of Nest's own parsers and of the router
  * (CORS preflights would otherwise 404). Throws (instead of exiting) on an unsafe configuration; `main.ts`
@@ -140,12 +161,12 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions 
   app.enableCors({
     origin: corsOrigin(resolved.allowedOrigins),
     credentials: !wildcard,
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-crypt-session', 'x-crypt-accept-encoding'],
+    allowedHeaders: resolved.allowedHeaders,
     exposedHeaders: ['x-crypt-encrypted', 'x-crypt-version', 'x-crypt-session'],
   });
   app.use(rawBodyMiddleware(resolved.rawBodyPaths, resolved.rawBodyLimit));
   app.use(bodyParser.json({ limit: resolved.jsonLimit }));
   app.use(bodyParser.urlencoded({ limit: resolved.jsonLimit, extended: true }));
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  if (resolved.validation) app.useGlobalPipes(new ValidationPipe(resolved.validation));
   return resolved;
 }

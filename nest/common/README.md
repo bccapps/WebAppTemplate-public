@@ -419,7 +419,7 @@ Exemples :
 
 ## Démarrage HTTP (`bootstrap/`)
 
-`configureHttpApp(app, options?)` est appelée par `template/back/src/main.ts` **avant `app.init()`** (les middlewares doivent précéder les parseurs de Nest et le routeur, sinon un preflight CORS répond 404) ; une app qui a un `main.ts` personnalisé l'appelle de la même façon. Elle applique, dans l'ordre : `trust proxy`, `helmet` (CSP désactivée : l'API sert du JSON et Swagger, le front pose sa propre CSP), CORS, capture du `rawBody`, limites de corps, `ValidationPipe({ whitelist: true, transform: true })` global. Elle **lève** une erreur (au lieu de quitter) sur une configuration dangereuse : `main.ts` laisse le rejet de `bootstrap()` arrêter le processus. Elle retourne les options résolues. `resolveListenHost()` renvoie l'hôte d'écoute.
+`configureHttpApp(app, options?)` est appelée par `template/back/src/main.ts` **avant `app.init()`** (les middlewares doivent précéder les parseurs de Nest et le routeur, sinon un preflight CORS répond 404) ; une app qui a un `main.ts` personnalisé l'appelle de la même façon. Elle applique, dans l'ordre : `trust proxy`, `helmet` (CSP désactivée : l'API sert du JSON et Swagger, le front pose sa propre CSP), CORS, capture du `rawBody`, limites de corps, `ValidationPipe({ whitelist: true, transform: true })` global (désactivable, voir ci-dessous). Elle **lève** une erreur (au lieu de quitter) sur une configuration dangereuse : `main.ts` laisse le rejet de `bootstrap()` arrêter le processus. Elle retourne les options résolues. `resolveListenHost()` renvoie l'hôte d'écoute.
 
 | Variable | Défaut | Effet |
 | --- | --- | --- |
@@ -428,7 +428,14 @@ Exemples :
 | `TRUST_PROXY` | `1` en production, désactivé sinon | `true`, `false`, nombre de sauts ou nom de sous-réseau (`loopback`). Nécessaire pour un `req.ip` correct derrière nginx. |
 | `RAW_BODY_PATHS` | `/webhook` | Fragments de chemin dont le corps JSON est aussi disponible en `req.rawBody` (signatures de webhooks), limite 50 Mo. Correspondance par sous-chaîne sur le chemin sans query string. Les autres routes : 5 Mo. |
 
-Limites ajustables par option (`jsonLimit`, `rawBodyLimit`). Tests : `bootstrap/configureHttpApp.spec.ts`.
+Limites ajustables par option (`jsonLimit`, `rawBodyLimit`).
+
+| Option | Défaut | Effet |
+| --- | --- | --- |
+| `extraCorsHeaders` | aucun | En-têtes de requête ajoutés à `allowedHeaders` du CORS (ex. `['x-company-id']`), en plus de `Content-Type`, `Authorization`, `x-crypt-session`, `x-crypt-accept-encoding`. Une app n'a plus besoin de réécrire `enableCors`. |
+| `validation` | `{ whitelist: true, transform: true }` | Options du `ValidationPipe` global (`whitelist`, `transform`, `forbidNonWhitelisted`) ; les champs donnés remplacent les défauts. `false` : aucun pipe global (une app sans `ValidationPipe` à migrer, dont les DTO sans décorateurs perdraient leurs champs sous `whitelist`). |
+
+Tests : `bootstrap/configureHttpApp.spec.ts`.
 
 ### Servir le front (`serveFrontend`)
 
