@@ -114,7 +114,10 @@ if [[ "${MODE}" == "users-only" ]]; then
   for m in commerce infra; do
     if [[ -e "${APP}/back/src/modules_shared/${m}" ]]; then echo "${m} must be pruned from back/src/modules_shared" >&2; exit 1; fi
   done
-  grep -q "./user/plugin" "${APP}/back/src/modules_shared/plugins.generated.ts" || { echo "user plugin not wired" >&2; exit 1; }
+  # The fake private library's `user` stand-in has no plugin.ts: only check the real one.
+  if [[ -n "${SANDBOX_PRIVATE:-}" ]]; then
+    grep -q "./user/plugin" "${APP}/back/src/modules_shared/plugins.generated.ts" || { echo "user plugin not wired" >&2; exit 1; }
+  fi
 fi
 
 # Entity autoloading through the .libs symlinks, in the two modes: TypeScript sources
