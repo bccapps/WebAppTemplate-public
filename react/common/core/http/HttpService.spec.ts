@@ -26,7 +26,7 @@ vi.mock('../../services/CryptService', () => ({
 vi.mock('axios', () => ({ default: vi.fn() }));
 
 import axios from 'axios';
-import { httpService } from './HttpService';
+import { httpService, toUploadProgress } from './HttpService';
 
 const mockedAxios = axios as unknown as ReturnType<typeof vi.fn>;
 
@@ -269,5 +269,76 @@ describe('HttpService — streamGet (SSE, GET, no transport encryption)', () => 
     });
     expect(refresher).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls[0][1].headers['Authorization']).toBe('Bearer remote-token');
+  });
+});
+
+describe('toUploadProgress', () => {
+  it('computes a rounded percentage from loaded/total', () => {
+    expect(toUploadProgress({ loaded: 1, total: 3 })).toEqual({ loaded: 1, total: 3, percent: 33 });
+  });
+
+  it('clamps above 100 and reports null while the total is unknown', () => {
+    expect(toUploadProgress({ loaded: 12, total: 10 }).percent).toBe(100);
+    expect(toUploadProgress({ loaded: 5 })).toEqual({ loaded: 5, total: null, percent: null });
+    expect(toUploadProgress({ loaded: 5, total: 0 }).percent).toBeNull();
+  });
+});
+
+describe('HttpService.upload', () => {
+  beforeEach(() => {
+    mockedAxios.mockReset();
+    httpService.setTokenRefresher(async () => true, () => false, () => false);
+  });
+
+  it('posts the FormData with per-request headers, the abort signal and no JSON Content-Type', async () => {
+    mockedAxios.mockResolvedValue(fakeSuccess({ id: 7 }));
+    const form = new FormData();
+    form.append('file', new Blob(['x']), 'a.txt');
+    const { signal } = new AbortController();
+
+    const result = await toPromise<{ id: number }>(
+      httpService.upload('/api/files', form, { headers: { 'x-company-id': '3' }, signal }),
+    );
+
+    expect(result).toEqual({ id: 7 });
+    const config = mockedAxios.mock.calls[0][0];
+    expect(config.method).toBe('post');
+    expect(config.data).toBe(form);
+    expect(config.signal).toBe(signal);
+    expect(config.headers).toEqual({ 'x-company-id': '3' });
+  });
+
+  it('forwards real progress events through onProgress', async () => {
+    const onProgress = vi.fn();
+    mockedAxios.mockImplementation(async (config: { onUploadProgress: (e: object) => void }) => {
+      config.onUploadProgress({ loaded: 50, total: 200 });
+      return fakeSuccess({});
+    });
+
+    await toPromise(httpService.upload('/api/files', new FormData(), { onProgress }));
+
+    expect(onProgress).toHaveBeenCalledWith({ loaded: 50, total: 200, percent: 25 });
+  });
+
+  it('uses the registered API token for its prefix, but lets an explicit Authorization header win', async () => {
+    mockedAxios.mockResolvedValue(fakeSuccess({}));
+    httpService.registerApiToken('https://remote.example/', 'remote-token');
+
+    await toPromise(httpService.upload('https://remote.example/up', new FormData()));
+    await toPromise(
+      httpService.upload('https://remote.example/up', new FormData(), { headers: { Authorization: 'Bearer mine' } }),
+    );
+
+    expect(mockedAxios.mock.calls[0][0].headers.Authorization).toBe('Bearer remote-token');
+    expect(mockedAxios.mock.calls[1][0].headers.Authorization).toBe('Bearer mine');
+  });
+
+  it('routes a failure to the error callback', async () => {
+    mockedAxios.mockRejectedValue({ response: { status: 500, data: { message: 'boom' } }, message: 'x', config: {} });
+
+    await expect(toPromise(httpService.upload('/api/files', new FormData()))).rejects.toMatchObject({
+      message: 'boom',
+      statusCode: 500,
+    });
   });
 });

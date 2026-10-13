@@ -32,5 +32,21 @@
   "common.admin.tokenGate.invalid": "Clé d'administration invalide.",
   "common.admin.tokenGate.logout": "Verrouiller l'administration",
   "common.nav.sidebar.collapse": "Réduire le menu",
-  "common.nav.sidebar.expand": "Déplier le menu"
+  "common.nav.sidebar.expand": "Déplier le menu",
+  "common.ui.confirm.confirm": "Confirmer",
+  "common.ui.confirm.cancel": "Annuler",
+  "common.ui.infoTip.label": "Aide",
+  "common.ui.infoTip.labelWithTitle": "Aide : {0}",
+  "common.ui.help.tip": "Conseil :",
+  "common.ui.progress.label": "Progression",
+  "common.ui.progress.preparing": "Préparation…",
+  "common.ui.progress.remaining": "{0} restantes",
+  "common.ui.dropzone.prompt": "Déposez un fichier ici, ou cliquez pour en choisir un",
+  "common.ui.dropzone.promptMultiple": "Déposez des fichiers ici, ou cliquez pour les choisir",
+  "common.ui.dropzone.release": "Relâchez pour ajouter",
+  "common.ui.dropzone.reject.type": "Ce type de fichier n'est pas pris en charge.",
+  "common.ui.dropzone.reject.size": "Ce fichier est trop volumineux.",
+  "common.ui.dropzone.reject.count": "Un seul fichier peut être ajouté à la fois.",
+  "common.ui.schemaForm.reset": "Valeurs par défaut",
+  "common.ui.schemaForm.advanced": "Avancé"
 }

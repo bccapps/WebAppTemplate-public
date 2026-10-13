@@ -13,7 +13,7 @@ import { HttpResult } from './HttpResult';
 import { cryptService } from '../../services/CryptService';
 import { TRANSPORT_SESSION_HEADER } from '../../constants/crypt.constants';
 
-type HttpRequestOptions = {
+export type HttpRequestOptions = {
   skipTransport?: boolean;
   /** Set to true for requests that must send or receive cookies (cross-origin cookie flows). */
   withCredentials?: boolean;
@@ -33,6 +33,25 @@ type HttpRequestOptions = {
    */
   dedupe?: boolean;
 };
+
+/** Real upload progress. `percent` is null while the browser does not know the total size. */
+export type UploadProgress = { loaded: number; total: number | null; percent: number | null };
+
+export type UploadOptions = HttpRequestOptions & {
+  /** Per-request headers (e.g. a tenant id). Never set `Content-Type`: the browser adds the multipart boundary. */
+  headers?: Record<string, string>;
+  /** Called with the bytes actually sent so far. */
+  onProgress?: (progress: UploadProgress) => void;
+  /** Aborts the request; the `HttpResult` error callback then receives the cancellation. */
+  signal?: AbortSignal;
+};
+
+/** Converts an axios upload event into an `UploadProgress` (percent clamped to 0-100, null if total unknown). */
+export function toUploadProgress(event: { loaded: number; total?: number }): UploadProgress {
+  const total = event.total && event.total > 0 ? event.total : null;
+  const percent = total === null ? null : Math.min(100, Math.max(0, Math.round((event.loaded * 100) / total)));
+  return { loaded: event.loaded, total, percent };
+}
 
 /** Non-2xx answer of a streaming request; `status` lets callers tell "module absent" (404) from a failure. */
 export class StreamHttpError extends Error {
@@ -301,6 +320,33 @@ class HttpService {
       });
     return httpResult;
   };
+  /**
+   * upload — multipart POST with per-request headers, real progress and cancellation.
+   * Goes through the same pipeline as `post` (API-token prefixes, in-memory Bearer, transport session,
+   * pre-emptive refresh, one retry on 401 — the retry resends the same `FormData`). An `Authorization`
+   * header passed in `options.headers` wins over the registered token, as for every other call.
+   */
+  upload = (url: string, formData: FormData, options: UploadOptions = {}): HttpResult => {
+    const { headers, onProgress, signal, ...requestOptions } = options;
+    const promise = this.runRequest(
+      {
+        method: 'post',
+        url,
+        data: formData,
+        headers,
+        signal,
+        responseType: 'json',
+        onUploadProgress: onProgress ? (event) => onProgress(toUploadProgress(event)) : undefined,
+      },
+      requestOptions,
+    );
+    const httpResult: HttpResult = new HttpResult();
+    promise
+      .then((axiosResponse: AxiosResponse<any, any>) => this.treatResponse(httpResult, axiosResponse))
+      .catch((axiosError: AxiosError) => this.treatError(httpResult, axiosError));
+    return httpResult;
+  };
+
   /**
    * treat the axios response
    * @param httpResult

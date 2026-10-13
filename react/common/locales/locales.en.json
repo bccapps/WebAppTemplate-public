@@ -32,5 +32,21 @@
   "common.admin.tokenGate.invalid": "Invalid admin key.",
   "common.admin.tokenGate.logout": "Lock admin",
   "common.nav.sidebar.collapse": "Collapse menu",
-  "common.nav.sidebar.expand": "Expand menu"
+  "common.nav.sidebar.expand": "Expand menu",
+  "common.ui.confirm.confirm": "Confirm",
+  "common.ui.confirm.cancel": "Cancel",
+  "common.ui.infoTip.label": "Help",
+  "common.ui.infoTip.labelWithTitle": "Help: {0}",
+  "common.ui.help.tip": "Tip:",
+  "common.ui.progress.label": "Progress",
+  "common.ui.progress.preparing": "Preparing…",
+  "common.ui.progress.remaining": "{0} remaining",
+  "common.ui.dropzone.prompt": "Drop a file here, or click to choose one",
+  "common.ui.dropzone.promptMultiple": "Drop files here, or click to choose them",
+  "common.ui.dropzone.release": "Release to add",
+  "common.ui.dropzone.reject.type": "This file type is not supported.",
+  "common.ui.dropzone.reject.size": "This file is too large.",
+  "common.ui.dropzone.reject.count": "Only one file can be added at a time.",
+  "common.ui.schemaForm.reset": "Defaults",
+  "common.ui.schemaForm.advanced": "Advanced"
 }
