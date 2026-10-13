@@ -87,7 +87,7 @@ describe('configuration seeding on a fresh SQLite database', () => {
   it('seeds the same schema twice concurrently (two registrations of one module)', async () => {
     const modules = new ModuleConfigSeederService(repo);
     await expect(Promise.all([modules.seedSchema(SCHEMA), modules.seedSchema(SCHEMA)])).resolves.toBeDefined();
-    expect(await repo.count()).toBe(2);
+    expect(await repo.count()).toBe(1); // shared_key belongs to defaultConfig.ts and is skipped by the module seeder
   });
 });
 
