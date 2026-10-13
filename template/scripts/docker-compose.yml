@@ -175,6 +175,25 @@ services:
                 proxy_next_upstream error timeout http_502 http_503 http_504;
                 proxy_next_upstream_tries 2;
             }
+            # AH: AgentHub — git smart-HTTP remote hosted by the back (a runner next to the hub reaches it
+            # here, over loopback). A push carries whole packfiles: no 50 MB cap, request body streamed
+            # (never spooled), transfers not cut at 300 s. Same settings as front/nginx.conf.
+            location /api/v1/agenthub/git/ {
+                if (-f /etc/nginx/maintenance.flag) {
+                    return 503;
+                }
+                proxy_pass http://backend;
+                proxy_http_version 1.1;
+                proxy_set_header Host \$$host;
+                proxy_set_header X-Real-IP \$$remote_addr;
+                proxy_set_header X-Forwarded-For \$$proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto \$$scheme;
+                client_max_body_size 4g;
+                proxy_request_buffering off;
+                proxy_buffering off;
+                proxy_read_timeout 3600s;
+                proxy_send_timeout 3600s;
+            }
             error_page 503 @maintenance;
             location @maintenance {
                 default_type application/json;
