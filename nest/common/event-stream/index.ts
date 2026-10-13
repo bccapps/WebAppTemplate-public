@@ -9,7 +9,7 @@
 
 export * from './types';
 export * from './audience';
-export { EventStreamService, type ConnectionSink } from './EventStreamService';
+export { EventStreamService, type ConnectionSink, type RemoteEventHandler } from './EventStreamService';
 export { EventStreamController } from './EventStreamController';
 export { EVENT_STREAM_OPTIONS, type EventStreamOptions } from './constants';
 export type { EventTransport, TransportHandlers } from './EventTransport';

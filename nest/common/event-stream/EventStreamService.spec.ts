@@ -340,6 +340,44 @@ describe('EventStreamService transports', () => {
     expect(a.events()).toEqual([{ topic: 'x.a', type: 't' }]);
   });
 
+  it('delivers other processes\' events to server-side subscribers, never its own, and listens only while subscribed', async () => {
+    const bus = new InMemoryBus();
+    const api = makeService({}, bus);
+    const worker = makeService({}, bus);
+    const received: unknown[] = [];
+    const off = api.subscribeRemote('x.logs:*', (event, audience) => received.push([event, audience]));
+    worker.publish('x.logs:a', { type: 'log', data: { n: 1 } }, { admin: true });
+    worker.publish('x.other', { type: 'log' }, { admin: true });
+    api.publish('x.logs:a', { type: 'log', data: { n: 2 } }, { admin: true });
+    expect(received).toEqual([[{ topic: 'x.logs:a', type: 'log', data: { n: 1 } }, { admin: true }]]);
+    off();
+    worker.publish('x.logs:a', { type: 'log', data: { n: 3 } }, { admin: true });
+    expect(received).toHaveLength(1);
+    expect(bus.listeners.size).toBe(0);
+    await api.onModuleDestroy();
+    await worker.onModuleDestroy();
+  });
+
+  it('keeps listening while either a connection or a subscription remains, and isolates failing handlers', async () => {
+    const bus = new InMemoryBus();
+    const api = makeService({}, bus);
+    const worker = makeService({}, bus);
+    const good: unknown[] = [];
+    api.subscribeRemote('x.a', () => {
+      throw new Error('boom');
+    });
+    const off = api.subscribeRemote('x.a', (event) => good.push(event.type));
+    const conn = await api.openConnection(alice, ['x.a'], makeSink());
+    off();
+    expect(bus.listeners.size).toBe(1);
+    conn.close();
+    expect(bus.listeners.size).toBe(1); // the failing subscription is still registered
+    worker.publish('x.a', { type: 'late' }, { public: true });
+    expect(good).toEqual([]);
+    await api.onModuleDestroy();
+    await worker.onModuleDestroy();
+  });
+
   it('ends open connections on shutdown', async () => {
     const service = makeService();
     const a = makeSink();

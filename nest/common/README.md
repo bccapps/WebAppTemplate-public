@@ -592,6 +592,20 @@ un appel par intervalle et par sujet quelle que soit le nombre d'onglets, jamais
 sujet, erreurs journalisées sans arrêter la boucle. Ses événements vont aux seuls abonnés **de ce processus** (pas de
 Redis) et n'ont pas de filtre d'audience : `authorize` est l'unique barrière, d'où son caractère obligatoire.
 
+### Recevoir côté serveur (alimenter un état par processus)
+
+```ts
+const off = this.events.subscribeRemote('dataIngestion.logs:*', (event, audience) => this.buffer.append(event));
+```
+
+`subscribeRemote(pattern, handler): () => void` : le processus reçoit les événements **publiés par les autres processus**
+sur les sujets correspondants (sujet exact ou `*` final), avec leur audience, **sans navigateur connecté**. Tant qu'un
+abonnement (ou une connexion) existe, le processus reste abonné au transport (Redis : `SUBSCRIBE`) ; un worker qui
+n'a ni connexion ni abonnement n'écoute toujours pas. Les événements publiés par le processus lui-même ne sont **jamais**
+livrés (pas de doublon : le publieur détient déjà la donnée). Une exception du gestionnaire est journalisée et ignorée.
+Sans Redis (transport en mémoire, un seul processus) rien n'arrive jamais : l'état local suffit. Usage : un état en
+mémoire propre à chaque réplique qui doit refléter ce que fait un autre processus (tampon de journaux d'ingestion).
+
 ### Flux HTTP
 
 `GET /api/v1/events/stream?topics=a.b,c.d:1` (`@Sse`, `@NoTransportCrypt()` : Nest envoie les en-têtes SSE au premier

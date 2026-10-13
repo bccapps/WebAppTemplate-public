@@ -68,6 +68,9 @@ interface Connection {
   sink: ConnectionSink;
 }
 
+/** A server-side subscription to events published by other processes (see `subscribeRemote`). */
+export type RemoteEventHandler = (event: StreamEvent, audience: EventAudience) => void;
+
 interface Registered<T> {
   pattern: string;
   match: (topic: string) => TopicMatch | null;
@@ -98,6 +101,7 @@ export class EventStreamService implements OnModuleInit, OnModuleDestroy {
   private readonly authorizers: Registered<TopicAuthorizer>[] = [];
   private readonly producers: Registered<TopicProducer>[] = [];
   private readonly throttles = new Map<string, ThrottleSlot>();
+  private readonly remoteSubscribers: Registered<RemoteEventHandler>[] = [];
   private readonly runner = new TopicProducerRunner((topic, event) => this.deliverToTopic(topic, event));
   private readonly replay: ReplayBuffer;
   private transport: EventTransport = new InMemoryTransport();
@@ -130,6 +134,7 @@ export class EventStreamService implements OnModuleInit, OnModuleDestroy {
     this.throttles.clear();
     for (const connection of [...this.connections]) connection.sink.end();
     this.connections.clear();
+    this.remoteSubscribers.length = 0;
     await this.transport.stop();
   }
 
@@ -142,7 +147,7 @@ export class EventStreamService implements OnModuleInit, OnModuleDestroy {
       onEnvelope: (envelope) => this.onTransportEnvelope(envelope),
       onState: (state) => this.onTransportState(state),
     });
-    if (this.connections.size > 0) void transport.listen();
+    if (this.listenerCount() > 0) void transport.listen();
     this.logger.log(`event transport: ${transport.name}`);
   }
 
@@ -229,6 +234,25 @@ export class EventStreamService implements OnModuleInit, OnModuleDestroy {
     return () => this.removeProducer(entry);
   }
 
+  /**
+   * Server-side subscription to the events other processes publish on topics matching `pattern` (exact topic or
+   * trailing `*`). The handler receives every such event with its audience, whether or not a browser is connected:
+   * the process keeps listening on the transport while at least one subscription or connection exists. Events this
+   * process publishes itself are never delivered (the publisher already holds the data: no duplicates). Handler
+   * errors are logged and swallowed. Returns an unsubscribe function.
+   */
+  subscribeRemote(pattern: string, handler: RemoteEventHandler): () => void {
+    const entry = { pattern, match: compileTopicPattern(pattern), value: handler };
+    this.remoteSubscribers.push(entry);
+    if (this.listenerCount() === 1) void this.transport.listen();
+    return () => {
+      const index = this.remoteSubscribers.indexOf(entry);
+      if (index < 0) return;
+      this.remoteSubscribers.splice(index, 1);
+      if (this.listenerCount() === 0) void this.transport.unlisten();
+    };
+  }
+
   // ───────────────────────────── connections ─────────────────────────────
 
   /**
@@ -299,6 +323,23 @@ export class EventStreamService implements OnModuleInit, OnModuleDestroy {
     if (envelope.origin === this.instanceId || !TOPIC_PATTERN.test(envelope.event.topic)) return;
     if (!hasAudience(envelope.audience)) return;
     this.relay(envelope);
+    this.notifyRemoteSubscribers(envelope);
+  }
+
+  private notifyRemoteSubscribers(envelope: EventEnvelope): void {
+    for (const subscriber of [...this.remoteSubscribers]) {
+      if (!subscriber.match(envelope.event.topic)) continue;
+      try {
+        subscriber.value(envelope.event, envelope.audience);
+      } catch (err) {
+        this.logger.warn(`remote subscriber failed for ${envelope.event.topic}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  /** What keeps the transport listening: open browser connections and server-side subscriptions. */
+  private listenerCount(): number {
+    return this.connections.size + this.remoteSubscribers.length;
   }
 
   private onTransportState(state: TransportState): void {
@@ -361,7 +402,7 @@ export class EventStreamService implements OnModuleInit, OnModuleDestroy {
 
   private attach(connection: Connection): void {
     this.connections.add(connection);
-    if (this.connections.size === 1) void this.transport.listen();
+    if (this.listenerCount() === 1) void this.transport.listen();
     for (const topic of connection.topics) {
       const refs = (this.topicRefs.get(topic) ?? 0) + 1;
       this.topicRefs.set(topic, refs);
@@ -381,7 +422,7 @@ export class EventStreamService implements OnModuleInit, OnModuleDestroy {
         this.runner.stop(topic);
       }
     }
-    if (this.connections.size === 0) void this.transport.unlisten();
+    if (this.listenerCount() === 0) void this.transport.unlisten();
   }
 
   private replayTo(connection: Connection, lastEventId: string): void {
