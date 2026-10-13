@@ -50,7 +50,7 @@ function Router() {
   return (
     <>
       <ToastZone />
-      <Suspense fallback={<Loader />}>
+      <Suspense fallback={<Loader logoSrc="/favicon.svg" />}>
         <Routes>
           {resolvedRoutes.map((r) => (
             <Route key={r.path} path={r.path} element={r.element} />

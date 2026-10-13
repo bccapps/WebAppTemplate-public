@@ -188,6 +188,7 @@ Manual test procedures and TODO lists are optional: create them only when the us
 | `cd front && npx vitest run <file>` | one front spec (standalone, node environment) | _to measure_ |
 | `npm run i18n:check` | missing locale keys | _to measure_ |
 
+- **Template assets:** the template references no `images/logo-main.*` file; header, landing page and route loader use `public/favicon.svg` (replace it with the project logo). The embedded Node of the desktop app is pinned in `template/scripts/desktop/lib.mjs`: latest 22.x published at least two weeks ago.
 - **Front Vitest config:** `front/vitest.config.ts` is `export default createVitestConfig()` from `front/vitestConfig.ts` (linked from the template, see `config-links.json`). It sets `resolve.preserveSymlinks: true`, without which the relative imports between linked modules (`../common/...` in a spec of `modules_shared/user`) cannot be resolved; never write a Vitest config of your own without it.
 - **While iterating:** the cheap type-check/lint + only the spec files you touched.
 - **Before committing:** the full test suite and `i18n:check` once.

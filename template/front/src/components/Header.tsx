@@ -69,7 +69,7 @@ export function Header({ alertsCount = 0 }: HeaderProps) {
         }}
       >
         <Link to="/" style={{ display: 'inline-flex', alignItems: 'center' }}>
-          <img style={{ height: 44, width: 'auto' }} src="/images/logo-main.svg" alt="Logo" />
+          <img style={{ height: 44, width: 'auto' }} src="/favicon.svg" alt="Logo" />
         </Link>
         <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexGrow: 1, ml: 2, gap: 2, height: '100%' }}>
           <Title />

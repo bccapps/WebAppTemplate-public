@@ -139,7 +139,7 @@ Build the project first (`back/dist`, `front/dist`).
 | `back/src/...` | locale JSONs (`src/locales`, `modules*/**/locales/*.json`), same collection as `back/Dockerfile` |
 | `back/node_modules` | `npm ci --omit=dev --ignore-scripts` (with `--os/--cpu` when the target is another platform) |
 | `front/dist` (`resources.frontDir`) | built front |
-| `runtime/node/node[.exe]` | official Node of the pinned version (`NODE_VERSION` in `lib.mjs`, or `packaging.nodeVersion`, or `--node-version`), SHA-256 checked against the release `SHASUMS256.txt` (the GPG signature of that file is not verified) |
+| `runtime/node/node[.exe]` | official Node of the pinned version (`NODE_VERSION` in `lib.mjs`, or `packaging.nodeVersion`, or `--node-version`); the pin is the latest 22.x published at least two weeks earlier, to be bumped on that rule, SHA-256 checked against the release `SHASUMS256.txt` (the GPG signature of that file is not verified) |
 | `packaging.extraResources` | the folders you declare, e.g. a sidecar engine |
 
 `better-sqlite3`: `prebuild-install --runtime node --target <node version> --platform <os> --arch <cpu>` is run in its

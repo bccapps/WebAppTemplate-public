@@ -44,7 +44,7 @@ export function LandingPage({ onLaunch }: LandingPageProps) {
       <div className="landing-background-grid" />
       <header className="lp-header">
         <div className="lp-logo">
-          <img src="/images/logo-main.png" alt="Logo" className="lp-logo-img" />
+          <img src="/favicon.svg" alt="Logo" className="lp-logo-img" />
           <Title className="lp-logo-title" />
         </div>
         <button type="button" className="lp-cta" onClick={handleLaunch} aria-label="Launch the application">

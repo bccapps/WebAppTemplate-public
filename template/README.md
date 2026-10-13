@@ -187,7 +187,7 @@ selling without accounts, a module that does not support the chosen database, un
 
 Every project gets `front/public/` (copied once, then project-owned): `robots.txt` (allow all), `_redirects` (SPA fallback
 `/*  /index.html  200` for Cloudflare Pages), `_headers` (`index.html` never cached, `/assets/*` immutable) and a neutral
-`favicon.svg` (replace it with your logo). `front/src/main.tsx` installs a **one-shot reload on `vite:preloadError`** (a tab
+`favicon.svg` (replace it with your logo: the header, the landing page and the route loader of the template use it, there is no `images/logo-main.*` file). `front/src/main.tsx` installs a **one-shot reload on `vite:preloadError`** (a tab
 opened before a deploy asks for a chunk the new deploy removed): `installPreloadErrorReload` from
 `common/utils/preloadReload.ts`, guarded against loops through `sessionStorage` (see `react/common/README.md`).
 

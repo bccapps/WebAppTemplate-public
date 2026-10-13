@@ -17,8 +17,8 @@ import { createHash } from 'crypto';
 import { closeSync, createReadStream, lstatSync, openSync, readSync, readdirSync, statSync } from 'fs';
 import path from 'path';
 
-/** Node release embedded in the app. Pinned (not "latest") so a build is reproducible; override with `--node-version`. */
-export const NODE_VERSION = '22.20.0';
+/** Node release embedded in the app. Pinned (not "latest") so a build is reproducible; override with `--node-version`. Pick the latest 22.x published at least two weeks ago (`date` field of https://nodejs.org/dist/index.json); 22.23.3 dates from 2026-09-23. */
+export const NODE_VERSION = '22.23.3';
 
 /** Native modules whose binary the build fetches for the target (`better-sqlite3`, via `prebuild-install`). */
 export const HANDLED_NATIVE_MODULES = ['better-sqlite3'];
