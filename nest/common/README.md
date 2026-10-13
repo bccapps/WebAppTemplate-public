@@ -520,8 +520,8 @@ Helpers purs exportés : `allowedHostPorts`, `isLocalTrustEnabled`, `isLoopbackA
 Remplace le polling : le serveur **publie**, le navigateur reçoit sur un seul flux par onglet. Les événements sont surtout
 des **invalidations** (`{ topic, type, id?, version?, data? }`, `data` petit : progression, statut) ; le client relit par
 REST quand il faut le détail, donc le contrôle d'accès reste celui de l'API. Règle du gabarit : **pas de polling pour une
-mise à jour en direct, publier via `EventStreamService`**. Le côté React (`useServerEvents`, `useLiveResource`) arrive
-avec C2.
+mise à jour en direct, publier via `EventStreamService`**. Le côté React (`useServerEvents`, `useLiveResource`, `EventStreamClient`) est décrit dans
+`react/common/README.md` (« Flux d'événements — `core/events/` »).
 
 ### Publier (services, tâches planifiées, workers)
 
@@ -581,7 +581,7 @@ Redis) et n'ont pas de filtre d'audience : `authorize` est l'unique barrière, d
 
 `GET /api/v1/events/stream?topics=a.b,c.d:1` (`@Sse`, `@NoTransportCrypt()` : Nest envoie les en-têtes SSE au premier
 message). L'authentification est celle de toute requête (Bearer d'un utilisateur, clé admin, `LOCAL_TRUST`) ; sans principal,
-**401**. `EventSource` ne sait pas envoyer `Authorization` : le client utilise `fetch` (C2).
+**401**. `EventSource` ne sait pas envoyer `Authorization` : le client utilise `fetch` (`HttpService.streamGet`, voir `react/common/README.md`).
 
 | Trame (`event:`) | Contenu |
 | --- | --- |

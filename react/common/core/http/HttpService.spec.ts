@@ -206,3 +206,68 @@ describe('HttpService — global maintenance detection (back-lb maintenance.flag
     expect(handler).toHaveBeenCalledWith(false);
   });
 });
+
+describe('HttpService — streamGet (SSE, GET, no transport encryption)', () => {
+  const okResponse = () => ({ ok: true, status: 200, body: {} as ReadableStream<Uint8Array> });
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal('fetch', fetchMock);
+    (mockedAxios as unknown as { defaults: unknown }).defaults = {
+      headers: { common: { Authorization: 'Bearer user-token' } },
+    };
+  });
+
+  it('sends a GET with the in-memory Bearer and caller headers', async () => {
+    httpService.setTokenRefresher(async () => true, () => true, () => false);
+    fetchMock.mockResolvedValue(okResponse());
+    const signal = new AbortController().signal;
+
+    await httpService.streamGet('/api/v1/events/stream?topics=a.b', { signal, headers: { 'Last-Event-ID': '9' } });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/v1/events/stream?topics=a.b');
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+    expect(init.signal).toBe(signal);
+    expect(init.headers).toEqual({ 'Last-Event-ID': '9', Authorization: 'Bearer user-token' });
+  });
+
+  it('refreshes pre-emptively when the token is stale, and notifies refresh listeners', async () => {
+    const refresher = vi.fn(async () => true);
+    httpService.setTokenRefresher(refresher, () => true, () => true);
+    const listener = vi.fn();
+    const off = httpService.onTokenRefreshed(listener);
+    fetchMock.mockResolvedValue(okResponse());
+
+    await httpService.streamGet('/api/v1/events/stream?topics=a.b');
+
+    expect(refresher).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledTimes(1);
+    off();
+  });
+
+  it('retries once on 401 after a refresh, then throws a StreamHttpError with the status', async () => {
+    const refresher = vi.fn(async () => true);
+    httpService.setTokenRefresher(refresher, () => true, () => false);
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 401 }).mockResolvedValueOnce({ ok: false, status: 404 });
+
+    await expect(httpService.streamGet('/api/v1/events/stream?topics=a.b')).rejects.toMatchObject({ status: 404 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(refresher).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses a registered API token instead of the user token and never self-heals', async () => {
+    const refresher = vi.fn(async () => true);
+    httpService.setTokenRefresher(refresher, () => true, () => true);
+    httpService.registerApiToken('https://remote.example/', 'remote-token');
+    fetchMock.mockResolvedValue({ ok: false, status: 401 });
+
+    await expect(httpService.streamGet('https://remote.example/api/v1/events/stream')).rejects.toMatchObject({
+      status: 401,
+    });
+    expect(refresher).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls[0][1].headers['Authorization']).toBe('Bearer remote-token');
+  });
+});

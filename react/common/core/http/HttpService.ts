@@ -34,7 +34,23 @@ type HttpRequestOptions = {
   dedupe?: boolean;
 };
 
+/** Non-2xx answer of a streaming request; `status` lets callers tell "module absent" (404) from a failure. */
+export class StreamHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${status}`);
+    this.name = 'StreamHttpError';
+  }
+}
+
+type StreamRequestInit = {
+  method: 'GET' | 'POST';
+  headers: Record<string, string>;
+  body?: string;
+  signal?: AbortSignal;
+};
+
 class HttpService {
+  private readonly tokenRefreshListeners = new Set<() => void>();
   private apiTokens: { prefix: string; token: string }[] = [];
   private globalUnauthorizedHandler: (() => void) | null = null;
   /** Called with `true` when a response carries the maintenance marker (503 + `{maintenance:
@@ -92,7 +108,11 @@ class HttpService {
     isAuthed: () => boolean,
     isTokenStale?: () => boolean,
   ): void {
-    this.tokenRefresher = refresher;
+    this.tokenRefresher = async () => {
+      const refreshed = await refresher();
+      if (refreshed) this.tokenRefreshListeners.forEach((listener) => listener());
+      return refreshed;
+    };
     this.isAuthedProvider = isAuthed;
     this.isTokenStaleProvider = isTokenStale ?? null;
   }
@@ -420,26 +440,49 @@ class HttpService {
    * `runRequest` (see `setTokenRefresher`), which native `fetch` doesn't get for free.
    */
   async streamFetch(url: string, body: unknown, signal?: AbortSignal): Promise<ReadableStream<Uint8Array>> {
-    return this.execStreamFetch(url, body, signal, false);
+    return this.execStream(
+      url,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal },
+      false,
+    );
   }
 
-  private async execStreamFetch(
+  /**
+   * streamGet — GET a long-lived stream (Server-Sent Events) and return the raw ReadableStream.
+   * Same token rules as `streamFetch` (API-token prefixes, in-memory Bearer, pre-emptive refresh,
+   * one retry on 401). Never encrypted by the transport layer: the SSE route is `@NoTransportCrypt()`.
+   * Rejects with a `StreamHttpError` (carrying `status`) on a non-2xx answer.
+   */
+  async streamGet(
     url: string,
-    body: unknown,
-    signal: AbortSignal | undefined,
-    retried: boolean,
+    options: { signal?: AbortSignal; headers?: Record<string, string> } = {},
   ): Promise<ReadableStream<Uint8Array>> {
-    const canSelfHeal =
+    return this.execStream(url, { method: 'GET', headers: { ...(options.headers ?? {}) }, signal: options.signal }, false);
+  }
+
+  /**
+   * Subscribe to successful access-token refreshes (any caller, including the pre-emptive and
+   * reactive refreshes above). Used by long-lived streams to reconnect with the new token.
+   * Returns the unsubscribe function.
+   */
+  onTokenRefreshed(listener: () => void): () => void {
+    this.tokenRefreshListeners.add(listener);
+    return () => {
+      this.tokenRefreshListeners.delete(listener);
+    };
+  }
+
+  private canSelfHeal(url: string): boolean {
+    return (
       this.tokenRefresher != null &&
       !this.isAuthEndpoint(url) &&
       this.getApiToken(url) === undefined &&
-      (this.isAuthedProvider == null || this.isAuthedProvider());
+      (this.isAuthedProvider == null || this.isAuthedProvider())
+    );
+  }
 
-    if (!retried && canSelfHeal && this.isTokenStaleProvider?.()) {
-      await this.tokenRefresher!();
-    }
-
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  private buildStreamHeaders(url: string, base: Record<string, string>): Record<string, string> {
+    const headers = { ...base };
     const apiToken = this.getApiToken(url);
     if (apiToken) {
       headers['Authorization'] = `Bearer ${apiToken}`;
@@ -447,14 +490,26 @@ class HttpService {
       const bearer = axios.defaults.headers.common['Authorization'];
       if (typeof bearer === 'string') headers['Authorization'] = bearer;
     }
+    return headers;
+  }
 
-    const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
+  private async execStream(
+    url: string,
+    init: StreamRequestInit,
+    retried: boolean,
+  ): Promise<ReadableStream<Uint8Array>> {
+    const canSelfHeal = this.canSelfHeal(url);
+    if (!retried && canSelfHeal && this.isTokenStaleProvider?.()) {
+      await this.tokenRefresher!();
+    }
+
+    const response = await fetch(url, { ...init, headers: this.buildStreamHeaders(url, init.headers) });
     if (!response.ok) {
       if (response.status === 401 && !retried && canSelfHeal) {
         const refreshed = await this.tokenRefresher!();
-        if (refreshed) return this.execStreamFetch(url, body, signal, true);
+        if (refreshed) return this.execStream(url, init, true);
       }
-      throw new Error(`HTTP ${response.status}`);
+      throw new StreamHttpError(response.status);
     }
     if (!response.body) throw new Error('No response body');
     return response.body;

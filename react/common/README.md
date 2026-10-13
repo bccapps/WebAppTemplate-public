@@ -148,6 +148,67 @@ capacité et gère les deux versions du format de payload :
 
 ---
 
+## Flux d'événements — `core/events/`
+
+Client React du flux SSE serveur (`GET /api/v1/events/stream`, voir « Flux d'événements serveur » dans
+`nest/common/README.md` pour le format des trames, les sujets et les audiences). Remplace le polling : le serveur
+publie des **invalidations**, le client relit par REST.
+
+- **`useServerEvents(topics, handler)`** : appelle `handler(event)` pour chaque événement des sujets tant que le
+  composant est monté. Le handler peut changer à chaque rendu sans réabonnement.
+- **`useLiveResource(fetcher, { topics, match?, fallbackPollMs, refetchOnResync? })`** : charge `fetcher()`, relit sur
+  événement correspondant (relectures regroupées sur 250 ms, jamais deux lectures simultanées), relit sur `resync`,
+  au retour de visibilité de l'onglet et à la sortie du mode `fallback`, et **interroge toutes les `fallbackPollMs`**
+  tant que le flux est en `fallback`. Renvoie `{ data, loading, error, refetch, streamState }`.
+- **`eventStreamClient`** (singleton, `EventStreamClient`) : une seule connexion par onglet. `subscribe(topics, handler,
+  { onResync? })` compte les abonnements par sujet et les regroupe (50 ms) ; la connexion est rouverte quand
+  l'ensemble des sujets change. `getState()` / `onStateChange()` : `connecting | open | fallback`.
+
+```tsx
+// Liste relue sur chaque changement ; polling toutes les 10 s seulement si le flux est indisponible.
+const { data: runs, loading } = useLiveResource(() => fetchRuns(), {
+  topics: ['tradingbot.runs'],
+  fallbackPollMs: 10_000,
+});
+
+// Réaction directe à un événement (progression), sans relecture.
+useServerEvents([`ocr.document:${companyId}`], (event) => {
+  if (event.type === 'status') setStatus(event.data?.['ocrStatus'] as string);
+});
+
+// Un seul document : ne relire que pour le bon identifiant.
+useLiveResource(() => fetchRun(id), {
+  topics: [`tradingbot.run:${id}`],
+  match: (e) => e.id === id,
+  fallbackPollMs: 5000,
+});
+```
+
+Comportement du client :
+
+- **Authentification** : `HttpService.streamGet(url, { signal, headers })` (`fetch` + `ReadableStream`, `EventSource`
+  ne sait pas envoyer `Authorization`) applique les règles de jeton de `streamFetch` (jeton API par préfixe,
+  rafraîchissement préventif, un nouvel essai sur 401), sans chiffrement de transport. L'erreur `StreamHttpError`
+  porte `status`. `HttpService.onTokenRefreshed(listener)` notifie chaque rafraîchissement réussi : le flux ouvert
+  est alors rouvert avec le nouveau jeton.
+- **Session** : l'événement `user` de `appSession` passant à `null` ferme le flux (pas de reconnexion) ; un changement
+  d'identité (`id`) le rouvre sans `Last-Event-ID`. L'URL est `getApiUrl()` + `/events/stream`.
+- **Reconnexion** : 1 s, 2 s, 4 s ... plafonnée à 30 s, facteur aléatoire +-20 % (`computeBackoff`), `Last-Event-ID`
+  renvoyé, valeur `retry:` du serveur respectée. Trame `expired` : reconnexion immédiate avec jeton rafraîchi (comptée
+  comme un échec si le flux a duré moins de 5 s). Trame `resync` : `onResync` des abonnés.
+- **`fallback`** : après 3 échecs consécutifs, sur 404 (module absent côté serveur : définitif jusqu'au prochain
+  changement de session) et tant que le serveur annonce un transport `degraded` (Redis injoignable). Les tentatives
+  continuent en arrière-plan après 3 échecs ; `ready` remet l'état à `open`.
+- **Analyseur SSE** maison (`SseParser`, `readSse`) : lignes multiples, commentaires, `id`, `event`, `retry`,
+  terminateurs `\n`, `\r`, `\r\n` coupés n'importe où.
+- Limites connues : les sujets refusés (`denied` de la trame `ready`) ne sont pas exposés ; une ressource dont le sujet
+  est refusé ne se met donc pas à jour (pas de repli automatique).
+
+Tests : `sseParser.spec.ts`, `EventStreamClient.spec.ts`, `liveResourceController.spec.ts` (logique des hooks, sans
+DOM) et la section `streamGet` de `core/http/HttpService.spec.ts`.
+
+---
+
 ## `ConfigurationService` / `LocaleService` — idempotent `init()`
 
 Both services guard `init()` with a `loaded` flag + a shared in-flight promise:
