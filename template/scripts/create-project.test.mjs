@@ -152,6 +152,34 @@ test('sqlite: generated back env and package.local.json (pure functions)', () =>
   assert.match(renderPlan({ ...answers, siteName: 'N', languages: ['en'], privateAccess: false }, { ids: ['common'], perStack: { nest: [], react: [] }, added: [] }, { byId: new Map(), byStack: {} }, '/x'), /Database\s+sqlite \(data\/notes.db/);
 });
 
+test('local trust: CLI flags, env values only without the user module, plan line', () => {
+  assert.deepEqual(answersFromCli(parseCli(['--local-trust', 'app'])), { projectName: 'app', localTrust: true });
+  assert.equal(answersFromCli(parseCli(['--no-local-trust'])).localTrust, false);
+  const answers = { projectName: 'notes', ports: { back: 3000, front: 5173 }, database: { engine: 'selfhosted', redis: false }, localTrust: true };
+  const env = backEnvValues(answers, { ids: ['common', 'database'] }, { back: {}, front: {} });
+  assert.equal(env.LOCAL_TRUST, 'true');
+  assert.equal(env.HOST, '127.0.0.1');
+  const withUser = backEnvValues(answers, { ids: ['common', 'user'] }, { back: {}, front: {} });
+  assert.equal('LOCAL_TRUST' in withUser, false, 'no effect with the user module');
+  assert.equal('HOST' in withUser, false);
+  const off = backEnvValues({ ...answers, localTrust: false }, { ids: ['common'] }, { back: {}, front: {} });
+  assert.equal('LOCAL_TRUST' in off, false);
+  assert.match(renderPlan({ ...answers, siteName: 'N', languages: ['en'], privateAccess: false }, { ids: ['common'], perStack: { nest: [], react: [] }, added: [] }, { byId: new Map(), byStack: {} }, '/x'), /Mode\s+local trust/);
+});
+
+test('local trust --dry-run: accepted without the user module, refused with it', () => {
+  const parent = mkdtempSync(path.join(tmpdir(), 'cp-'));
+  const ok = create(parent, [...COMMON, '--no-private', '--local-trust', '--dry-run']);
+  assert.equal(ok.status, 0, ok.stderr + ok.stdout);
+  assert.match(ok.stdout, /Mode\s+local trust/);
+  const libs = makeLibs();
+  const bad = create(parent, [...COMMON, '--private', '--multi-user', '--local-trust', '--dry-run'], libs.priv);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /localTrust only applies to applications without the user module/);
+  libs.cleanup();
+  rmSync(parent, { recursive: true, force: true });
+});
+
 test('sqlite --dry-run: anonymous project accepted, a postgres-only private module refused', () => {
   const parent = mkdtempSync(path.join(tmpdir(), 'cp-'));
   const ok = create(parent, [...COMMON, '--no-private', '--db', 'sqlite', '--dry-run']);

@@ -7,9 +7,10 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { Controller, Get, Inject, UseInterceptors } from '@nestjs/common';
+import { Controller, Get, Inject, Req, UseInterceptors } from '@nestjs/common';
 import { AdminOnlyInterceptor } from '../interceptors/AdminOnlyInterceptor';
 import { AUTH_PORT, type AuthPort } from './AuthPort';
+import type { AuthRequest } from './authRequest';
 
 /** Lets the front validate an admin key (see AdminTokenGate). */
 @Controller()
@@ -18,7 +19,7 @@ export class AdminSessionController {
 
   @Get('/api/v1/admin-session')
   @UseInterceptors(AdminOnlyInterceptor)
-  session(): { admin: true; mode: AuthPort['mode'] } {
-    return { admin: true, mode: this.port.mode };
+  session(@Req() req: AuthRequest): { admin: true; mode: AuthPort['mode'] | 'local-trust' } {
+    return { admin: true, mode: req.user?.kind === 'local-trust' ? 'local-trust' : this.port.mode };
   }
 }

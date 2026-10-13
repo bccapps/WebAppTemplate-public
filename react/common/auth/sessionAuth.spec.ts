@@ -17,11 +17,12 @@ vi.mock('./adminTokenAuth', () => ({
     get: () => null,
     clear: vi.fn(),
     setLocale: vi.fn(),
+    detectLocalTrust: vi.fn(async () => true),
   },
 }));
 
 import { appSession } from '../core/session/AppSession';
-import { isUserManagementEnabled, registerSessionAuth, sessionAuth, type SessionAuthPort } from './sessionAuth';
+import { detectLocalTrust, isUserManagementEnabled, registerSessionAuth, sessionAuth, type SessionAuthPort } from './sessionAuth';
 import { adminTokenAuth } from './adminTokenAuth';
 
 function makePort(): SessionAuthPort {
@@ -44,6 +45,13 @@ describe('sessionAuth', () => {
     expect(sessionAuth.mode).toBe('anonymous');
     expect(isUserManagementEnabled()).toBe(false);
     expect(sessionAuth.isAdmin()).toBe(false);
+  });
+
+  it('detects local trust through the anonymous port only', async () => {
+    await expect(detectLocalTrust()).resolves.toBe(true);
+    registerSessionAuth(makePort());
+    await expect(detectLocalTrust()).resolves.toBe(false);
+    expect(adminTokenAuth.detectLocalTrust).toHaveBeenCalledTimes(1);
   });
 
   it('delegates to the registered port', () => {

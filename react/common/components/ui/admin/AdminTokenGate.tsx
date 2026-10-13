@@ -12,7 +12,7 @@ import { Box, Button, CircularProgress, Stack, TextField, Typography } from '@mu
 import { I18nLabel } from '../label/I18nLabel';
 import Unauthorized from '../unauthorized/Unauthorized';
 import { adminTokenAuth } from '../../../auth/adminTokenAuth';
-import { sessionAuth } from '../../../auth/sessionAuth';
+import { detectLocalTrust, sessionAuth } from '../../../auth/sessionAuth';
 import { useSessionKeys } from '../../../hooks/useSessionKeys';
 import { i18n } from '../../../core/i18n/I18n';
 
@@ -77,12 +77,22 @@ const AdminKeyForm: React.FC = () => {
 
 /**
  * Guards admin pages. Renders `children` for admins; in anonymous mode (no user module) asks for the admin key
- * once (kept in sessionStorage); with user management it keeps the historical "unauthorized" behaviour.
+ * once (kept in sessionStorage), except in local trust mode (`LOCAL_TRUST`, no key needed); with user management it keeps the historical "unauthorized" behaviour.
  */
 export const AdminTokenGate: React.FC<AdminTokenGateProps> = ({ children, unauthorized }) => {
   useSessionKeys(['user']);
+  const anonymous = sessionAuth.mode === 'anonymous';
+  const [checked, setChecked] = React.useState(!anonymous);
+  React.useEffect(() => {
+    if (!anonymous) return;
+    let live = true;
+    void detectLocalTrust().finally(() => live && setChecked(true));
+    return () => {
+      live = false;
+    };
+  }, [anonymous]);
   if (sessionAuth.isAdmin()) return <>{children}</>;
-  if (sessionAuth.mode === 'anonymous') return <AdminKeyForm />;
+  if (anonymous) return checked ? <AdminKeyForm /> : null; // wait for the local trust check: no flash of the key form
   return <>{unauthorized ?? <Unauthorized />}</>;
 };
 

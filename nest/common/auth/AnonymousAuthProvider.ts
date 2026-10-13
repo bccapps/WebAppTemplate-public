@@ -11,6 +11,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { timingSafeEqual } from 'crypto';
 import type { AuthPort } from './AuthPort';
 import type { AuthPrincipal } from './AuthPrincipal';
+import { assertLocalTrustHost, isLocalTrustEnabled, isLocalTrustRequest, type LocalTrustRequest } from './localTrust';
+import { resolveListenHost } from '../bootstrap/configureHttpApp';
 
 const MIN_ADMIN_TOKEN_LENGTH = 32;
 
@@ -23,8 +25,15 @@ export class AnonymousAuthProvider implements AuthPort {
   readonly mode = 'anonymous' as const;
   private readonly logger = new Logger(AnonymousAuthProvider.name);
   private readonly expected: Buffer | null;
+  private readonly localTrust: boolean;
 
   constructor() {
+    this.localTrust = isLocalTrustEnabled();
+    if (this.localTrust) {
+      // Refuses to start (the rejection stops bootstrap) when the server is reachable from the network.
+      assertLocalTrustHost(resolveListenHost());
+      this.logger.warn('LOCAL_TRUST=true: loopback requests with a local Host/Origin are administrators (no key needed)');
+    }
     const token = process.env.ADMIN_TOKEN ?? '';
     if (token.length < MIN_ADMIN_TOKEN_LENGTH) {
       this.expected = null;
@@ -42,5 +51,11 @@ export class AnonymousAuthProvider implements AuthPort {
     if (given.length !== this.expected.length) return null;
     if (!timingSafeEqual(given, this.expected)) return null;
     return { id: 0, admin: true, kind: 'admin-token' };
+  }
+
+  /** Local trust: administrator for a genuine local request, `null` (normal anonymous behaviour) otherwise. */
+  resolveRequest(req: LocalTrustRequest): AuthPrincipal | null {
+    if (!this.localTrust || !isLocalTrustRequest(req)) return null;
+    return { id: 0, admin: true, kind: 'local-trust' };
   }
 }

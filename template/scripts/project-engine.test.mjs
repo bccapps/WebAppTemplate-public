@@ -194,3 +194,13 @@ test('module.json "databases": absent = every engine, listed = refused on anothe
   assert.equal('commerce' in withQuestionDefaults(catalog, { ...base, privateAccess: true }).questions, true);
   libs.cleanup();
 });
+
+test('validation: localTrust is refused when the user module is selected, directly or through requires', () => {
+  const libs = makeLibs();
+  const catalog = loadCatalog({ public: libs.pub, private: libs.priv });
+  const errors = (a) => validateAnswers({ ...base, privateAccess: true, ...a }, catalog).join(' | ');
+  assert.equal(errors({ localTrust: true }), '');
+  assert.match(errors({ localTrust: true, multiUser: true }), /localTrust only applies/);
+  assert.match(errors({ localTrust: true, modules: ['commerce'] }), /localTrust only applies/);
+  libs.cleanup();
+});

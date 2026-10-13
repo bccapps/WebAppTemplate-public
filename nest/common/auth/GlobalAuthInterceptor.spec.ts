@@ -89,6 +89,22 @@ describe('GlobalAuthInterceptor', () => {
       await expect(interceptor.intercept(ctx(bearer('nope')), handler)).rejects.toThrow(/Unrecognized token/);
     });
 
+    it('applies the principal granted by resolveRequest (local trust)', async () => {
+      const { port, interceptor } = build('anonymous', null);
+      const local: AuthPrincipal = { id: 0, admin: true, kind: 'local-trust' };
+      port.resolveRequest = jest.fn<NonNullable<AuthPort['resolveRequest']>>().mockReturnValue(local);
+      const req: Req = { headers: {}, query: {} };
+      await interceptor.intercept(ctx(req), handler);
+      expect(req.user).toEqual(local);
+    });
+
+    it('does not consult resolveRequest in users mode', async () => {
+      const { port, interceptor } = build('users', null);
+      port.resolveRequest = jest.fn<NonNullable<AuthPort['resolveRequest']>>();
+      await expect(interceptor.intercept(ctx({ headers: {}, body: {} }), handler)).rejects.toThrow('Unauthorized');
+      expect(port.resolveRequest).not.toHaveBeenCalled();
+    });
+
     it('sets the admin-token principal for a valid token', async () => {
       const { interceptor } = build('anonymous', admin);
       const req = bearer('good');

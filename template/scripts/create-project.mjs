@@ -62,6 +62,7 @@ Answers (each one is asked interactively when not given):
   --back-port <n>           [3000]                              --front-port <n>  [5173]
   --private | --no-private  mount vx-private (alias: --with-private)
   --multi-user | --no-multi-user   user accounts and login (alias: --with-users)
+  --local-trust | --no-local-trust   single-user local app: no admin key on loopback (LOCAL_TRUST, needs no user module)
   --commerce | --no-commerce       enable the sales screens (needs multi-user)
   --modules a,b             extra functional modules (closure of "requires" is added)
   --db <selfhosted|cloud|supabase|neon|sqlite>   --redis | --no-redis
@@ -77,7 +78,7 @@ Environment: VX_PUBLIC_URL, VX_PRIVATE_URL, LIB_BRANCH (see scripts/lib/libs.sh)
 `;
 
 const BOOL_FLAGS = new Set([
-  'private', 'no-private', 'with-private', 'multi-user', 'no-multi-user', 'with-users', 'commerce', 'no-commerce',
+  'private', 'no-private', 'with-private', 'multi-user', 'no-multi-user', 'with-users', 'commerce', 'no-commerce', 'local-trust', 'no-local-trust',
   'redis', 'no-redis', 'yes', 'dry-run', 'no-install', 'no-github', 'no-commit', 'vendor-libs', 'help',
 ]);
 
@@ -129,6 +130,8 @@ export function answersFromCli(opts) {
   if (opts['no-private']) a.privateAccess = false;
   if (opts['multi-user'] || opts['with-users']) a.multiUser = true;
   if (opts['no-multi-user']) a.multiUser = false;
+  if (opts['local-trust']) a.localTrust = true;
+  if (opts['no-local-trust']) a.localTrust = false;
   if (opts.commerce) a.commerce = true;
   if (opts['no-commerce']) a.commerce = false;
   if (opts.modules) a.modules = csv(opts.modules);
@@ -224,6 +227,11 @@ export async function collectAnswers({ opts, given, prompter, catalogFor }) {
   }
   if (!given.modules) a.modules = await selectFunctionalModules(prompter, catalog, a);
   await askModuleQuestions(prompter, catalog, a);
+  if (given.localTrust === undefined) {
+    // Asked last: modules may pull the user module in through "requires".
+    a.localTrust = !resolveProject(catalog, a).ids.includes('user')
+      && await prompter.confirm('Single-user local application (local trust mode: no admin key on this machine)?', false);
+  }
   if (given.database?.redis === undefined) a.database.redis = await prompter.confirm('Redis?', false);
   if (!given.languages) a.languages = csv(await prompter.text('Languages (first = default)', 'fr,en'));
   return { answers: a, catalog };
@@ -371,6 +379,8 @@ export function backEnvValues(answers, resolved, fromAnswers) {
   }
   if (answers.database.redis) values.REDIS_URL = 'redis://localhost:6379';
   if (!resolved.ids.includes('user')) values.ADMIN_TOKEN = randomBytes(32).toString('hex');
+  // Local trust: the back refuses to start unless it listens on loopback only.
+  if (answers.localTrust && !resolved.ids.includes('user')) Object.assign(values, { LOCAL_TRUST: 'true', HOST: '127.0.0.1' });
   return { ...values, ...fromAnswers.back };
 }
 
@@ -501,7 +511,7 @@ export function renderPlan(answers, resolved, catalog, root) {
   const lines = [
     `Project         ${answers.projectName} (${answers.siteName}) — ${root}`,
     `Access          vx-public${answers.privateAccess ? ' + vx-private' : ''}`,
-    `Mode            ${resolved.ids.includes('user') ? 'multi-user (user module)' : 'anonymous (ADMIN_TOKEN generated in back/.env.dev)'}`,
+    `Mode            ${resolved.ids.includes('user') ? 'multi-user (user module)' : answers.localTrust ? 'local trust (LOCAL_TRUST=true, HOST=127.0.0.1; ADMIN_TOKEN still generated for non-local clients)' : 'anonymous (ADMIN_TOKEN generated in back/.env.dev)'}`,
     `Back modules    ${resolved.perStack.nest.join(', ')}`,
     `Front modules   ${resolved.perStack.react.join(', ')}`,
   ];

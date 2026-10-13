@@ -101,6 +101,7 @@ User management is enabled **only by listing `user` in `shared-modules.json`** (
   in the bundle. The admin area (`/admin/*`) is protected by the `ADMIN_TOKEN` back env variable (>= 32 random chars,
   `openssl rand -hex 32`; empty = admin disabled). The front asks for the key once, keeps it in `sessionStorage` and sends it as
   `Authorization: Bearer`; a logout button appears in the header when it is set. `GET /api/v1/admin-session` returns 401 without a valid token.
+  **Local trust mode** (single-user desktop/local app): `LOCAL_TRUST=true` + `HOST=127.0.0.1` makes requests from the loopback interface (socket address, local `Host` on `NODE_PORT`, `Origin` absent or local, no proxy header) administrators without a key; `admin-session` then answers `mode: 'local-trust'` and the front hides the key form and the logout button. The back refuses to start if `LOCAL_TRUST=true` and `HOST` is not a loopback address; the mode has no effect with the `user` module. Never enable it on a server. Details: `nest/common/README.md`.
 - **With `user`**: full accounts, Reown login, wallet-based admin (`ADMIN_WALLET`), `/admin/user`. `user` needs only `common`
   (and `database`); `commerce` and `infra` are optional extras, see below. Nothing else to configure besides the usual `user` variables.
 
@@ -153,6 +154,7 @@ plugins (`plugin.ts` / `plugin.tsx`). Questions (Enter = default; each has a CLI
 | 1 | name, site name, publisher entity, contact email, ports | placeholders, `.env.dev` |
 | 2 | access to the private modules? | mounts `vx-private` (`--private`) |
 | 3 | **multi-user application** (accounts, login)? | yes: the `user` module and what it `requires` (`common` only); no: anonymous mode, `ADMIN_TOKEN` generated in `back/.env.dev` |
+| 3' | **single-user local application (local trust mode)?** (asked last, only without the user module; `--local-trust`) | writes `LOCAL_TRUST=true` and `HOST=127.0.0.1` in `back/.env.dev` (`ADMIN_TOKEN` is still generated) |
 | 3a-c | login methods, sign-up (open / invitation / waiting list), several organizations | seeded values in `back/src/config/defaultConfig.ts` (+ `waitlist` / `tenant` modules); declared by the `user` manifest |
 | 4 | **selling** (products, subscriptions)? | `features.commerce.enabled` seeded `true` / `false` and adds the `commerce` module (declining leaves it out); needs multi-user |
 | 4b | **monitoring / health / Redis cache** (`infra`)? | adds the `infra` module (default yes when multi-user, else no) |

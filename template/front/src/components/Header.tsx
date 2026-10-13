@@ -18,13 +18,13 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import NotificationsRoundedIcon from '@mui/icons-material/NotificationsRounded';
 import AdminPanelSettingsRoundedIcon from '@mui/icons-material/AdminPanelSettingsRounded';
 import DashboardCustomizeRoundedIcon from '@mui/icons-material/DashboardCustomizeRounded';
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
-import { sessionAuth } from '@/modules_shared/common/auth/sessionAuth';
+import { detectLocalTrust, sessionAuth } from '@/modules_shared/common/auth/sessionAuth';
 import { appPlugins, userManagementEnabled } from '@/plugins';
 import { Title } from './Title';
 import { I18nLabel } from '@/modules_shared/common/components/ui/label/I18nLabel';
@@ -37,6 +37,9 @@ interface HeaderProps {
 export function Header({ alertsCount = 0 }: HeaderProps) {
   useSessionKeys(['user']);
   const isAdmin = sessionAuth.isAdmin();
+  useEffect(() => {
+    void detectLocalTrust(); // local trust mode: the admin menu appears without a key
+  }, []);
   const [alertsAnchor, setAlertsAnchor] = useState<null | HTMLElement>(null);
   const popoverId = 'alerts-popover';
 
@@ -150,7 +153,7 @@ export function Header({ alertsCount = 0 }: HeaderProps) {
                 </Tooltip>
               </Stack>
             )}
-            {isAdmin && !userManagementEnabled && (
+            {isAdmin && !userManagementEnabled && sessionAuth.mode !== 'local-trust' && (
               <Tooltip title={<I18nLabel id="common.admin.tokenGate.logout" />}>
                 <IconButton
                   color="inherit"

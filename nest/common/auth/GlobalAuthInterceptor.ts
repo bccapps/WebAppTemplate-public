@@ -26,6 +26,7 @@ import {
   unrecognizedTokenError,
   type AuthRequest,
 } from './authRequest';
+import type { LocalTrustRequest } from './localTrust';
 
 /**
  * Global authentication interceptor backed by the AuthPort.
@@ -54,8 +55,10 @@ export class GlobalAuthInterceptor implements NestInterceptor {
 
     const token = extractBearerToken(req);
     if (!token) {
-      if (this.port.mode === 'anonymous') return handler.handle();
-      throw new SecurityException('AUT', 'Unauthorized');
+      if (this.port.mode !== 'anonymous') throw new SecurityException('AUT', 'Unauthorized');
+      const local = this.port.resolveRequest?.(req as unknown as LocalTrustRequest) ?? null;
+      if (local) applyPrincipal(req, local);
+      return handler.handle();
     }
     ensureRequestMembers(req);
     const principal = await this.port.resolveToken(token);

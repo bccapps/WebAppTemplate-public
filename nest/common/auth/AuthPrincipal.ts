@@ -7,7 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-export type AuthPrincipalKind = 'user' | 'admin-token';
+export type AuthPrincipalKind = 'user' | 'admin-token' | 'local-trust';
 
 /** Identity attached to `req.user` once a request is authenticated. */
 export interface AuthPrincipal {

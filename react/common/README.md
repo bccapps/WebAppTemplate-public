@@ -165,14 +165,15 @@ bundle regardless of the active language, this only scopes the *backend-served*
 
 Dépendances : aucune vers `user` (module privé). Les composants admin de `common` passent par un port.
 
-- `auth/sessionAuth.ts` : port `SessionAuthPort` (`mode: 'users' | 'anonymous'`, `isAuth`, `isAdmin`, `get`, `clear`, `setLocale`),
+- `auth/sessionAuth.ts` : port `SessionAuthPort` (`mode: 'users' | 'anonymous' | 'local-trust'`, `isAuth`, `isAdmin`, `get`, `clear`, `setLocale`),
   façade `sessionAuth`, `registerSessionAuth(port)` (le dernier gagne, émet la clé `'user'` d'`appSession`) et `isUserManagementEnabled()`.
-  Port par défaut : `adminTokenAuth` (mode `anonymous`).
+  Port par défaut : `adminTokenAuth` (mode `anonymous`). `detectLocalTrust()` interroge une fois le back (sans effet si un autre port est enregistré).
 - `auth/adminTokenAuth.ts` : sans module `user`, l'admin se déverrouille avec `ADMIN_TOKEN` (env back). `login(token)` valide la clé via
   `GET <api 'common'>/admin-session`, la garde dans `sessionStorage['vx_admin_token']` (mémoire si indisponible) et la pose en
   `Authorization: Bearer`. Un 401 ultérieur passe par `setGlobalUnauthorizedHandler` → `clear()`.
+  `detectLocalTrust()` (une seule requête `admin-session` sans clé, ignorée si une clé est stockée) : si le back répond `mode: 'local-trust'` (`LOCAL_TRUST=true`, voir `nest/common/README.md`), le port passe en mode `local-trust` : `isAuth()`/`isAdmin()` vrais, aucune clé, rien à déconnecter.
 - `components/ui/admin/AdminTokenGate.tsx` : enveloppe `AdminPage`, `AdminDashboard`, `AdminThemes`. Admin ⇒ contenu ; mode `anonymous` ⇒
-  formulaire « Admin key » ; mode `users` non admin ⇒ comportement historique (`<Unauthorized />`, ou la prop `unauthorized`).
+  formulaire « Admin key » (affiché après la détection du mode local de confiance, sans clignotement ; en mode `local-trust` le contenu s'affiche directement) ; mode `users` non admin ⇒ comportement historique (`<Unauthorized />`, ou la prop `unauthorized`).
   Clés i18n : `common.admin.tokenGate.{title,label,submit,invalid,logout}`.
 - `plugins/AppPlugin.ts` : contrat des plugins d'app (`id`, `order`, `preload`, `Provider`, `HeaderActions`, `routes`, `adminRoutes`, `adminMenu`)
   et `collectPlugins(modules)` (filtre + tri par `order`). Un module expose `export const plugin: AppPlugin` depuis `<module>/plugin.tsx`.

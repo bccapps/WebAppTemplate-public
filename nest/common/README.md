@@ -44,7 +44,7 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 ### Session admin (`AdminSessionController`, enregistré par `AuthCoreModule`, pas par `CommonModule`)
 | Méthode | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/admin-session` | Admin | Renvoie `{ admin: true, mode }` (`mode` = `users` \| `anonymous`). Sert au front (`AdminTokenGate`) à valider la clé admin. |
+| `GET` | `/api/v1/admin-session` | Admin | Renvoie `{ admin: true, mode }` (`mode` = `users` \| `anonymous` \| `local-trust`). Sert au front (`AdminTokenGate`) à valider la clé admin ou à détecter le mode local de confiance. |
 
 ### Locales (`LocaleController`)
 | Méthode | Endpoint | Auth | Description |
@@ -415,7 +415,7 @@ Exemples :
 | Variable | Défaut | Effet |
 | --- | --- | --- |
 | `CLIENT_ORIGINS` | `http://localhost:<FRONT_PORT>` | Liste CORS séparée par des virgules. `*` reflète toute origine sans credentials ; **refusé** avec `NODE_ENV=production`. |
-| `HOST` | `0.0.0.0` | Adresse d'écoute (`resolveListenHost`). |
+| `HOST` | `0.0.0.0` | Adresse d'écoute (`resolveListenHost`). Obligatoirement de boucle locale avec `LOCAL_TRUST=true`. |
 | `TRUST_PROXY` | `1` en production, désactivé sinon | `true`, `false`, nombre de sauts ou nom de sous-réseau (`loopback`). Nécessaire pour un `req.ip` correct derrière nginx. |
 | `RAW_BODY_PATHS` | `/webhook` | Fragments de chemin dont le corps JSON est aussi disponible en `req.rawBody` (signatures de webhooks), limite 50 Mo. Correspondance par sous-chaîne sur le chemin sans query string. Les autres routes : 5 Mo. |
 
@@ -481,16 +481,27 @@ L'AppModule importe `AuthCoreModule.forRoot()` (voir « Plugins » pour le fourn
 
 | Classe | Rôle |
 | --- | --- |
-| `AuthPort` / `AUTH_PORT` | Contrat : `mode: 'users' \| 'anonymous'` + `resolveToken(token): Promise<AuthPrincipal \| null>`. |
-| `AuthPrincipal` | `{ id, admin, kind: 'user' \| 'admin-token' }` posé dans `req.user`. |
-| `AnonymousAuthProvider` | Mode `anonymous` : seul identité = admin via `ADMIN_TOKEN` (comparaison à temps constant, principal `{ id: 0, admin: true, kind: 'admin-token' }`). `ADMIN_TOKEN` vide ou < 32 caractères ⇒ warn au démarrage et admin désactivé. |
-| `GlobalAuthInterceptor` | Intercepteur global (`APP_INTERCEPTOR`). Ignore `@Public()`, idempotent si `req.user` existe. Mode `users` : token obligatoire (comportement de l'ancien `AuthInterceptor` de `user`). Mode `anonymous` : sans token la requête passe sans `req.user` ; token invalide ⇒ 401. Pose `req.user` + `uid`/`user` dans body/params/query. |
-| `RequireUserInterceptor` | Routes propres à un utilisateur : 401 si pas de `req.user` ou `kind === 'admin-token'` (donc 401 en mode anonyme). |
+| `AuthPort` / `AUTH_PORT` | Contrat : `mode: 'users' \| 'anonymous'`, `resolveToken(token): Promise<AuthPrincipal \| null>` et, facultatif, `resolveRequest(req)` (principal accordé sans jeton : mode local de confiance). |
+| `AuthPrincipal` | `{ id, admin, kind: 'user' \| 'admin-token' \| 'local-trust' }` posé dans `req.user`. |
+| `AnonymousAuthProvider` | Mode `anonymous` : seul identité = admin via `ADMIN_TOKEN` (comparaison à temps constant, principal `{ id: 0, admin: true, kind: 'admin-token' }`). `ADMIN_TOKEN` vide ou < 32 caractères ⇒ warn au démarrage et admin désactivé. Avec `LOCAL_TRUST=true`, `resolveRequest` accorde `{ id: 0, admin: true, kind: 'local-trust' }` aux requêtes locales (voir ci-dessous). |
+| `GlobalAuthInterceptor` | Intercepteur global (`APP_INTERCEPTOR`). Ignore `@Public()`, idempotent si `req.user` existe. Mode `users` : token obligatoire (comportement de l'ancien `AuthInterceptor` de `user`). Mode `anonymous` : sans token la requête passe, avec le principal de `port.resolveRequest` s'il y en a un, sinon sans `req.user` ; token invalide ⇒ 401. Pose `req.user` + `uid`/`user` dans body/params/query. |
+| `RequireUserInterceptor` | Routes propres à un utilisateur : 401 si pas de `req.user` ou `kind` `admin-token` / `local-trust` (donc 401 en mode anonyme). |
 | `RequireAuthInterceptor` | Tout principal authentifié (user **ou** admin-token) : équivaut à l'ancien `AuthInterceptor` en mode `users`, seul l'admin passe en mode `anonymous`. |
 | `AdminOnlyInterceptor` | (existant) exige `req.user.admin`. |
 | `AuthCoreModule.forRoot({ imports?, provider? })` | Module global : fournit `AUTH_PORT` (provider par défaut `AnonymousAuthProvider`), `GlobalAuthInterceptor` et `AdminSessionController`. |
 
 Variable d'environnement : `ADMIN_TOKEN` (>= 32 caractères) — clé admin en mode anonyme, envoyée en `Authorization: Bearer`.
+
+### Mode local de confiance (`LOCAL_TRUST`, `auth/localTrust.ts`)
+
+Pour une application de bureau mono-utilisateur : pas de clé à saisir. `LOCAL_TRUST=true` (ou `1`) n'agit que dans `AnonymousAuthProvider` : **sans effet quand le module `user` fournit l'auth** (`UserAuthProvider` n'implémente pas `resolveRequest`). Garanties :
+
+- **Refus de démarrer** : le constructeur du fournisseur lève une erreur si `HOST` (`resolveListenHost`, `0.0.0.0` par défaut) n'est pas une adresse de boucle locale (`127.0.0.1`, `127.x.x.x`, `::1`, `localhost`). Le rejet de `bootstrap()` arrête le processus.
+- Une requête est administrateur **seulement si** : l'adresse de la **socket** (`req.socket.remoteAddress`) est une boucle locale (jamais `req.ip` ni `X-Forwarded-For` : `trust proxy` les rend falsifiables) ; aucun en-tête de proxy (`X-Forwarded-*`, `Forwarded`, `X-Real-IP`) n'est présent (un proxy local relaie du trafic distant) ; `Host` est `127.0.0.1`, `localhost` ou `[::1]` sur le port `NODE_PORT` (barre le DNS rebinding) ; `Origin` est absent ou une origine `http(s)` de boucle locale (barre une page web qui viserait le port local ; `null` et `tauri://` sont refusés).
+- Sinon : comportement anonyme normal (le jeton `ADMIN_TOKEN` reste accepté). Le principal est `kind: 'local-trust'` : `RequireUserInterceptor` le refuse comme `admin-token`.
+- `GET /api/v1/admin-session` renvoie alors `mode: 'local-trust'` (le front masque la saisie de clé et le bouton de déconnexion).
+
+Helpers purs exportés : `isLocalTrustEnabled`, `isLoopbackAddress`, `isLoopbackListenHost`, `assertLocalTrustHost`, `isLocalHostHeader`, `isLocalOrigin`, `isLocalTrustRequest`. Tests : `auth/localTrust.spec.ts` (matrice socket × `Host` × `Origin` × en-têtes de proxy), `auth/localTrust.http.spec.ts` (Nest + supertest, `trust proxy` actif, refus au démarrage avec `HOST=0.0.0.0`).
 
 ## Plugins
 

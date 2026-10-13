@@ -201,6 +201,7 @@ Regenerate it after creating, deleting or modifying sources, before closing the 
 - Every added dependency is justified; prefer established, actively maintained libraries (see §1b for where to declare it).
 - Authentication, payments, personal data: mandatory human review.
 - HTTP hardening lives in one place (`configureHttpApp`): never disable `helmet`, widen CORS to `*` in production (refused at startup) or parse webhook bodies by hand; webhooks read `req.rawBody` (paths in `RAW_BODY_PATHS`).
+- Local trust mode (`LOCAL_TRUST=true`, single-user local apps only): never enable it on a server, never weaken its checks (loopback **socket** address, never `req.ip`/`X-Forwarded-For`; local `Host`; absent or local `Origin`; `HOST` loopback or the back refuses to start). It has no effect with the `user` module; an app-specific route must still use `RequireUserInterceptor` for per-user data, since the local-trust principal is not a user (`kind: 'local-trust'`).
 - Anything that executes commands or opens terminals/sessions on a remote host (agent runners, VPS access) is security-critical: least privilege, no unvalidated input in a command line, no credentials in logs.
 
 ## 11. Communication & Expected Behavior

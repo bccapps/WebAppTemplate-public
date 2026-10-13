@@ -24,6 +24,9 @@ describe('RequireUserInterceptor', () => {
   it('rejects the admin-token principal', () => {
     expect(() => i.intercept(ctx({ user: { id: 0, admin: true, kind: 'admin-token' } }), handler)).toThrow('Unauthorized');
   });
+  it('rejects the local-trust principal', () => {
+    expect(() => i.intercept(ctx({ user: { id: 0, admin: true, kind: 'local-trust' } }), handler)).toThrow('Unauthorized');
+  });
   it('accepts a user', () => {
     expect(i.intercept(ctx({ user: { id: 1, admin: false, kind: 'user' } }), handler)).toBe('next');
   });

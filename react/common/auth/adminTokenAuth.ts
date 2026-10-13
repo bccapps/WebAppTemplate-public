@@ -46,26 +46,52 @@ function notify(): void {
   appSession.dispatchEvent(SESSION_KEY, { key: SESSION_KEY, value: adminTokenAuth.get() });
 }
 
-function probe(): Promise<boolean> {
+interface SessionProbe {
+  ok: boolean;
+  mode?: string;
+}
+
+function probe(): Promise<SessionProbe> {
   const url = configurationService.getApiUrl('common') + '/admin-session';
-  return new Promise<boolean>((resolve) => {
+  return new Promise<SessionProbe>((resolve) => {
     httpService
       .get(url)
-      .then(() => resolve(true))
-      .fail(() => resolve(false))
-      .error(() => resolve(false))
-      .notAuthorized(() => resolve(false));
+      .then((data?: { mode?: string }) => resolve({ ok: true, mode: data?.mode }))
+      .fail(() => resolve({ ok: false }))
+      .error(() => resolve({ ok: false }))
+      .notAuthorized(() => resolve({ ok: false }));
   });
 }
 
 class AdminTokenAuth implements SessionAuthPort {
-  readonly mode = 'anonymous' as const;
+  /** True once the back answered `mode: 'local-trust'` (LOCAL_TRUST=true, genuine local request): no key needed. */
+  private localTrust = false;
+  private detection: Promise<boolean> | null = null;
+
+  get mode(): 'anonymous' | 'local-trust' {
+    return this.localTrust ? 'local-trust' : 'anonymous';
+  }
+
+  /**
+   * Ask the back once whether it trusts this client without a key (local trust mode). Safe to call repeatedly;
+   * resolves true in local trust mode. Skipped when a key is already stored.
+   */
+  detectLocalTrust(): Promise<boolean> {
+    if (this.localTrust) return Promise.resolve(true);
+    if (readStored() !== null) return Promise.resolve(false);
+    this.detection ??= probe().then((r) => {
+      this.localTrust = r.ok && r.mode === 'local-trust';
+      if (this.localTrust) notify();
+      return this.localTrust;
+    });
+    return this.detection;
+  }
 
   /** Validate `token` against the backend; on success keep it (sessionStorage) and use it as Bearer. */
   async login(token: string): Promise<boolean> {
     const previous = readStored();
     setBearer(token);
-    const ok = await probe();
+    const { ok } = await probe();
     if (!ok) {
       setBearer(previous);
       return false;
@@ -82,7 +108,7 @@ class AdminTokenAuth implements SessionAuthPort {
   }
 
   isAuth(): boolean {
-    return readStored() !== null;
+    return this.localTrust || readStored() !== null;
   }
 
   isAdmin(): boolean {

@@ -41,6 +41,8 @@ bundle, and the `/admin/*` area is protected by a single secret:
 - the front end asks for the key once on `/admin/*`, keeps it in `sessionStorage` and sends it as
   `Authorization: Bearer <key>`.
 
+For a single-user local application there is an opt-in **local trust mode**: with `LOCAL_TRUST=true` (and `HOST=127.0.0.1`, enforced at startup) requests that really come from the loopback interface with a local `Host` and `Origin` are administrators without a key. It never applies to remote clients or cross-site pages, and has no effect when a `user` module is linked. See `nest/common/README.md`.
+
 ## Plugging in private modules
 
 Put your own modules in `back/.libs/vx-private/nest/<module>` and `front/.libs/vx-private/react/<module>` and list

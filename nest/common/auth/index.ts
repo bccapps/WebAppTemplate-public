@@ -11,6 +11,7 @@ export * from './AuthPrincipal';
 export * from './AuthPort';
 export * from './AnonymousAuthProvider';
 export * from './authRequest';
+export * from './localTrust';
 export * from './GlobalAuthInterceptor';
 export * from './RequireUserInterceptor';
 export * from './RequireAuthInterceptor';

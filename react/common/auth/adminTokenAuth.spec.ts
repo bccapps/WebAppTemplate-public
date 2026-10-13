@@ -9,15 +9,15 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-type Cb = () => void;
-const httpState = { ok: true };
+type Cb = (data?: unknown) => void;
+const httpState: { ok: boolean; data?: unknown } = { ok: true };
 
 vi.mock('../core/http/HttpService', () => ({
   httpService: {
     get: vi.fn(() => {
       const chain: Record<string, (cb: Cb) => unknown> = {};
       const run = (cb: Cb, fire: boolean) => {
-        if (fire) queueMicrotask(cb);
+        if (fire) queueMicrotask(() => cb(httpState.data));
         return chain;
       };
       chain.then = (cb) => run(cb, httpState.ok);
@@ -53,6 +53,7 @@ describe('adminTokenAuth', () => {
   beforeEach(() => {
     vi.stubGlobal('sessionStorage', new MemoryStorage());
     httpState.ok = true;
+    httpState.data = undefined;
     delete axios.defaults.headers.common['Authorization'];
   });
   afterEach(() => {
@@ -118,5 +119,43 @@ describe('adminTokenAuth', () => {
     expect(auth.isAdmin()).toBe(true);
     auth.clear();
     expect(auth.isAdmin()).toBe(false);
+  });
+
+  describe('local trust detection', () => {
+    it('switches to local-trust when the back answers mode local-trust', async () => {
+      const auth = await load();
+      httpState.data = { admin: true, mode: 'local-trust' };
+      await expect(auth.detectLocalTrust()).resolves.toBe(true);
+      expect(auth.mode).toBe('local-trust');
+      expect(auth.isAdmin()).toBe(true);
+      expect(auth.get()).toEqual({ id: 0, admin: true });
+      expect(sessionStorage.getItem('vx_admin_token')).toBeNull();
+    });
+
+    it('stays anonymous on 401 and probes only once', async () => {
+      const auth = await load();
+      httpState.ok = false;
+      const callsBefore = (httpService.get as ReturnType<typeof vi.fn>).mock.calls.length;
+      await expect(auth.detectLocalTrust()).resolves.toBe(false);
+      await expect(auth.detectLocalTrust()).resolves.toBe(false);
+      expect(auth.mode).toBe('anonymous');
+      expect(auth.isAdmin()).toBe(false);
+      expect((httpService.get as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsBefore + 1);
+    });
+
+    it('stays anonymous when the back answers another mode', async () => {
+      const auth = await load();
+      httpState.data = { admin: true, mode: 'anonymous' };
+      await expect(auth.detectLocalTrust()).resolves.toBe(false);
+      expect(auth.mode).toBe('anonymous');
+    });
+
+    it('does not probe when a key is already stored', async () => {
+      sessionStorage.setItem('vx_admin_token', 'kept');
+      const auth = await load();
+      const callsBefore = (httpService.get as ReturnType<typeof vi.fn>).mock.calls.length;
+      await expect(auth.detectLocalTrust()).resolves.toBe(false);
+      expect((httpService.get as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsBefore);
+    });
   });
 });

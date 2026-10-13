@@ -18,7 +18,8 @@ export interface SessionPrincipal {
 }
 
 export interface SessionAuthPort {
-  readonly mode: 'users' | 'anonymous';
+  /** `local-trust`: anonymous mode where the back trusts this local client (no key, nothing to log out of). */
+  readonly mode: 'users' | 'anonymous' | 'local-trust';
   isAuth(): boolean;
   isAdmin(): boolean;
   get(): SessionPrincipal | null;
@@ -55,4 +56,12 @@ export const sessionAuth: SessionAuthPort = {
 
 export function isUserManagementEnabled(): boolean {
   return sessionAuth.mode === 'users';
+}
+
+/**
+ * Ask the back whether it trusts this client without an admin key (`LOCAL_TRUST`). Only meaningful with the
+ * anonymous port: resolves false (no request) when the `user` module registered its own port.
+ */
+export function detectLocalTrust(): Promise<boolean> {
+  return current === adminTokenAuth ? adminTokenAuth.detectLocalTrust() : Promise.resolve(false);
 }

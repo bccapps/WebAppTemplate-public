@@ -25,7 +25,7 @@ import type { AuthRequest } from './authRequest';
 export class RequireUserInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, handler: CallHandler): Observable<unknown> {
     const req = context.switchToHttp().getRequest<AuthRequest>();
-    if (!req.user || req.user.kind === 'admin-token') {
+    if (!req.user || req.user.kind === 'admin-token' || req.user.kind === 'local-trust') {
       throw new SecurityException('AUT', 'Unauthorized');
     }
     return handler.handle();

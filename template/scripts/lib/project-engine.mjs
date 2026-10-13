@@ -153,6 +153,7 @@ export function normalizeAnswers(input = {}) {
   a.ports = { back: 3000, front: 5173, ...(a.ports ?? {}) };
   a.privateAccess = Boolean(a.privateAccess);
   a.multiUser = Boolean(a.multiUser);
+  a.localTrust = Boolean(a.localTrust);
   a.modules = [...new Set(a.modules ?? [])];
   a.database = { engine: 'selfhosted', redis: false, ...(a.database ?? {}) };
   a.languages = a.languages?.length ? a.languages : ['fr', 'en'];
@@ -256,6 +257,7 @@ export function validateAnswers(rawAnswers, catalog) {
 
   const resolved = resolveModules(catalog, selectedModules(a));
   errors.push(...resolved.errors);
+  if (a.localTrust && resolved.ids.includes('user')) errors.push('localTrust only applies to applications without the user module');
   errors.push(...databaseIncompatibilities(catalog, resolved.ids, a.database.engine));
   if (!a.privateAccess) {
     for (const id of resolved.ids) {
