@@ -96,13 +96,29 @@ User management is enabled **only by listing `user` in `shared-modules.json`** (
   in the bundle. The admin area (`/admin/*`) is protected by the `ADMIN_TOKEN` back env variable (>= 32 random chars,
   `openssl rand -hex 32`; empty = admin disabled). The front asks for the key once, keeps it in `sessionStorage` and sends it as
   `Authorization: Bearer`; a logout button appears in the header when it is set. `GET /api/v1/admin-session` returns 401 without a valid token.
-- **With `user`** (and its private dependencies `commerce`, `infra`, `oauth`): full accounts, Reown login, wallet-based admin
-  (`ADMIN_WALLET`), `/admin/user`. Nothing else to configure besides the usual `user` variables.
+- **With `user`**: full accounts, Reown login, wallet-based admin (`ADMIN_WALLET`), `/admin/user`. `user` needs only `common`
+  (and `database`); `commerce` and `infra` are optional extras, see below. Nothing else to configure besides the usual `user` variables.
 
 How it works: every shared module may expose a plugin (`plugin.ts` on the back, `plugin.tsx` on the front). `link-shared.mjs`
 generates `back/src/modules_shared/plugins.generated.ts`; `front/src/plugins.ts` uses `import.meta.glob`. `AppModule.ts`, `App.tsx`,
 `Router.tsx`, `Header.tsx` and `AdminSidebar.tsx` read the plugins, so adding a module needs no edit there. The npm dependencies of a
 module (e.g. wagmi/Reown for `user`) live in its `package.fragment.json`, merged by `build-package.mjs` when the module is linked.
+
+## Optional shared modules (`infra`, `commerce`, `oauth`)
+
+`user` never imports `infra` or `commerce`, so a project can run with accounts only. They are plain shared modules: list them
+in `shared-modules.json` with `node scripts/add-module.mjs <id>` (`--remove <id>` to drop them). **No edit of `AppModule.ts`**:
+each ships a `plugin.ts` that `link-shared.mjs` collects into `plugins.generated.ts`.
+
+| Module | Adds | Without it |
+|---|---|---|
+| `commerce` | products, orders, subscriptions; a tier is paid when an active recurring product grants it (`TIER_PRICING_PROVIDER`) | every tier is free |
+| `infra` | health checks, Redis cache (`KEY_VALUE_CACHE`), Prometheus incl. `app_total_users` / `app_active_users_24h` (`USER_METRICS_SINK`) | tiers are read from the DB each time, no user gauges |
+| `oauth` | OAuth2 token toolkit (parsing, refresh, PKCE) | n/a |
+
+The extension-point tokens are defined in `nest/common/types/ExtensionPoints.ts`; the optional module provides them globally and
+`user` injects them with `@Optional() @Inject(TOKEN)`. The wizard adds `commerce` when you answer "selling", `infra` when you
+answer "monitoring/health/Redis cache".
 
 ## Architecture
 
@@ -129,9 +145,10 @@ plugins (`plugin.ts` / `plugin.tsx`). Questions (Enter = default; each has a CLI
 |---|---|---|
 | 1 | name, site name, publisher entity, contact email, ports | placeholders, `.env.dev` |
 | 2 | access to the private modules? | mounts `vx-private` (`--private`) |
-| 3 | **multi-user application** (accounts, login)? | yes: the `user` module and what it `requires`; no: anonymous mode, `ADMIN_TOKEN` generated in `back/.env.dev` |
+| 3 | **multi-user application** (accounts, login)? | yes: the `user` module and what it `requires` (`common` only); no: anonymous mode, `ADMIN_TOKEN` generated in `back/.env.dev` |
 | 3a-c | login methods, sign-up (open / invitation / waiting list), several organizations | seeded values in `back/src/config/defaultConfig.ts` (+ `waitlist` / `tenant` modules); declared by the `user` manifest |
-| 4 | **selling** (products, subscriptions)? | `features.commerce.enabled` seeded `true` / `false` (the `commerce` module comes with `user` anyway: hidden, not removed); needs multi-user |
+| 4 | **selling** (products, subscriptions)? | `features.commerce.enabled` seeded `true` / `false` and adds the `commerce` module (declining leaves it out); needs multi-user |
+| 4b | **monitoring / health / Redis cache** (`infra`)? | adds the `infra` module (default yes when multi-user, else no) |
 | 5 | functional modules (grouped by category, with description) | closure of `requires` shown before confirmation |
 | 6 | database (selfhosted / cloud / supabase / neon), Redis | `DATABASE_ENGINE`, `.env` blocks |
 | 7 | languages | `back/src/locales/custom.<lang>.json`, `localesLanguages`, `localeDefault` |

@@ -16,6 +16,9 @@
 #
 # Modes:
 #   anonymous    (default) common + database + voice, no `user`: admin protected by ADMIN_TOKEN
+#   users-only   `user` WITHOUT `commerce` nor `infra` (no selling, no monitoring): proves that `user`
+#                compiles and boots with its optional extension points absent. Same private library
+#                options as multi-users.
 #   multi-users  multi-user accounts + sales screens + voice, with a private library: by default
 #                a fake one (tools/fake-private.sh --users: user, commerce, infra, tenant, fakemod
 #                stand-ins); SANDBOX_PRIVATE=<dir> uses a copy of a real vx-private checkout
@@ -26,7 +29,7 @@
 #   <sandbox>/app/back/.libs/apptemplate -> vx-public/template      (relative symlink)
 #   <sandbox>/app/front/.libs/...                                   (same)
 #
-# Usage: tools/ci-sandbox.sh [anonymous|multi-users] [sandbox-dir]   (default dir: a fresh mktemp directory)
+# Usage: tools/ci-sandbox.sh [anonymous|users-only|multi-users] [sandbox-dir]   (default dir: a fresh mktemp directory)
 # Env:   KEEP_SANDBOX=1 keeps an auto-created directory, SKIP_TESTS=1 skips back jest,
 #        SANDBOX_MODULES=a,b overrides the extra functional modules.
 # =============================================================================
@@ -34,7 +37,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="anonymous"
-if [[ "${1:-}" == "anonymous" || "${1:-}" == "multi-users" ]]; then MODE="$1"; shift; fi
+if [[ "${1:-}" == "anonymous" || "${1:-}" == "users-only" || "${1:-}" == "multi-users" ]]; then MODE="$1"; shift; fi
 AUTO=0
 if [[ -z "${1:-}" ]]; then AUTO=1; SB="$(mktemp -d "${TMPDIR:-/tmp}/vx-ci-sandbox.XXXXXX")"; else SB="$1"; fi
 mkdir -p "${SB}"
@@ -53,10 +56,12 @@ info "Sandbox (${MODE}): ${SB}"
 ANSWERS="${SB}/answers.json"
 PRIVATE_ARGS=()
 EXPECT_ENTITY="ConfigurationEntity"
-if [[ "${MODE}" == "multi-users" ]]; then
+if [[ "${MODE}" == "multi-users" || "${MODE}" == "users-only" ]]; then
   if [[ -n "${SANDBOX_PRIVATE:-}" ]]; then
     PRIVATE_SRC="$(cd "${SANDBOX_PRIVATE}" && pwd)"
     MODULES="${SANDBOX_MODULES:-voice,oauth}"
+    [[ "${MODE}" == "users-only" ]] && MODULES="${SANDBOX_MODULES:-voice}"
+    EXPECT_ENTITY="ConfigurationEntity,UserEntity"
   else
     PRIVATE_SRC="${SB}/.fake-private"
     "${REPO}/tools/fake-private.sh" "${PRIVATE_SRC}" --users
@@ -64,12 +69,14 @@ if [[ "${MODE}" == "multi-users" ]]; then
     EXPECT_ENTITY="ConfigurationEntity,FakeEntity"
   fi
   PRIVATE_ARGS=(--private-dir "${PRIVATE_SRC}")
-  MODULES="${MODULES}" node -e '
+  QUESTIONS='{"authMethods":["email"],"registration":"open","commerce":true}'
+  [[ "${MODE}" == "users-only" ]] && QUESTIONS='{"authMethods":["email"],"registration":"open","commerce":false,"infra":false}'
+  MODULES="${MODULES}" QUESTIONS="${QUESTIONS}" node -e '
     const modules = process.env.MODULES.split(",").filter(Boolean);
     require("fs").writeFileSync(process.argv[1], JSON.stringify({
       projectName: "app", siteName: "CI Sandbox", entityName: "CI Entity", contactEmail: "ci@example.com",
       privateAccess: true, multiUser: true, modules, languages: ["fr", "en"],
-      questions: { authMethods: ["email"], registration: "open", commerce: true },
+      questions: JSON.parse(process.env.QUESTIONS),
     }, null, 2));' "${ANSWERS}"
 else
   MODULES="${SANDBOX_MODULES:-voice}"
@@ -86,8 +93,13 @@ node "${REPO}/template/scripts/create-project.mjs" --vendor-libs --no-install --
   --public-dir "${REPO}" ${PRIVATE_ARGS[@]+"${PRIVATE_ARGS[@]}"} --answers "${ANSWERS}" --parent-dir "${SB}"
 APP="${SB}/app"
 
-if [[ "${MODE}" == "multi-users" ]]; then
+if [[ "${MODE}" == "multi-users" || "${MODE}" == "users-only" ]]; then
   grep -q '"user"' "${APP}/shared-modules.json" || { echo "user module missing from shared-modules.json" >&2; exit 1; }
+  if [[ "${MODE}" == "users-only" ]]; then
+    for m in commerce infra; do
+      if grep -q "\"${m}\"" "${APP}/shared-modules.json"; then echo "${m} must NOT be linked in users-only mode" >&2; exit 1; fi
+    done
+  fi
   if grep -q '^ADMIN_TOKEN=' "${APP}/back/.env.dev"; then echo "ADMIN_TOKEN must not be generated with user management" >&2; exit 1; fi
 else
   grep -q '^ADMIN_TOKEN=[0-9a-f]\{64\}$' "${APP}/back/.env.dev" || { echo "ADMIN_TOKEN missing in anonymous mode" >&2; exit 1; }
@@ -97,6 +109,16 @@ for stack in back front; do
   info "${stack}: npm install + build"
   ( cd "${APP}/${stack}" && npm install --no-audit --no-fund && npm run build )
 done
+
+if [[ "${MODE}" == "users-only" ]]; then
+  for m in commerce infra; do
+    if [[ -e "${APP}/back/src/modules_shared/${m}" ]]; then echo "${m} must be pruned from back/src/modules_shared" >&2; exit 1; fi
+  done
+  # The fake private library's `user` stand-in has no plugin.ts: only check the real one.
+  if [[ -n "${SANDBOX_PRIVATE:-}" ]]; then
+    grep -q "./user/plugin" "${APP}/back/src/modules_shared/plugins.generated.ts" || { echo "user plugin not wired" >&2; exit 1; }
+  fi
+fi
 
 # Entity autoloading through the .libs symlinks, in the two modes: TypeScript sources
 # (ts-node / TypeORM CLI: __dirname of the symlinked Datasource.ts is its REAL path) and

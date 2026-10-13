@@ -195,8 +195,12 @@ export function matches(op, value) {
   return true;
 }
 
-/** Default answer of a question. */
-export function questionDefault(question) {
+/**
+ * Default answer of a question. `defaultMultiUser` overrides `default` when the project has
+ * user accounts (e.g. infra: monitoring/cache is on by default for a multi-user app, off otherwise).
+ */
+export function questionDefault(question, answers = {}) {
+  if (answers.multiUser && 'defaultMultiUser' in question) return question.defaultMultiUser;
   if ('default' in question) return question.default;
   if (question.type === 'confirm') return false;
   if (question.type === 'multiselect') return [];
@@ -283,7 +287,7 @@ export function withQuestionDefaults(catalog, rawAnswers) {
     let changed = false;
     for (const q of applicableQuestions(catalog, a, resolved.ids)) {
       if (!(q.id in a.questions)) {
-        a.questions[q.id] = questionDefault(q);
+        a.questions[q.id] = questionDefault(q, a);
         changed = true;
       }
     }

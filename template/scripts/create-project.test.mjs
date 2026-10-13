@@ -100,6 +100,26 @@ test('multi-user project with fixture private libs: closure, questions, config, 
   rmSync(parent, { recursive: true, force: true });
 });
 
+test('multi-user project without selling nor infra links only user (+ common, database)', () => {
+  const libs = makeLibs();
+  const parent = mkdtempSync(path.join(tmpdir(), 'cp-'));
+  const answersFile = path.join(parent, 'answers.json');
+  writeFileSync(answersFile, JSON.stringify({
+    projectName: 'lite', siteName: 'Lite', entityName: 'Acme', contactEmail: 'a@b.co', privateAccess: true, multiUser: true,
+    languages: ['en'], questions: { authMethods: ['email'], registration: 'open', commerce: false, infra: false },
+  }));
+  const r = create(parent, ['--answers', answersFile], libs.priv);
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  const app = path.join(parent, 'lite');
+  const shared = json(path.join(app, 'shared-modules.json'));
+  assert.deepEqual(shared.nestcommon, ['common', 'database', 'user']);
+  assert.deepEqual(shared.reactcommon, ['common', 'user']);
+  const config = readFileSync(path.join(app, 'back', 'src', 'config', 'defaultConfig.ts'), 'utf8');
+  assert.match(config, /name: 'features', value: '\{"commerce":\{"enabled":false\}\}'/);
+  libs.cleanup();
+  rmSync(parent, { recursive: true, force: true });
+});
+
 test('incoherent answers are refused (exit 2) and --dry-run writes nothing', () => {
   const parent = mkdtempSync(path.join(tmpdir(), 'cp-'));
   const bad = create(parent, [...COMMON, '--no-private', '--multi-user']);
