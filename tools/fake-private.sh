@@ -113,14 +113,18 @@ JSON
   COMMERCE_Q='[
     { "id": "commerce", "prompt": "Selling?", "type": "confirm", "default": false, "alwaysAsk": true, "requiresPrivate": true, "requires": ["user"],
       "effects": [
-        { "when": { "equals": true }, "configJson": { "name": "features", "path": "commerce.enabled", "value": true } },
+        { "when": { "equals": true }, "modules": ["commerce"], "configJson": { "name": "features", "path": "commerce.enabled", "value": true } },
         { "when": { "equals": false }, "configJson": { "name": "features", "path": "commerce.enabled", "value": false } } ] }
   ]'
-  write_stub nest user UserModule User users '["commerce", "common", "infra"]' "${USER_Q}"
+  INFRA_Q='[
+    { "id": "infra", "prompt": "Monitoring/health/Redis cache (infra)?", "type": "confirm", "default": false, "defaultMultiUser": true, "alwaysAsk": true, "requiresPrivate": true,
+      "effects": [{ "when": { "equals": true }, "modules": ["infra"] }] }
+  ]'
+  write_stub nest user UserModule User users '["common"]' "${USER_Q}"
   write_stub react user UserModule User users '["common"]' '[]'
   write_stub nest commerce CommerceModule Commerce business '["common", "user"]' "${COMMERCE_Q}"
   write_stub react commerce CommerceModule Commerce business '["user"]' '[]'
-  write_stub nest infra InfraModule Infrastructure core '["common"]' '[]'
+  write_stub nest infra InfraModule Infrastructure core '["common"]' "${INFRA_Q}"
   write_stub react infra InfraModule Infrastructure core '["common"]' '[]'
   write_stub nest tenant TenantModule Tenant users '["user"]' '[]'
 fi

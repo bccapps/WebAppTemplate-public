@@ -25,11 +25,15 @@ test('closure of requires, per stack, base modules first, cycles tolerated', () 
   const libs = makeLibs();
   const catalog = loadCatalog({ public: libs.pub, private: libs.priv });
   const r = resolveModules(catalog, ['common', 'database', 'user']);
-  assert.deepEqual(r.perStack.nest, ['common', 'database', 'commerce', 'infra', 'user']);
-  assert.deepEqual(r.perStack.react, ['common', 'commerce', 'infra', 'user']); // database is nest-only
-  assert.deepEqual(r.added, ['commerce', 'infra']);
+  assert.deepEqual(r.perStack.nest, ['common', 'database', 'user']); // user no longer drags commerce / infra
+  assert.deepEqual(r.perStack.react, ['common', 'user']); // database is nest-only
+  assert.deepEqual(r.added, []);
   assert.deepEqual(resolveModules(catalog, ['nope']).errors, ['unknown module "nope"']);
-  assert.deepEqual(dependentsOf(catalog, 'user', r.ids).sort(), ['commerce']);
+  assert.deepEqual(dependentsOf(catalog, 'user', r.ids), []);
+  const withCommerce = resolveModules(catalog, ['common', 'database', 'commerce']);
+  assert.deepEqual(withCommerce.perStack.nest, ['common', 'database', 'commerce', 'user']);
+  assert.deepEqual(withCommerce.added, ['user']);
+  assert.deepEqual(dependentsOf(catalog, 'user', withCommerce.ids), ['commerce']);
   libs.cleanup();
 });
 
@@ -83,9 +87,36 @@ test('question effects: modules, config entries, env, features JSON', () => {
   assert.deepEqual(JSON.parse(entries.features), { commerce: { enabled: true } });
   assert.deepEqual(buildEnvFromAnswers(catalog, answers, resolved.ids).front, { VITE_REOWN_PROJECT_ID: 'rp1' });
 
+  assert.ok(resolved.perStack.nest.includes('commerce'), 'commerce added by the selling answer');
+  assert.ok(resolved.perStack.nest.includes('infra'), 'infra added by its default (multi-user => yes)');
+
   const off = withQuestionDefaults(catalog, { ...base, privateAccess: true, multiUser: true });
   const offEntries = Object.fromEntries(buildConfigEntries(catalog, off, resolveProject(catalog, off).ids).map((e) => [e.name, e.value]));
-  assert.deepEqual(JSON.parse(offEntries.features), { commerce: { enabled: false } }, 'commerce masked, not removed');
+  assert.deepEqual(JSON.parse(offEntries.features), { commerce: { enabled: false } }, 'commerce not selected: flag seeded false');
+  libs.cleanup();
+});
+
+test('multi-user adds only user; selling adds commerce; infra question defaults to the multi-user answer', () => {
+  const libs = makeLibs();
+  const catalog = loadCatalog({ public: libs.pub, private: libs.priv });
+  const nest = (a) => resolveProject(catalog, withQuestionDefaults(catalog, { ...base, privateAccess: true, ...a })).perStack.nest;
+
+  // multi-user, defaults: user + infra (default yes), no commerce
+  assert.deepEqual(withQuestionDefaults(catalog, { ...base, privateAccess: true, multiUser: true }).questions.infra, true);
+  assert.deepEqual(nest({ multiUser: true }), ['common', 'database', 'infra', 'user']);
+  // multi-user, infra declined, not selling: user alone
+  assert.deepEqual(nest({ multiUser: true, questions: { infra: false } }), ['common', 'database', 'user']);
+  // selling adds commerce (user is its requirement)
+  assert.deepEqual(nest({ multiUser: true, questions: { infra: false, commerce: true } }), ['common', 'database', 'commerce', 'user']);
+  // anonymous with private access: infra defaults to no, can still be opted in
+  assert.equal(withQuestionDefaults(catalog, { ...base, privateAccess: true }).questions.infra, false);
+  assert.deepEqual(nest({}), ['common', 'database']);
+  assert.deepEqual(nest({ questions: { infra: true } }), ['common', 'database', 'infra']);
+  // no private access: the private questions do not exist
+  const pubOnly = loadCatalog({ public: libs.pub });
+  assert.deepEqual(withQuestionDefaults(pubOnly, base).questions, {});
+  // validation: selling still needs accounts
+  assert.deepEqual(validateAnswers(withQuestionDefaults(catalog, { ...base, privateAccess: true, multiUser: true, questions: { commerce: true } }), catalog), []);
   libs.cleanup();
 });
 

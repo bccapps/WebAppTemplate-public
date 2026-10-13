@@ -36,7 +36,7 @@ export function makeLibs() {
   put('private', 'react', manifest('waitlist', { visibility: 'private', requires: ['common'], category: 'users' }));
   put('private', 'nest', manifest('tenant', { visibility: 'private', requires: ['user'], category: 'users' }));
   put('private', 'nest', manifest('user', {
-    visibility: 'private', category: 'users', requires: ['commerce', 'common', 'infra'], env: ['JWT_SECRET'],
+    visibility: 'private', category: 'users', requires: ['common'], env: ['JWT_SECRET'],
     questions: [
       {
         id: 'authMethods', prompt: 'Login methods', type: 'multiselect', default: ['wallet', 'email'],
@@ -72,9 +72,17 @@ export function makeLibs() {
     questions: [{
       id: 'commerce', prompt: 'Selling?', type: 'confirm', default: false, alwaysAsk: true, requiresPrivate: true, requires: ['user'],
       effects: [
-        { when: { equals: true }, configJson: { name: 'features', path: 'commerce.enabled', value: true } },
+        { when: { equals: true }, modules: ['commerce'], configJson: { name: 'features', path: 'commerce.enabled', value: true } },
         { when: { equals: false }, configJson: { name: 'features', path: 'commerce.enabled', value: false } },
       ],
+    }],
+  }));
+  // infra question lives in the nest manifest of infra
+  put('private', 'nest', manifest('infra', {
+    visibility: 'private', requires: ['common'], category: 'core',
+    questions: [{
+      id: 'infra', prompt: 'Monitoring/health/Redis cache (infra)?', type: 'confirm', default: false, defaultMultiUser: true,
+      alwaysAsk: true, requiresPrivate: true, effects: [{ when: { equals: true }, modules: ['infra'] }],
     }],
   }));
   return { root, pub: path.join(root, 'public'), priv: path.join(root, 'private'), cleanup: () => rmSync(root, { recursive: true, force: true }) };

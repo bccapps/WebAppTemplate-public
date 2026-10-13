@@ -63,8 +63,8 @@ export class Prompter {
   close() { this.rl?.close(); }
 }
 
-async function askQuestion(prompter, q) {
-  const def = questionDefault(q);
+async function askQuestion(prompter, q, answers) {
+  const def = questionDefault(q, answers);
   switch (q.type) {
     case 'confirm': return prompter.confirm(q.prompt, def);
     case 'select': return prompter.select(q.prompt, q.options, def);
@@ -82,7 +82,7 @@ export async function askModuleQuestions(prompter, catalog, answers) {
     if (!pending.length) return;
     const q = pending[0];
     asked.add(q.id);
-    let value = await askQuestion(prompter, q);
+    let value = await askQuestion(prompter, q, answers);
     if (value && q.requires?.some((need) => !resolved.ids.includes(need))) {
       if (await prompter.confirm(`"${q.id}" needs user accounts. Enable multi-user accounts now?`, true)) {
         answers.multiUser = true;

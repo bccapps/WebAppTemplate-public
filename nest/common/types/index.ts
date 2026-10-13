@@ -8,3 +8,4 @@
  */
 
 export * from './ModuleConfigSchema';
+export * from './ExtensionPoints';

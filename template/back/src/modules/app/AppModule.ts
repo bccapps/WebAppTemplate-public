@@ -22,6 +22,9 @@ if (authPlugins.length > 1) {
   throw new Error(`Several auth plugins linked: ${authPlugins.map((p) => p.id).join(', ')}`);
 }
 
+// Optional modules (`commerce`, `infra`, `oauth`) are wired by their plugin once listed in shared-modules.json
+// (`node scripts/add-module.mjs <id>`): do NOT import them here. `user` does not depend on them; they plug into it
+// through the extension-point tokens of common/types/ExtensionPoints.
 // Shared modules WITHOUT a plugin.ts (e.g. voice) must still be added by hand to `imports`,
 // next to any app-specific module under src/modules/<feature>.
 @Module({

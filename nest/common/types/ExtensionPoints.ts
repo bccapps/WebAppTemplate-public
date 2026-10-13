@@ -1,0 +1,44 @@
+/**
+ * VXFramework
+ *
+ * Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
+ * SPDX-License-Identifier: MIT
+ *
+ * Licensed under the MIT License. See LICENSE in the project root.
+ */
+
+/**
+ * Extension points that let the `user` module use capabilities of OPTIONAL
+ * sibling modules (`infra`, `commerce`) without importing them.
+ *
+ * `user` depends on these tokens/interfaces only (they live in `common`, which is
+ * always present). The optional module provides the implementation under the token
+ * (`{ provide: TOKEN, useExisting: RealService }`) and exports it from a global
+ * scope; `user` injects it with `@Optional() @Inject(TOKEN)` and degrades
+ * gracefully when absent. This keeps `user` compilable and bootable when the
+ * `commerce` / `infra` folders are not part of the project.
+ */
+
+/** Minimal key/value cache. Provided by `infra` (`CacheService`, Redis, noop without REDIS_URL). */
+export const KEY_VALUE_CACHE = 'KEY_VALUE_CACHE';
+export interface KeyValueCache {
+  get<T>(key: string): Promise<T | null>;
+  set(key: string, value: unknown, ttlSec?: number): Promise<void>;
+  del(key: string): Promise<void>;
+}
+
+/** Business-level user gauges sink. Provided by `infra` (`PrometheusService`) when Prometheus is enabled. */
+export const USER_METRICS_SINK = 'USER_METRICS_SINK';
+export interface UserMetricsSink {
+  updateUserCounts(totalUsers: number, activeUsers24h: number): void;
+}
+
+/**
+ * Tells `user` whether a tier is sold. Provided by `commerce` (`ProductService`).
+ * Absent => every tier is considered free (nothing is sold).
+ */
+export const TIER_PRICING_PROVIDER = 'TIER_PRICING_PROVIDER';
+export interface TierPricingProvider {
+  /** True when an active + recurring commerce Product grants this tier. */
+  hasActiveRecurringProduct(tierId: number): Promise<boolean>;
+}
