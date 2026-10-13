@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readlinkSync, lstatSync, symlinkSync, existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
-import { linkShared, renderPluginsFile } from './link-shared.mjs';
+import { findUnusedModules, linkShared, renderPluginsFile } from './link-shared.mjs';
 
 const quiet = async (fn) => {
   const { log, warn, error } = console;
@@ -23,6 +23,20 @@ const quiet = async (fn) => {
     Object.assign(console, { log, warn, error });
   }
 };
+
+/** Runs `fn` and returns the lines written with console.warn. */
+async function warnings(fn) {
+  const lines = [];
+  const { log, warn, error } = console;
+  console.log = console.error = () => {};
+  console.warn = (line) => lines.push(String(line));
+  try {
+    await fn();
+  } finally {
+    Object.assign(console, { log, warn, error });
+  }
+  return lines;
+}
 
 function project(shared, dirs) {
   const root = mkdtempSync(path.join(tmpdir(), 'ls-'));
@@ -105,5 +119,61 @@ test('front: no plugins file; missing shared-modules.json links and prunes nothi
   symlinkSync('x', path.join(front, 'src/modules_shared/keepme'));
   await quiet(() => linkShared('front', front));
   assert.ok(lstatSync(path.join(front, 'src/modules_shared/keepme')).isSymbolicLink());
+  rmSync(root, { recursive: true });
+});
+
+const MSG = (name) => `[link-shared] ⚠ module ${name} listé, sans plugin et importé par aucun fichier (lien probablement inutile)`;
+
+function unusedProject() {
+  const root = project(
+    { nestcommon: ['common', 'database', 'voice', 'user', 'used-by-app', 'used-by-module', 'orphan', 'self-only'] },
+    ['common', 'database', 'voice', 'user', 'used-by-app', 'used-by-module', 'orphan', 'self-only'].map((m) => `back/.libs/vx-public/nest/${m}`).concat('back/src/app'),
+  );
+  const lib = (m, file, text) => writeFileSync(path.join(root, 'back/.libs/vx-public/nest', m, file), text);
+  lib('user', 'plugin.ts', 'export const plugin = {};');
+  lib('user', 'UserModule.ts', "import { X } from '../used-by-module/services/X';");
+  lib('self-only', 'index.ts', "import { A } from '../self-only/other';\nexport * from './A';");
+  writeFileSync(path.join(root, 'back/src/app/AppModule.ts'), "import { Y } from 'src/modules_shared/used-by-app/Y';\nconst z = require('./orphan-ish/Z');");
+  mkdirSync(path.join(root, 'back/src/modules_shared'), { recursive: true });
+  return root;
+}
+
+test('back: warns once per listed module without plugin that no file imports', async () => {
+  const root = unusedProject();
+  const back = path.join(root, 'back');
+  const lines = await warnings(() => linkShared('back', back));
+  assert.deepEqual(lines.filter((l) => l.includes('⚠')), [MSG('orphan'), MSG('self-only')]);
+  rmSync(root, { recursive: true });
+});
+
+test('back: plugins.generated.ts does not count as an import, a real import in the app does', async () => {
+  const root = unusedProject();
+  const back = path.join(root, 'back');
+  writeFileSync(path.join(back, 'src/modules_shared/plugins.generated.ts'), "import { plugin } from './orphan/plugin';");
+  assert.ok((await warnings(() => linkShared('back', back))).includes(MSG('orphan')));
+  writeFileSync(path.join(back, 'src/app/Other.ts'), "export * from '../modules_shared/orphan/index';");
+  assert.ok(!(await warnings(() => linkShared('back', back))).includes(MSG('orphan')));
+  rmSync(root, { recursive: true });
+});
+
+test('findUnusedModules: matches dynamic imports, jest.mock and trailing module names; skips node_modules and unlisted names', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'ls-'));
+  mkdirSync(path.join(root, 'src/node_modules/x'), { recursive: true });
+  mkdirSync(path.join(root, 'lib/a'), { recursive: true });
+  writeFileSync(path.join(root, 'src/node_modules/x/i.ts'), "import 'src/modules_shared/dyn/y';");
+  writeFileSync(path.join(root, 'src/A.ts'), "const m = await import('src/modules_shared/dyn/y');\njest.mock('../mocked/Svc');\nexport * from '../trailing';");
+  writeFileSync(path.join(root, 'lib/a/b.ts'), "// not an import: modules_shared/commented/\nconst s = 'modules_shared/plain-string/';");
+  const dirs = new Map(['dyn', 'mocked', 'trailing', 'commented', 'plain-string', 'a'].map((n) => [n, path.join(root, 'lib', n)]));
+  dirs.set('a', path.join(root, 'lib/a'));
+  const unused = await findUnusedModules(root, dirs, new Set());
+  assert.deepEqual(unused.sort(), ['a', 'commented', 'plain-string']);
+  assert.deepEqual(await findUnusedModules(root, dirs, new Set(['a', 'commented', 'plain-string', 'dyn', 'mocked', 'trailing'])), []);
+  rmSync(root, { recursive: true });
+});
+
+test('front: no unused-module warning (back only)', async () => {
+  const root = project({ reactcommon: ['common', 'lonely'] }, ['front/.libs/reactcommon/common', 'front/.libs/reactcommon/lonely']);
+  const lines = await warnings(() => linkShared('front', path.join(root, 'front')));
+  assert.deepEqual(lines.filter((l) => l.includes('⚠')), []);
   rmSync(root, { recursive: true });
 });

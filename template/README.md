@@ -108,6 +108,7 @@ How it works: every shared module may expose a plugin (`plugin.ts` on the back, 
 generates `back/src/modules_shared/plugins.generated.ts`; `front/src/plugins.ts` uses `import.meta.glob`. `AppModule.ts`, `App.tsx`,
 `Router.tsx`, `Header.tsx` and `AppSidebar.tsx` read the plugins, so adding a module needs no edit there. The npm dependencies of a
 module (e.g. wagmi/Reown for `user`) live in its `package.fragment.json`, merged by `build-package.mjs` when the module is linked.
+On the back, `link-shared.mjs` warns about a listed module that has no plugin and that no file imports (candidates for removal from `shared-modules.json`).
 
 Back plugin format (`NestModulePlugin`, details in `nest/common/README.md`, « Plugins »): `{ id, module?, modules?, order?, auth? }`.
 `module` is a Nest module or a **factory** `(options) => DynamicModule`; `modules` adds further modules of the same folder; `order`

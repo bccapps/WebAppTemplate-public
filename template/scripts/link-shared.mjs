@@ -31,11 +31,14 @@
  * the `plugin` exports of linked modules that provide a `plugin.ts`, and the modules to import
  * (`sharedPluginModules`: ordered, factories fed by `src/config/pluginOptions.ts` when the app has it).
  *
+ * The check for unused modules is back only (a module without plugin that nothing imports is reported, see `findUnusedModules`).
+ *
  * Run automatically via postinstall / prebuild / prestart(:dev) / predev.
  */
 
 import { mkdir, lstat, readlink, readdir, rm, symlink, writeFile } from 'fs/promises';
 import { existsSync, readFileSync, realpathSync } from 'fs';
+import { readFile } from 'fs/promises';
 import path from 'path';
 import process from 'process';
 import { fileURLToPath } from 'url';
@@ -112,6 +115,54 @@ export function renderPluginsFile(linkedModules, withPlugin, opts = {}) {
   ].join('\n');
 }
 
+/** Modules that never carry a plugin and are needed by the framework itself: never reported as unused. */
+const ALWAYS_USED = new Set(['common', 'database', 'voice']);
+
+const IMPORT_SPECIFIER = /(?:\bfrom|\bimport|\brequire|\bmock|\bimportActual)\s*\(?\s*['"]([^'"\n]+)['"]/g;
+
+/** Import specifiers (`from 'x'`, `import('x')`, `require('x')`, `jest.mock('x')`) of every .ts/.tsx file under `dir`; symlinks are not followed. */
+async function collectSpecifiers(dir, skipFiles = new Set()) {
+  const found = [];
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return found;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name !== 'node_modules') found.push(...(await collectSpecifiers(full, skipFiles)));
+    } else if (entry.isFile() && /\.tsx?$/.test(entry.name) && !skipFiles.has(entry.name)) {
+      const text = await readFile(full, 'utf8');
+      for (const match of text.matchAll(IMPORT_SPECIFIER)) found.push(match[1]);
+    }
+  }
+  return found;
+}
+
+/**
+ * Linked modules with no plugin that no source imports: the link is probably useless.
+ * Looks for `modules_shared/<name>/` or `/<name>/` (or a trailing `/<name>`) in the import specifiers of the app
+ * (`src/**\/*.ts`, except `plugins.generated.ts`; the `modules_shared` symlinks are not followed) and of the other linked modules.
+ * `common`, `database` and `voice` are never reported.
+ * @param {string} stackDir
+ * @param {Map<string, string>} moduleDirs linked module name -> real directory
+ * @param {Set<string>} withPlugin
+ * @returns {Promise<string[]>} the names of the unused modules
+ */
+export async function findUnusedModules(stackDir, moduleDirs, withPlugin) {
+  const candidates = [...moduleDirs.keys()].filter((name) => !withPlugin.has(name) && !ALWAYS_USED.has(name));
+  if (!candidates.length) return [];
+  const sources = new Map([['', await collectSpecifiers(path.join(stackDir, 'src'), new Set(['plugins.generated.ts']))]]);
+  for (const [name, dir] of moduleDirs) sources.set(name, await collectSpecifiers(dir));
+  return candidates.filter((name) => {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`/${escaped}(/|$)`);
+    return ![...sources].some(([owner, specifiers]) => owner !== name && specifiers.some((spec) => pattern.test(spec)));
+  });
+}
+
 async function writeIfChanged(file, content) {
   let current = null;
   try {
@@ -146,6 +197,7 @@ export async function linkShared(stack, stackDir) {
 
   await mkdir(modulesDir, { recursive: true });
   const linked = [];
+  const moduleDirs = new Map();
   const withPlugin = new Set();
   for (const name of modules) {
     const found = resolveModule(stack, stackDir, name);
@@ -155,6 +207,7 @@ export async function linkShared(stack, stackDir) {
     }
     await linkModule(modulesDir, name, found.dir);
     linked.push(name);
+    moduleDirs.set(name, found.dir);
     if (stack === 'back' && (await lstat(path.join(found.dir, 'plugin.ts')).catch(() => null))) {
       withPlugin.add(name);
     }
@@ -166,6 +219,9 @@ export async function linkShared(stack, stackDir) {
       path.join(modulesDir, 'plugins.generated.ts'),
       renderPluginsFile(linked, withPlugin, { hasPluginOptions }),
     );
+    for (const name of await findUnusedModules(stackDir, moduleDirs, withPlugin)) {
+      console.warn(`[link-shared] ⚠ module ${name} listé, sans plugin et importé par aucun fichier (lien probablement inutile)`);
+    }
   }
   const pruned = await pruneStaleLinks(modulesDir, new Set(modules));
   console.log(
