@@ -37,6 +37,7 @@ import {
 import { resolveAppDataDir } from '../common/utils/appDataDir';
 import { connectionEnvPrefix, readConnectionEnv, resolveEngine } from './dbEngine';
 import { applyPortableColumnTypes } from '../common/utils/portableTypes';
+import { detectTypeormCli, logSchemaMode, resolveSchemaMode, type SchemaResolution } from './schemaMode';
 
 /** Project-specific locations, resolved by the consuming project. */
 export interface DbContext {
@@ -96,51 +97,6 @@ export function resolveEntityGlobs(baseDir: string): Map<string, string[]> {
 
 type EnvGetter = (key: string, legacy?: string) => string | undefined;
 
-/** Resolve `synchronize` (dev default on, production default off, env override). */
-function resolveSynchronize(get: EnvGetter): boolean {
-  const syncRaw = get('SYNC', 'TYPEORM_SYNC')?.trim().toLowerCase();
-  // Default: enabled in development, DISABLED in production to prevent accidental data loss.
-  // Set DB_SYNC=true (or TYPEORM_SYNC=true) in back/.env to override during a controlled migration.
-  const syncDefault = process.env.NODE_ENV !== 'production';
-  const synchronize = syncRaw ? syncRaw === 'true' || syncRaw === '1' : syncDefault;
-  if (!synchronize && !syncRaw) {
-    console.warn(
-      '[DB] synchronize=false (production default). ' +
-      'Schema changes will NOT be applied automatically. ' +
-      'Set DB_SYNC=true in back/.env if you need to run a controlled schema migration.',
-    );
-  }
-  return synchronize;
-}
-
-/** `migrationsRun` is only emitted when enabled, so default options are unchanged. */
-function migrationsRunOption(get: EnvGetter): { migrationsRun?: true } {
-  const raw = get('MIGRATIONS_RUN')?.trim().toLowerCase();
-  return raw === 'true' || raw === '1' ? { migrationsRun: true } : {};
-}
-
-/**
- * An SQLite app that ships its OWN migrations (hand-written for SQLite, run at start with `DB_MIGRATIONS_RUN=true`, or opted in with
- * `DB_SQLITE_MIGRATIONS=true`) keeps the historical behaviour: migrations loaded, `synchronize` resolved like Postgres
- * (production default off). Every other SQLite app (typically an entity set written for Postgres, migrations in Postgres SQL)
- * gets the "sync" defaults below.
- */
-function sqliteUsesMigrations(get: EnvGetter): boolean {
-  const flag = (value: string | undefined): boolean => value?.trim().toLowerCase() === 'true' || value?.trim() === '1';
-  return flag(get('MIGRATIONS_RUN')) || flag(get('SQLITE_MIGRATIONS'));
-}
-
-/**
- * `synchronize` on SQLite when the app has no SQLite migrations: the schema comes from `synchronize`, so unlike Postgres it
- * defaults to ON whatever `NODE_ENV` is (an explicit `DB_SYNC=false` / `TYPEORM_SYNC=false` still wins).
- * Consequence: a new version of the app alters the file's tables to match its entities (SQLite recreates a table to change a
- * column). Keep entity changes additive between releases, and back the file up before an update.
- */
-function resolveSqliteSynchronize(get: EnvGetter): boolean {
-  const syncRaw = get('SYNC', 'TYPEORM_SYNC')?.trim().toLowerCase();
-  return syncRaw ? syncRaw === 'true' || syncRaw === '1' : true;
-}
-
 /** SQLite busy timeout (ms) before a writer gives up on the single write lock (`DB_BUSY_TIMEOUT_MS`, default 5000). */
 function sqliteBusyTimeoutMs(get: EnvGetter): number {
   const raw = Number.parseInt(get('BUSY_TIMEOUT_MS') ?? '', 10);
@@ -170,7 +126,8 @@ function buildSqliteOptions(
   name: string,
   entities: string[],
   ctx: DbContext,
-  get: EnvGetter
+  get: EnvGetter,
+  cli: boolean
 ): DataSourceOptions {
   const isMain = name === MAIN_CONNECTION;
   const rawPath = get('PATH')?.trim();
@@ -182,17 +139,17 @@ function buildSqliteOptions(
   if (!memory) mkdirSync(dirname(database), { recursive: true });
   adaptEntitiesForSqlite();
   const busyTimeoutMs = sqliteBusyTimeoutMs(get);
-  const ownMigrations = sqliteUsesMigrations(get);
+  const schema = resolveSchema(name, 'sqlite', get, cli);
   return {
     ...(isMain ? {} : { name }),
     type: 'better-sqlite3',
     database,
     entities,
-    // Without SQLite migrations of its own the app's migrations are Postgres SQL: never loaded (no per-migration guard needed), the
-    // schema comes from `synchronize`. An app with SQLite migrations keeps the historical options.
-    migrations: ownMigrations ? (isMain ? ctx.migrationGlobs : []) : [],
-    synchronize: ownMigrations ? resolveSynchronize(get) : resolveSqliteSynchronize(get),
-    ...(ownMigrations ? migrationsRunOption(get) : {}),
+    // Schema management: see `schemaMode.ts`. Without migrations of its own an SQLite app never loads the (Postgres SQL) migrations
+    // and its schema comes from `synchronize`.
+    migrations: schema.loadMigrations && isMain ? ctx.migrationGlobs : [],
+    synchronize: schema.synchronize,
+    ...(schema.migrationsRun ? { migrationsRun: true as const } : {}),
     logging: ['error'],
     // better-sqlite3 holds ONE connection (SQLite has a single writer): there is no pool to size. WAL: concurrent readers while
     // writing; `synchronous = NORMAL` is safe with WAL; foreign_keys is also forced by the driver.
@@ -213,7 +170,8 @@ function buildPostgresOptions(
   entities: string[],
   ctx: DbContext,
   get: EnvGetter,
-  engine: string
+  engine: string,
+  cli: boolean
 ): DataSourceOptions {
   const isMain = name === MAIN_CONNECTION;
   const isCloud = ['cloud', 'neon', 'supabase'].includes(engine);
@@ -287,7 +245,7 @@ function buildPostgresOptions(
     console.log(`[DB] "${name}" pool: max=${extra.max} (${engine}, ${port === 5432 ? 'session mode — counts against the project-wide pool_size' : 'transaction mode — no total-client cap'})`);
   }
 
-  const synchronize = resolveSynchronize(get);
+  const schema = resolveSchema(name, 'postgres', get, cli);
 
   return {
     ...(isMain ? {} : { name }),
@@ -298,9 +256,9 @@ function buildPostgresOptions(
     password,
     database,
     entities,
-    migrations: isMain ? ctx.migrationGlobs : [],
-    synchronize,
-    ...migrationsRunOption(get),
+    migrations: schema.loadMigrations && isMain ? ctx.migrationGlobs : [],
+    synchronize: schema.synchronize,
+    ...(schema.migrationsRun ? { migrationsRun: true as const } : {}),
     logging: ['error'],
     ...(poolSize && Number.isFinite(poolSize) ? { poolSize } : {}),
     ...(sslConfig ? { ssl: sslConfig } : {}),
@@ -312,19 +270,45 @@ function buildPostgresOptions(
 function buildConnectionOptions(
   name: string,
   entities: string[],
-  ctx: DbContext
+  ctx: DbContext,
+  cli = false
 ): DataSourceOptions {
   const get: EnvGetter = (key, legacy) => readConnectionEnv(name, key, legacy);
   const engine = resolveEngine(name);
-  return engine === 'sqlite'
-    ? buildSqliteOptions(name, entities, ctx, get)
-    : buildPostgresOptions(name, entities, ctx, get, engine);
+  const options =
+    engine === 'sqlite'
+      ? buildSqliteOptions(name, entities, ctx, get, cli)
+      : buildPostgresOptions(name, entities, ctx, get, engine, cli);
+  const resolution = lastResolution.get(name);
+  if (resolution) resolutions.set(options, { connection: name, resolution });
+  return options;
 }
 
-/** Options for the "main" (default) connection — also used by the TypeORM CLI. */
-export function buildMainDataSourceOptions(ctx: DbContext): DataSourceOptions {
+/**
+ * Options for the "main" (default) connection — also used by the TypeORM CLI.
+ * `opts.cli` says the caller is the TypeORM CLI; by default it is detected from the process (`typeorm …` in argv, or
+ * `TYPEORM_CLI=1`). The CLI always loads the migrations and never synchronizes nor auto-runs them.
+ */
+export function buildMainDataSourceOptions(ctx: DbContext, opts: { cli?: boolean } = {}): DataSourceOptions {
   const globs = resolveEntityGlobs(ctx.baseDir).get(MAIN_CONNECTION) ?? [];
-  return buildConnectionOptions(MAIN_CONNECTION, globs, ctx);
+  return buildConnectionOptions(MAIN_CONNECTION, globs, ctx, opts.cli ?? detectTypeormCli());
+}
+
+/** The schema resolution each built `DataSourceOptions` was made with (read by the boot-time guard rails). */
+const resolutions = new WeakMap<object, { connection: string; resolution: SchemaResolution }>();
+const lastResolution = new Map<string, SchemaResolution>();
+
+/** Resolve (and log once) the schema management of a connection. */
+function resolveSchema(name: string, engine: 'postgres' | 'sqlite', get: EnvGetter, cli: boolean): SchemaResolution {
+  const resolution = resolveSchemaMode(engine, get, { cli, nodeEnv: process.env.NODE_ENV, prefix: connectionEnvPrefix(name) });
+  logSchemaMode(name, resolution);
+  lastResolution.set(name, resolution);
+  return resolution;
+}
+
+/** The connection name and schema resolution that produced these options (undefined for options not built here). */
+export function schemaResolutionOf(options: DataSourceOptions): { connection: string; resolution: SchemaResolution } | undefined {
+  return resolutions.get(options);
 }
 
 /** Options for every additional named connection (empty when dormant). */

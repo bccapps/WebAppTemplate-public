@@ -11,3 +11,7 @@ export * from './dbRouting';
 export * from './dbEngine';
 export * from './databases';
 export * from './DatabaseModule';
+export * from './schemaMode';
+export * from './schemaGuard';
+export * from './sqliteBackup';
+export * from './schemaPreflight';

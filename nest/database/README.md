@@ -24,6 +24,10 @@ les utilitaires de moteur), pour fonctionner dans n'importe quel projet quel que
 | Helper | `databases.ts` | `buildMainDataSourceOptions`, `buildExtraDataSourceOptions`, `resolveEntityGlobs`, type `DbContext` |
 | Helper | `dbEngine.ts` | Ré-exporte depuis `common/utils/dbEngine.ts` (où ils vivent, pour que `common` et `voice` n'importent jamais `database`, absent chez certains projets) : `isSqlite`, `isSqliteDataSource`, `resolveEngine`, types de colonnes portables `jsonColumnType`, `timestampColumnType`, et `portableQuery` (SQL brut `$n` → `?` sous SQLite) |
 | Helper | `dbRouting.ts` | `dbFor`, `connectionToken`, `parseModuleRouting`, `parseConnectionNames`, `isRoutingActive`, `MAIN_CONNECTION` (défini dans `common/utils/dbEngine.ts`, ré-exporté) |
+| Helper | `schemaMode.ts` | `resolveSchemaMode` (fonction pure : `synchronize` / `migrationsRun` / migrations chargées), `detectTypeormCli`, `logSchemaMode` — voir « Gestion du schéma » |
+| Helper | `schemaGuard.ts` | `evaluateSchemaGuard` (pur), `inspectSchemaState`, `runSchemaGuard` : garde-fous au démarrage |
+| Helper | `sqliteBackup.ts` | `backupSqliteIfVersionChanged`, `resolveAppVersion`, `pruneBackups` : copie du fichier SQLite avant mise à jour du schéma |
+| Helper | `schemaPreflight.ts` | `prepareSchema` : garde-fous + sauvegarde, appelé par `DatabaseModule` avant `initialize()` |
 | Barrel | `index.ts` | Ré-exporte tout le module |
 
 Pas d'entités, de contrôleurs ni d'endpoints HTTP (module d'infrastructure pur).
@@ -84,8 +88,11 @@ imports: [
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | main | Connexion par défaut (inchangé) |
 | `DB_SSLMODE` / `DB_SSLROOTCERT` / `DB_POOLSIZE` | main | SSL + pool |
 | `DB_ENGINE` ou `DATABASE_ENGINE` (`postgres`/`cloud`/`neon`/`supabase`/`sqlite`) / `TYPEORM_SYNC` | main | Moteur (défaut `postgres`) + synchronize |
+| `DB_SCHEMA_MODE` (`sync` / `migrations` / `manual`) | main (`DB__<NAME>__SCHEMA_MODE` pour une nommée) | **Gestion du schéma** (voir « Schema management » ci-dessous) ; vide = anciens réglages |
 | `DB_PATH` | main | SQLite : fichier de base (absolu, `:memory:`, ou relatif à `APP_DATA_DIR` si défini, sinon au dossier `back/`) |
-| `DB_MIGRATIONS_RUN=true` | main | Exécute les migrations au démarrage (tous moteurs ; usage typique : app de bureau) |
+| `DB_MIGRATIONS_RUN=true` | main | ANCIEN alias : exécute les migrations au démarrage (tous moteurs ; usage typique : app de bureau) |
+| `DB_BACKUP_REQUIRED=true` | sqlite | Une sauvegarde échouée avant mise à jour du schéma bloque le démarrage (sinon : journalisée) |
+| `APP_VERSION` | sqlite | Version de l'appli pour la sauvegarde (défaut : `version` du `package.json` du dossier `back/`) |
 | `DB_CONNECTIONS=analytics,archive` | — | Liste des connexions nommées additionnelles |
 | `DB__<NAME>__HOST` / `__PORT` / `__USER` / `__PASSWORD` / `__NAME` | nommée | Idem `DB_*` mais pour la connexion `<NAME>` |
 | `DB__<NAME>__SSLMODE` / `__SSLROOTCERT` / `__POOLSIZE` / `__ENGINE` / `__SYNC` / `__PATH` | nommée | Options de la connexion `<NAME>` |
@@ -200,6 +207,55 @@ semble à peine sollicité. Garder `DB_POOLSIZE` bas côté dev (2-3 : un seul d
 laisser la marge à l'environnement qui sert du vrai trafic. Le boot log `[DB] "<name>" pool:
 max=...` (émis pour tout moteur cloud) permet de vérifier la valeur effective sans requêter
 `pg_stat_activity`.
+
+## Gestion du schéma (Schema management)
+
+Une seule règle, déterministe, pour tous les projets et les deux moteurs : `resolveSchemaMode` (`schemaMode.ts`, fonction pure) décide de
+`synchronize`, `migrationsRun` et du chargement des migrations, et le journalise une fois au démarrage :
+`[DB] schema mode: <mode> (<raison>)`.
+
+| `DB_SCHEMA_MODE` | `synchronize` | migrations | Usage |
+|---|---|---|---|
+| `sync` | oui | non chargées | dev ; SQLite dont les migrations sont du SQL Postgres (ex. variante bureau d'AgentHub) ; prod Postgres pilotée par `synchronize` (warning : un changement destructif d'entité **supprime** des données) |
+| `migrations` | non | chargées **et jouées au démarrage** | SQLite avec migrations propres (bureau) ; prod Postgres où les migrations sont la seule source du schéma |
+| `manual` | non | chargées, **non jouées** | prod Postgres classique : migrations appliquées à la main (`typeorm migration:run`, `run.sh --migrate`) |
+
+Un `DB_SCHEMA_MODE` invalide arrête le démarrage en nommant les valeurs acceptées. `sync` et `migrationsRun` ne sont **jamais** combinés par ce réglage.
+
+**Ordre de résolution** — (1) le **CLI typeorm** (détecté : `typeorm`/`typeorm-ts-node-*` dans `argv`, ou `TYPEORM_CLI=1`, ou
+`buildMainDataSourceOptions(ctx, { cli: true })`) charge **toujours** les migrations et ne synchronise **ni** ne joue jamais rien
+automatiquement, quel que soit l'environnement ; (2) `DB_SCHEMA_MODE` ; (3) les **anciens réglages**, résolus exactement comme avant
+(la table complète est figée dans `schemaMode.legacy.fixture.json`, test `schemaMode.characterization.spec.ts`) :
+
+| Moteur | Anciens réglages (sans `DB_SCHEMA_MODE`) |
+|---|---|
+| Postgres | `DB_SYNC`/`TYPEORM_SYNC` → `synchronize` (défaut : `NODE_ENV !== 'production'`), `DB_MIGRATIONS_RUN` → `migrationsRun`, **indépendants**, migrations toujours chargées |
+| SQLite | `DB_MIGRATIONS_RUN` ou `DB_SQLITE_MIGRATIONS` vrai → migrations propres (chargées, `synchronize` comme Postgres) ; sinon `synchronize` (défaut **oui**) et migrations non chargées |
+
+**Garde-fous au démarrage** (`schemaGuard.ts`, appelés par `DatabaseModule` avant que TypeORM n'applique le schéma, via une connexion
+de sonde sans entités) : `DB_SCHEMA_MODE=migrations` sur une base qui a des tables **sans** table `migrations` (construite par
+`synchronize`) → **arrêt** avec les trois issues (passer en `sync`, repartir d'une base vide, ou « baseline »), au lieu de « table
+already exists » ; `synchronize` sur une base dont la table `migrations` liste des migrations appliquées → avertissement « MIXED SCHEMA
+MANAGEMENT ». Avec les anciens réglages (`DB_MIGRATIONS_RUN` seul) ce n'est qu'un avertissement : des migrations idempotentes marchaient
+sur une base construite par `synchronize`.
+
+**Sauvegarde SQLite** (`sqliteBackup.ts`) : `synchronize` recrée une table quand une colonne d'entité change, et une colonne
+supprimée ou retypée par une nouvelle version perd ses données. Avant d'appliquer le schéma à un fichier **existant** dont la
+version de l'appli a changé depuis le dernier démarrage (`<db>.version`), une copie cohérente (API de sauvegarde en ligne de
+`better-sqlite3`) est faite : `<db>.bak-<ancienneVersion>-<horodatage>`, les 3 dernières sont conservées. Jamais pour `:memory:` ;
+un échec est journalisé sans bloquer (sauf `DB_BACKUP_REQUIRED=true`). Version : `APP_VERSION`, sinon `version` du `package.json`
+de `back/`. Le CLI typeorm ne sauvegarde pas.
+
+**Scénarios**
+
+| Scénario | Réglage |
+|---|---|
+| Dev (Postgres ou SQLite) | rien : `synchronize` actif hors production (SQLite : toujours) |
+| Prod Postgres, migrations manuelles | `DB_SCHEMA_MODE=manual` (ancien équivalent : `TYPEORM_SYNC=false`) puis `typeorm migration:run` / `run.sh prod --migrate` |
+| Prod Postgres, migrations jouées au démarrage | `DB_SCHEMA_MODE=migrations` (ancien : `DB_MIGRATIONS_RUN=true` + `TYPEORM_SYNC=false`) |
+| Prod Postgres pilotée par `synchronize` (AgentHub) | `DB_SCHEMA_MODE=sync` (ancien : `TYPEORM_SYNC=true`, **inchangé** tant qu'il n'est pas migré) ; les migrations restent applicables à la main par le CLI |
+| Bureau SQLite, schéma par `synchronize` | `"schema": "sync"` dans `desktop.config.json` (la coquille force `DB_SCHEMA_MODE=sync`) |
+| Bureau SQLite, migrations propres | `"schema": "migrations"` (absent = ancien comportement : la coquille force `DB_MIGRATIONS_RUN=true`) |
 
 ## Câbler un module vers une connexion nommée
 

@@ -21,6 +21,7 @@ import { DynamicModule, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { DbContext, buildExtraDataSourceOptions } from './databases';
+import { prepareSchema } from './schemaPreflight';
 
 export interface DatabaseModuleOptions {
   /** Project-specific entity/migration locations. */
@@ -40,7 +41,10 @@ export class DatabaseModule {
     const mainImport = TypeOrmModule.forRootAsync({
       useFactory: () => ({ ...mainDataSource.options }),
       dataSourceFactory: async () => {
-        if (!mainDataSource.isInitialized) await mainDataSource.initialize();
+        if (!mainDataSource.isInitialized) {
+          await prepareSchema(mainDataSource.options, context);
+          await mainDataSource.initialize();
+        }
         return mainDataSource;
       },
     });
@@ -52,7 +56,10 @@ export class DatabaseModule {
           useFactory: () => dsOptions,
           dataSourceFactory: async () => {
             const dataSource = new DataSource(dsOptions);
-            if (!dataSource.isInitialized) await dataSource.initialize();
+            if (!dataSource.isInitialized) {
+              await prepareSchema(dsOptions, context);
+              await dataSource.initialize();
+            }
             return dataSource;
           },
         })
