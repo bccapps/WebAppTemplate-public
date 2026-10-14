@@ -19,6 +19,9 @@ set -euo pipefail
 #
 # Usage:
 #   ./scripts/run.sh dev              Start infra + back + front
+#   ./scripts/run.sh --trace-deprecation   Same as `dev`, with the back started under `node --trace-deprecation`
+#                                     (full stack of every deprecation warning); also accepted after any
+#                                     command, e.g. `dev --trace-deprecation` (only `dev` starts a local back)
 #   ./scripts/run.sh dev --infra-only Start only infra containers
 #                                     (dev also starts scripts-local/dev-services.sh when
 #                                     present and executable — DEV_SERVICES_HOOK, opt-in)
@@ -367,7 +370,13 @@ cmd_dev() {
   # Tee output to a log file so it can be inspected after the fact (terminal scrollback is lost on restart).
   # Process substitution (not a pipe) so $! below still captures npm's own PID,
   # which cleanup_dev relies on to find and kill the whole process tree.
-  npm run start:dev </dev/null > >(tee "${back_log}") 2>&1 &
+  # --trace-deprecation: the back's node process prints the full stack of each deprecation warning (front untouched).
+  local back_node_options="${NODE_OPTIONS:-}"
+  if [[ "${TRACE_DEPRECATION:-0}" == "1" ]]; then
+    back_node_options="--trace-deprecation ${back_node_options}"
+    info "Back runs with --trace-deprecation"
+  fi
+  NODE_OPTIONS="${back_node_options}" npm run start:dev </dev/null > >(tee "${back_log}") 2>&1 &
   back_pid=$!
   cd "${PROJECT_ROOT}"
 
@@ -651,12 +660,29 @@ usage() {
   echo ""
   echo "Commands:"
   echo "  dev [--infra-only]       Start dev environment"
+  echo "  --trace-deprecation      Global flag: back under node --trace-deprecation (alone = dev)"
   echo "  preprod [--target=...]   Deploy to preprod (uses back/.env.preprod + front/.env.preprod)"
   echo "  prod                     Run deploy-remote.sh"
   echo "  stop [dev|preprod|all]   Stop environment(s)"
   echo "  status                   Show running services"
   echo ""
 }
+
+# `--trace-deprecation` is a global flag (any position); alone it means `dev`.
+TRACE_DEPRECATION=0
+_run_args=()
+for _arg in "$@"; do
+  if [[ "${_arg}" == "--trace-deprecation" ]]; then
+    TRACE_DEPRECATION=1
+  else
+    _run_args+=("${_arg}")
+  fi
+done
+set -- ${_run_args[@]+"${_run_args[@]}"}
+if [[ $# -lt 1 && "${TRACE_DEPRECATION}" == "1" ]]; then
+  set -- dev
+fi
+export TRACE_DEPRECATION
 
 if [[ $# -lt 1 ]]; then
   usage
