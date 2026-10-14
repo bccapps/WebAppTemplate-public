@@ -14,6 +14,8 @@ import {
   allowedHostPorts,
   isLocalHostHeader,
   isLocalOrigin,
+  allowedLocalOrigins,
+  isTrustedBrowserContext,
   isLocalTrustEnabled,
   isLocalTrustRequest,
   isLoopbackAddress,
@@ -83,10 +85,13 @@ describe('isLocalTrustRequest matrix', () => {
     ['local Host', 'localhost:3000', true],
     ['foreign Host', 'evil.example:3000', false],
   ] as const;
+  // The app's own origin is trusted; another loopback port is not (an agent's dev server, a preview), nor a foreign site.
   const origins = [
     ['no Origin', undefined, true],
-    ['local Origin', 'http://localhost:5173', true],
+    ['own Origin', 'http://localhost:3000', true],
+    ['other loopback port Origin', 'http://localhost:5173', false],
     ['foreign Origin', 'https://evil.example', false],
+    ['opaque Origin', 'null', false],
   ] as const;
 
   for (const [sn, addr, sOk] of sockets) {
@@ -175,5 +180,39 @@ describe('AnonymousAuthProvider local trust', () => {
     Object.assign(process.env, { LOCAL_TRUST: 'true' });
     delete process.env.HOST;
     expect(() => new AnonymousAuthProvider()).toThrow(/LOCAL_TRUST=true requires HOST/);
+  });
+});
+
+describe('browser context (Origin / Sec-Fetch-Site)', () => {
+  const host = 'localhost:3000';
+
+  it('trusts a client that sends neither Origin nor Sec-Fetch-Site (curl, native)', () => {
+    expect(isTrustedBrowserContext({}, host, ENV)).toBe(true);
+  });
+
+  it('trusts a browser navigation or same-origin fetch, refuses same-site and cross-site ones', () => {
+    for (const site of ['same-origin', 'none']) expect(isTrustedBrowserContext({ 'sec-fetch-site': site }, host, ENV)).toBe(true);
+    for (const site of ['same-site', 'cross-site', '', 'weird']) expect(isTrustedBrowserContext({ 'sec-fetch-site': site }, host, ENV)).toBe(false);
+  });
+
+  it('accepts the own origin and the CLIENT_ORIGINS allow-list, whatever Sec-Fetch-Site says', () => {
+    const env = { ...ENV, CLIENT_ORIGINS: 'http://localhost:5173, https://app.example.com, *' };
+    expect(isTrustedBrowserContext({ origin: 'http://localhost:3000', 'sec-fetch-site': 'same-origin' }, host, env)).toBe(true);
+    expect(isTrustedBrowserContext({ origin: 'http://localhost:5173', 'sec-fetch-site': 'same-site' }, host, env)).toBe(true);
+    // a non-loopback allow-listed origin never becomes local-trust (CORS lets it call the API, it does not make it the local admin)
+    expect(isTrustedBrowserContext({ origin: 'https://app.example.com' }, host, env)).toBe(false);
+    expect(isTrustedBrowserContext({ origin: 'http://localhost:5174' }, host, env)).toBe(false);
+  });
+
+  it('never trusts the opaque origin, an array Origin or a non-http scheme', () => {
+    const env = { ...ENV, CLIENT_ORIGINS: 'null' };
+    for (const origin of ['null', 'tauri://localhost', '', ['http://localhost:3000']] as const) {
+      expect(isTrustedBrowserContext({ origin: origin as string }, host, env)).toBe(false);
+    }
+  });
+
+  it('adds the front dev port only with APP_ENV=dev', () => {
+    expect(allowedLocalOrigins(host, { ...ENV, FRONT_PORT: '5173', APP_ENV: 'dev' })).toContain('http://localhost:5173');
+    expect(allowedLocalOrigins(host, { ...ENV, FRONT_PORT: '5173', APP_ENV: 'prod' })).not.toContain('http://localhost:5173');
   });
 });

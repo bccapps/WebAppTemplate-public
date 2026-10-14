@@ -132,6 +132,48 @@ direct) reste Postgres uniquement.
 Test d'intégration SQLite en mémoire : `common/sqlite.integration.spec.ts` (nécessite `better-sqlite3`, non
 inclus dans `package.base.json`).
 
+### Portabilité automatique Postgres → SQLite
+
+Choisir SQLite (`DATABASE_ENGINE=sqlite`) ne demande plus de réécrire les entités : `buildMainDataSourceOptions()` appelle
+`applyPortableColumnTypes('sqlite')` (`common/utils/portableTypes.ts`, ré-exporté ici) avant que TypeORM ne valide les métadonnées.
+Sous Postgres rien n'est appelé : le comportement est identique.
+
+| Automatique (SQLite) | Résultat |
+|---|---|
+| `jsonb` / `json` / `hstore`, `array: true` | `simple-json` (texte JSON) |
+| `timestamptz`, `timestamp [with/without time zone]`, `timetz` | `datetime` / `time` (`precision` retiré) |
+| `enum` | `simple-enum` ; `bytea` → `blob` ; `int2/int4/int8/float4/float8/bool` → types SQLite ; `citext/inet/cidr/…` → `varchar` |
+| défauts `() => 'now()'`, `gen_random_uuid()`, `'[]'::jsonb`, `'{}'` (tableau) | `CURRENT_TIMESTAMP`, expression UUID v4, `'[]'` |
+| index `concurrent/spatial/fulltext…`, `where` avec casts | retirés / casts supprimés ; un index **unique** partiel inexprimable est supprimé (sinon il sur-contraindrait) |
+| `@Check` avec casts, `@Entity({ schema })`, `generated: 'identity'` | casts supprimés / schéma ignoré / `increment` |
+
+Les décorateurs évalués **après** l'appel (TypeORM importe les entités ensuite) sont adaptés à l'enregistrement. Si une autre connexion
+tourne sous Postgres, l'adaptation automatique est **désactivée** (les métadonnées sont globales au processus) : utiliser alors
+`jsonColumnType()`/`timestampColumnType()` dans les entités de la connexion SQLite. `DB_PORTABLE_LOG=false` supprime la ligne de bilan.
+
+**Pas traduit automatiquement** (voir `common/utils/dbDialect.ts` et l'opérateur TypeORM `ILike()`) : `ILIKE`, `::cast`, `@>`, `->>`,
+`to_char`, `date_trunc`, `RETURNING`, `NOW()`, `ANY()`, `FOR UPDATE`/`setLock`, `generate_series`, `DISTINCT ON`, les advisory locks.
+`dialect()` / `dialectOf(dataSource)` fournissent `ilike`, `monthBucket`, `dayBucket`, `now`, `epochSeconds`, `castText`,
+`jsonExtract(col, 'a.b')`, `jsonArrayContains(col, ':param')`, `forUpdate`, `lockForWrite(qb)`. Côté lecture : `parseDbDate` (un
+`MAX(date)` brut revient **sans fuseau** sous SQLite), `toNumber` (agrégats : chaînes sous Postgres, nombres sous SQLite),
+`isUniqueViolation` / `isForeignKeyViolation` / `isNotNullViolation` (codes Postgres et SQLite).
+
+Différences de sémantique à connaître : le JSON est du texte (aucune requête/indice à l'intérieur de la colonne), les dates n'ont pas de
+fuseau (UTC par convention), un entier au-delà de 2^53 perd de la précision, **un seul écrivain** (verrou d'écriture unique,
+`busy_timeout` = `DB_BUSY_TIMEOUT_MS`, 5000 ms par défaut), pas de verrous de ligne, `ALTER` = recréation de table (garder les
+changements d'entités **additifs** entre deux versions, sauvegarder le fichier avant une mise à jour).
+
+**Défauts SQLite** : sans migrations propres, le schéma vient de `synchronize` (**activé par défaut, même en production** ; `DB_SYNC=false`
+l'emporte) et les migrations (écrites en SQL Postgres) ne sont **pas chargées**. Une appli qui livre ses **propres migrations SQLite**
+(`DB_MIGRATIONS_RUN=true` ou `DB_SQLITE_MIGRATIONS=true`) garde le comportement historique : migrations chargées, `synchronize` résolu
+comme sous Postgres (défaut désactivé en production). Pragmas : WAL, `synchronous = NORMAL`, `foreign_keys = ON`, `busy_timeout`.
+
+**Garde-fou** — `npm run db:check` (`scripts/db-portability-check.mjs`, sans base) : (1) scan statique de `src/**` (hors tests, migrations
+et modules partagés liés) pour le SQL propre à Postgres, exemptable ligne par ligne par `// pg-only: <raison>` ; (2) base SQLite en
+mémoire construite depuis les entités de l'appli (modules dont `module.json` n'a pas `sqlite` dans `databases` ignorés) puis
+synchronisée. Options : `--json`, `--static-only`, `--schema-only`, `--include-postgres-only`, `--include-shared`. Code de sortie 0 / 1 / 2.
+Gabarit de suite Jest SQLite : `template/back/sqlite-harness/`.
+
 ### Taille du pool (`DB_POOLSIZE`)
 
 `DB_POOLSIZE` fixe le nombre max de connexions **par instance applicative**. Sur un moteur

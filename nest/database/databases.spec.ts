@@ -22,7 +22,7 @@ const ENV_KEYS = [
   'DB_ENGINE', 'DATABASE_ENGINE', 'DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME',
   'DB_SSLMODE', 'DB_POOLSIZE', 'DB_PATH', 'DB_SYNC', 'TYPEORM_SYNC', 'DB_MIGRATIONS_RUN',
   'DB_CONNECTIONS', 'DB_MODULE_ROUTING', 'DB__ARCHIVE__ENGINE', 'DB__ARCHIVE__PATH',
-  'DB__ARCHIVE__HOST', 'NODE_ENV', 'APP_DATA_DIR',
+  'DB__ARCHIVE__HOST', 'NODE_ENV', 'APP_DATA_DIR', 'DB_SQLITE_MIGRATIONS', 'DB_BUSY_TIMEOUT_MS',
 ];
 
 describe('database options', () => {
@@ -107,7 +107,16 @@ describe('database options', () => {
       expect(o.type).toBe('better-sqlite3');
       expect(o.database).toBe(join(backDir, 'data/app.db'));
       expect(existsSync(join(backDir, 'data'))).toBe(true);
-      expect(o.migrations).toEqual([join(backDir, 'src/migrations/*.{js,ts}')]);
+      // No SQLite migrations of its own: the Postgres-SQL migrations are never loaded, the schema comes from `synchronize`.
+      expect(o.migrations).toEqual([]);
+    });
+
+    it('keeps the migrations of an app that ships SQLite migrations (DB_MIGRATIONS_RUN or DB_SQLITE_MIGRATIONS)', () => {
+      Object.assign(process.env, { DB_ENGINE: 'sqlite', DB_PATH: ':memory:', DB_MIGRATIONS_RUN: 'true' });
+      expect(buildMainDataSourceOptions(ctx())).toMatchObject({ migrations: [join(backDir, 'src/migrations/*.{js,ts}')] });
+      delete process.env.DB_MIGRATIONS_RUN;
+      process.env.DB_SQLITE_MIGRATIONS = 'true';
+      expect(buildMainDataSourceOptions(ctx())).toMatchObject({ migrations: [join(backDir, 'src/migrations/*.{js,ts}')] });
     });
 
     it('resolves a relative path from APP_DATA_DIR when set, not from certBaseDir', () => {
@@ -145,6 +154,11 @@ describe('database options', () => {
       o.prepareDatabase({ pragma });
       expect(pragma).toHaveBeenCalledWith('journal_mode = WAL');
       expect(pragma).toHaveBeenCalledWith('foreign_keys = ON');
+      expect(pragma).toHaveBeenCalledWith('busy_timeout = 5000');
+      process.env.DB_BUSY_TIMEOUT_MS = '1500';
+      const custom = jest.fn();
+      (buildMainDataSourceOptions(ctx()) as unknown as { prepareDatabase: (db: { pragma: (s: string) => void }) => void }).prepareDatabase({ pragma: custom });
+      expect(custom).toHaveBeenCalledWith('busy_timeout = 1500');
     });
 
     it('sets migrationsRun only when DB_MIGRATIONS_RUN is true', () => {
@@ -154,11 +168,18 @@ describe('database options', () => {
       expect(buildMainDataSourceOptions(ctx())).toMatchObject({ migrationsRun: true });
     });
 
-    it('follows the synchronize rules (production default off, override on)', () => {
-      Object.assign(process.env, { DB_ENGINE: 'sqlite', DB_PATH: ':memory:', NODE_ENV: 'production' });
+    it('app with SQLite migrations: synchronize follows the Postgres rules (production default off, override on)', () => {
+      Object.assign(process.env, { DB_ENGINE: 'sqlite', DB_PATH: ':memory:', NODE_ENV: 'production', DB_MIGRATIONS_RUN: 'true' });
       expect(buildMainDataSourceOptions(ctx())).toMatchObject({ synchronize: false });
       process.env.DB_SYNC = 'true';
       expect(buildMainDataSourceOptions(ctx())).toMatchObject({ synchronize: true });
+    });
+
+    it('app without SQLite migrations: synchronize is ON by default even in production, an explicit false wins', () => {
+      Object.assign(process.env, { DB_ENGINE: 'sqlite', DB_PATH: ':memory:', NODE_ENV: 'production' });
+      expect(buildMainDataSourceOptions(ctx())).toMatchObject({ synchronize: true });
+      process.env.DB_SYNC = 'false';
+      expect(buildMainDataSourceOptions(ctx())).toMatchObject({ synchronize: false });
     });
 
     it('requires DB_PATH', () => {

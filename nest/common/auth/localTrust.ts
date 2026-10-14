@@ -17,7 +17,11 @@
  *  - `Host` is a loopback name (`127.0.0.1`, `localhost`, `[::1]`) on the listening port `NODE_PORT` (blocks DNS rebinding).
  *    With `APP_ENV=dev` only, the front dev server port `FRONT_PORT` is also accepted (the Vite proxy may keep the
  *    browser's `Host`; it adds no `X-Forwarded-*` header unless `xfwd` is set);
- *  - `Origin` is absent or an http(s) loopback origin (blocks cross-site pages aimed at the local port).
+ *  - the browser context is the app's own: with no `Origin`, `Sec-Fetch-Site` is absent (non-browser client) or `same-origin`/`none`;
+ *    with an `Origin`, it is a loopback http(s) origin equal to the app's own (the request `Host`) or listed in `CLIENT_ORIGINS`
+ *    (or, with `APP_ENV=dev`, the front dev server `FRONT_PORT`). `Origin: null` (sandboxed frames), another loopback port and a
+ *    cross-site/same-site fetch without allow-listed Origin are refused: a page served from this machine (an agent's dev server,
+ *    a preview) must not act as the administrator.
  */
 
 export type LocalTrustEnv = Record<string, string | undefined>;
@@ -92,6 +96,50 @@ export function isLocalOrigin(origin: string | string[] | undefined): boolean {
   return (url.protocol === 'http:' || url.protocol === 'https:') && LOOPBACK_NAMES.has(url.hostname.toLowerCase());
 }
 
+/** Normalised `scheme://host:port` of an origin string (default ports kept implicit by `URL`), or `null` when it is not a URL. */
+function normalizedOrigin(origin: string): string | null {
+  try {
+    return new URL(origin).origin.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Origins allowed to call the API with local-trust: the app's own (same host:port as the request `Host`, either scheme), the
+ * `CLIENT_ORIGINS` allow-list (the CORS one) and, with `APP_ENV=dev`, the front dev server port on the loopback names.
+ */
+export function allowedLocalOrigins(host: string, env: LocalTrustEnv = process.env): string[] {
+  const allowed = [`http://${host.toLowerCase()}`, `https://${host.toLowerCase()}`];
+  for (const entry of (env.CLIENT_ORIGINS ?? '').split(',')) {
+    const trimmed = entry.trim();
+    if (!trimmed || trimmed === '*') continue;
+    const normalized = normalizedOrigin(trimmed);
+    if (normalized) allowed.push(normalized);
+  }
+  const frontPort = env.FRONT_PORT?.trim();
+  if (env.APP_ENV?.trim().toLowerCase() === 'dev' && frontPort) {
+    for (const name of LOOPBACK_NAMES) allowed.push(`http://${name}:${frontPort}`);
+  }
+  return allowed;
+}
+
+/**
+ * Browser-context check (CSRF / foreign local pages). Without `Origin`: a non-browser client sends no `Sec-Fetch-Site` either, a
+ * browser sends `same-origin` or `none` (address-bar navigation); `same-site`/`cross-site` are refused. With `Origin`: loopback,
+ * and equal to the app's own origin or allow-listed; the opaque `null` origin never passes.
+ */
+export function isTrustedBrowserContext(headers: NonNullable<LocalTrustRequest['headers']>, host: string, env: LocalTrustEnv = process.env): boolean {
+  const origin = headers['origin'];
+  if (origin === undefined) {
+    const site = headers['sec-fetch-site'];
+    return site === undefined || site === 'same-origin' || site === 'none';
+  }
+  if (typeof origin !== 'string' || !isLocalOrigin(origin)) return false;
+  const normalized = normalizedOrigin(origin);
+  return normalized !== null && allowedLocalOrigins(host, env).includes(normalized);
+}
+
 /** Whether `req` may be treated as the local administrator. The caller still checks `isLocalTrustEnabled`. */
 export function isLocalTrustRequest(req: LocalTrustRequest, env: LocalTrustEnv = process.env): boolean {
   const headers = req.headers ?? {};
@@ -99,5 +147,5 @@ export function isLocalTrustRequest(req: LocalTrustRequest, env: LocalTrustEnv =
   if (PROXY_HEADERS.some((h) => headers[h] !== undefined)) return false;
   const host = headers['host'];
   if (typeof host !== 'string' || !isLocalHostHeader(host, allowedHostPorts(env))) return false;
-  return isLocalOrigin(headers['origin']);
+  return isTrustedBrowserContext(headers, host, env);
 }

@@ -21,3 +21,11 @@ export {
   isSqliteDataSource,
   portableQuery,
 } from '../common/utils/dbEngine';
+
+/** Automatic Postgres → SQLite entity metadata adaptation, SQL dialect helpers and cross-engine runtime helpers (additions). */
+export { applyPortableColumnTypes, portableTypesTotals, mapPostgresType, rewriteSqlDefault } from '../common/utils/portableTypes';
+export type { PortableTypesReport } from '../common/utils/portableTypes';
+export { dialect, dialectOf } from '../common/utils/dbDialect';
+export type { Dialect } from '../common/utils/dbDialect';
+export { parseDbDate, parseDbDateOrNull, toNumber } from '../common/utils/dbDate';
+export { isUniqueViolation, isForeignKeyViolation, isNotNullViolation } from '../common/utils/dbErrors';

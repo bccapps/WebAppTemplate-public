@@ -36,6 +36,7 @@ import {
 } from './dbRouting';
 import { resolveAppDataDir } from '../common/utils/appDataDir';
 import { connectionEnvPrefix, readConnectionEnv, resolveEngine } from './dbEngine';
+import { applyPortableColumnTypes } from '../common/utils/portableTypes';
 
 /** Project-specific locations, resolved by the consuming project. */
 export interface DbContext {
@@ -118,7 +119,53 @@ function migrationsRunOption(get: EnvGetter): { migrationsRun?: true } {
   return raw === 'true' || raw === '1' ? { migrationsRun: true } : {};
 }
 
-/** SQLite options (better-sqlite3): file path, WAL, foreign keys; no network/pool/SSL options. */
+/**
+ * An SQLite app that ships its OWN migrations (hand-written for SQLite, run at start with `DB_MIGRATIONS_RUN=true`, or opted in with
+ * `DB_SQLITE_MIGRATIONS=true`) keeps the historical behaviour: migrations loaded, `synchronize` resolved like Postgres
+ * (production default off). Every other SQLite app (typically an entity set written for Postgres, migrations in Postgres SQL)
+ * gets the "sync" defaults below.
+ */
+function sqliteUsesMigrations(get: EnvGetter): boolean {
+  const flag = (value: string | undefined): boolean => value?.trim().toLowerCase() === 'true' || value?.trim() === '1';
+  return flag(get('MIGRATIONS_RUN')) || flag(get('SQLITE_MIGRATIONS'));
+}
+
+/**
+ * `synchronize` on SQLite when the app has no SQLite migrations: the schema comes from `synchronize`, so unlike Postgres it
+ * defaults to ON whatever `NODE_ENV` is (an explicit `DB_SYNC=false` / `TYPEORM_SYNC=false` still wins).
+ * Consequence: a new version of the app alters the file's tables to match its entities (SQLite recreates a table to change a
+ * column). Keep entity changes additive between releases, and back the file up before an update.
+ */
+function resolveSqliteSynchronize(get: EnvGetter): boolean {
+  const syncRaw = get('SYNC', 'TYPEORM_SYNC')?.trim().toLowerCase();
+  return syncRaw ? syncRaw === 'true' || syncRaw === '1' : true;
+}
+
+/** SQLite busy timeout (ms) before a writer gives up on the single write lock (`DB_BUSY_TIMEOUT_MS`, default 5000). */
+function sqliteBusyTimeoutMs(get: EnvGetter): number {
+  const raw = Number.parseInt(get('BUSY_TIMEOUT_MS') ?? '', 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 5000;
+}
+
+/**
+ * Entity decorators are written with Postgres column types; on SQLite they are adapted automatically (`jsonb`→`simple-json`,
+ * `timestamptz`→`datetime`, enums, arrays, defaults, Postgres-only indexes — see `common/utils/portableTypes.ts`).
+ * Entity metadata is process-wide: when another connection runs on Postgres the automatic adaptation is skipped (it would also
+ * rewrite that connection's entities), and the entities of the SQLite connection must use `jsonColumnType()`/`timestampColumnType()`.
+ */
+function adaptEntitiesForSqlite(): void {
+  const otherEngines = parseConnectionNames().filter((connection) => resolveEngine(connection) !== 'sqlite');
+  if (resolveEngine(MAIN_CONNECTION) === 'sqlite' && otherEngines.length === 0) {
+    applyPortableColumnTypes('sqlite');
+  } else {
+    console.warn(
+      '[DB] SQLite is used next to another engine: entity column types are NOT adapted automatically; ' +
+        'use jsonColumnType()/timestampColumnType() in the entities of the SQLite connection.'
+    );
+  }
+}
+
+/** SQLite options (better-sqlite3): file path, WAL, foreign keys, busy timeout; no network/pool/SSL options. */
 function buildSqliteOptions(
   name: string,
   entities: string[],
@@ -133,18 +180,28 @@ function buildSqliteOptions(
   const memory = rawPath === ':memory:';
   const database = memory || isAbsolute(rawPath) ? rawPath : join(resolveAppDataDir() ?? ctx.certBaseDir ?? process.cwd(), rawPath);
   if (!memory) mkdirSync(dirname(database), { recursive: true });
+  adaptEntitiesForSqlite();
+  const busyTimeoutMs = sqliteBusyTimeoutMs(get);
+  const ownMigrations = sqliteUsesMigrations(get);
   return {
     ...(isMain ? {} : { name }),
     type: 'better-sqlite3',
     database,
     entities,
-    migrations: isMain ? ctx.migrationGlobs : [],
-    synchronize: resolveSynchronize(get),
-    ...migrationsRunOption(get),
+    // Without SQLite migrations of its own the app's migrations are Postgres SQL: never loaded (no per-migration guard needed), the
+    // schema comes from `synchronize`. An app with SQLite migrations keeps the historical options.
+    migrations: ownMigrations ? (isMain ? ctx.migrationGlobs : []) : [],
+    synchronize: ownMigrations ? resolveSynchronize(get) : resolveSqliteSynchronize(get),
+    ...(ownMigrations ? migrationsRunOption(get) : {}),
     logging: ['error'],
-    // WAL: concurrent readers while writing. foreign_keys is also forced by the driver.
+    // better-sqlite3 holds ONE connection (SQLite has a single writer): there is no pool to size. WAL: concurrent readers while
+    // writing; `synchronous = NORMAL` is safe with WAL; foreign_keys is also forced by the driver.
     prepareDatabase: (db: { pragma: (sql: string) => unknown }) => {
-      if (!memory) db.pragma('journal_mode = WAL');
+      if (!memory) {
+        db.pragma('journal_mode = WAL');
+        db.pragma('synchronous = NORMAL');
+      }
+      db.pragma(`busy_timeout = ${busyTimeoutMs}`);
       db.pragma('foreign_keys = ON');
     },
   } as DataSourceOptions;

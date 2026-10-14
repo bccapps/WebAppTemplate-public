@@ -46,15 +46,28 @@ describe('local trust over HTTP', () => {
   it('grants local-trust to a genuine local request', async () => {
     await boot({ LOCAL_TRUST: 'true' });
     const res = await get({ Host: 'localhost:3000' });
+    expect((await get({ Host: 'localhost:3000', 'Sec-Fetch-Site': 'same-origin' })).status).toBe(200);
+    expect((await get({ Host: 'localhost:3000', 'Sec-Fetch-Site': 'none' })).status).toBe(200);
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ admin: true, mode: 'local-trust' });
+    // The app's own origin (same host:port as Host) is fine; another loopback port is not, unless allow-listed.
+    expect((await get({ Host: '127.0.0.1:3000', Origin: 'http://127.0.0.1:3000' })).status).toBe(200);
+    expect((await get({ Host: '127.0.0.1:3000', Origin: 'http://localhost:5173' })).status).toBe(401);
+  });
+
+  it('accepts a loopback Origin listed in CLIENT_ORIGINS (the dev front on its own port)', async () => {
+    await boot({ LOCAL_TRUST: 'true', CLIENT_ORIGINS: 'http://localhost:5173' });
     expect((await get({ Host: '127.0.0.1:3000', Origin: 'http://localhost:5173' })).status).toBe(200);
+    expect((await get({ Host: '127.0.0.1:3000', Origin: 'http://localhost:5174' })).status).toBe(401);
   });
 
   it.each([
     ['foreign Host (DNS rebinding)', { Host: 'evil.example:3000' }],
     ['foreign Origin (cross-site page)', { Host: 'localhost:3000', Origin: 'https://evil.example' }],
     ['opaque Origin', { Host: 'localhost:3000', Origin: 'null' }],
+    ['another loopback port (an agent dev server)', { Host: 'localhost:3000', Origin: 'http://localhost:8080' }],
+    ['cross-site fetch without Origin (simple GET)', { Host: 'localhost:3000', 'Sec-Fetch-Site': 'cross-site' }],
+    ['same-site fetch without Origin', { Host: 'localhost:3000', 'Sec-Fetch-Site': 'same-site' }],
     ['forged X-Forwarded-For', { Host: 'localhost:3000', 'X-Forwarded-For': '8.8.8.8' }],
     ['wrong port in Host', { Host: 'localhost:4000' }],
   ])('stays anonymous (401) with %s', async (_name, headers) => {
@@ -65,6 +78,7 @@ describe('local trust over HTTP', () => {
   it('accepts the front dev-server Host only with APP_ENV=dev', async () => {
     await boot({ LOCAL_TRUST: 'true', FRONT_PORT: '5173', APP_ENV: 'dev' });
     expect((await get({ Host: 'localhost:5173', Origin: 'http://localhost:5173' })).body.mode).toBe('local-trust');
+    expect((await get({ Host: 'localhost:3000', Origin: 'http://localhost:5173' })).body.mode).toBe('local-trust');
     expect((await get({ Host: 'localhost:5173', 'X-Forwarded-For': '8.8.8.8' })).status).toBe(401);
     expect((await get({ Host: 'localhost:5174' })).status).toBe(401);
   });
