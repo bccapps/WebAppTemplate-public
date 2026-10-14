@@ -390,7 +390,7 @@ export const DESKTOP_IDENTIFIER = /^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-
 /** npm scripts added to back/package.local.json when the desktop option is on (run from `back/`). */
 export const DESKTOP_NPM_SCRIPTS = {
   'desktop:dev': 'npm --prefix ../desktop install && DESKTOP_RESOURCES="$(cd .. && pwd)" npm --prefix ../desktop run dev',
-  'desktop:build': 'npm run build && npm --prefix ../front run build && npm --prefix ../desktop install && node ../scripts/desktop/build-desktop.mjs --root .. --bundle',
+  'desktop:build': '../scripts/app.sh --no-run',
 };
 
 /**

@@ -22,7 +22,9 @@
  *   --skip-install        keep an existing <out>/back/node_modules (no npm ci)
  *   --no-sign             do not sign ad hoc (macOS)
  *   --bundle              then run `tauri build` (macOS: app, ad hoc re-signature, then make-dmg.sh)
- *   --bundles <list>      bundles passed to `tauri build` (default: app on macOS; deb,appimage on Linux; nsis on Windows)
+ *   --bundles <list>      bundles passed to `tauri build` (default: app on macOS; deb,appimage on Linux; nsis on Windows);
+ *                         `none` builds the shell binary only (`tauri build --no-bundle`), run it with DESKTOP_RESOURCES
+ *   --no-dmg              macOS: stop after the .app (no disk image)
  *   --dry-run             print the plan, download and write nothing
  *
  * Only the target's Node and the better-sqlite3 binary change with `--target`; other native modules are listed with
@@ -30,7 +32,7 @@
  */
 
 import { spawnSync } from 'child_process';
-import { chmodSync, cpSync, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from 'fs';
+import { chmodSync, cpSync, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import path from 'path';
 import { pipeline } from 'stream/promises';
 import { Readable } from 'stream';
@@ -41,7 +43,7 @@ import {
   resolveTarget, resourceTopDirs, sha256File,
 } from './lib.mjs';
 
-const FLAGS = new Set(['skip-install', 'no-sign', 'bundle', 'dry-run', 'help']);
+const FLAGS = new Set(['skip-install', 'no-sign', 'bundle', 'no-dmg', 'dry-run', 'help']);
 
 /** Parses `--name value` / `--flag` arguments into an object (flags are `true`). */
 export function parseArgs(argv) {
@@ -63,7 +65,7 @@ export function defaultBundles(target) {
 }
 
 /**
- * `TAURI_CONFIG` override merged by Tauri at build time: maps each resources sub-folder into the bundle (absolute
+ * Override merged by `tauri build --config <file>`: maps each resources sub-folder into the bundle (absolute
  * sources, so `tauri.conf.json` stays clean for `tauri dev`) and, for an ad hoc build on macOS, the `-` identity.
  */
 export function tauriConfigOverride({ resourcesDir, desktopConfig, extraResources, target, sign }) {
@@ -189,17 +191,27 @@ function signAdHoc(out) {
   log(`${count} Mach-O files signed (ad hoc)`);
 }
 
-function bundle({ root, out, desktopConfig, extra, target, sign, bundles, version }) {
+/** `tauri build` arguments for a `--bundles` value (`none`: the binary only) and the override file (`--config`). */
+export function tauriBuildArgs(bundles, configFile) {
+  const base = ['tauri', 'build', '--config', configFile];
+  return bundles === 'none' ? [...base, '--no-bundle'] : [...base, '--bundles', bundles];
+}
+
+function bundle({ root, out, desktopConfig, extra, target, sign, bundles, version, dmg }) {
   const desktop = path.join(root, 'desktop');
   run('node', [path.join('scripts', 'sync-tauri-config.mjs'), ...(version ? ['--version', version] : [])], { cwd: desktop });
   const override = tauriConfigOverride({ resourcesDir: out, desktopConfig, extraResources: extra, target, sign });
-  run('npx', ['tauri', 'build', '--bundles', bundles], { cwd: desktop, env: { ...process.env, TAURI_CONFIG: JSON.stringify(override) }, shell: process.platform === 'win32' });
-  if (target.os !== 'darwin') return;
+  // A file passed with --config: the tauri CLI (2.x) ignores the TAURI_CONFIG variable when it builds the bundle.
+  const configFile = path.join(path.dirname(out), `tauri.override-${target.id}.json`);
+  writeFileSync(configFile, JSON.stringify(override, null, 2));
+  run('npx', tauriBuildArgs(bundles, configFile), { cwd: desktop, shell: process.platform === 'win32' });
+  if (target.os !== 'darwin' || bundles === 'none') return;
   const bundleDir = path.join(desktop, 'src-tauri', 'target', 'release', 'bundle');
   const app = path.join(bundleDir, 'macos', `${desktopConfig.productName}.app`);
   if (sign) run('codesign', ['--force', '--deep', '--sign', '-', app]);
-  const dmg = path.join(bundleDir, 'dmg', dmgName(desktopConfig.productName, version ?? '0.0.0', target));
-  run('sh', [path.join(path.dirname(fileURLToPath(import.meta.url)), 'make-dmg.sh'), '--app', app, '--name', desktopConfig.productName, '--out', dmg]);
+  if (!dmg) return;
+  const dmgFile = path.join(bundleDir, 'dmg', dmgName(desktopConfig.productName, version ?? '0.0.0', target));
+  run('sh', [path.join(path.dirname(fileURLToPath(import.meta.url)), 'make-dmg.sh'), '--app', app, '--name', desktopConfig.productName, '--out', dmgFile]);
 }
 
 async function main() {
@@ -235,7 +247,7 @@ async function main() {
   if (!existsSync(marker)) throw new Error(`Marker missing after assembly: ${marker}`);
   reportNatives(out, target);
   if (sign && target.os === 'darwin' && process.platform === 'darwin') signAdHoc(out);
-  if (opts.bundle) bundle({ root, out, desktopConfig, extra: extraResources, target, sign, bundles: opts.bundles ?? defaultBundles(target), version });
+  if (opts.bundle) bundle({ root, out, desktopConfig, extra: extraResources, target, sign, bundles: opts.bundles ?? defaultBundles(target), version, dmg: !opts['no-dmg'] });
   else log('Resources ready. Next: --bundle, or scripts/desktop/package-cross.mjs for a portable Windows/Linux package.');
 }
 

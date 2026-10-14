@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { defaultBundles, parseArgs, tauriConfigOverride } from './build-desktop.mjs';
+import { defaultBundles, parseArgs, tauriBuildArgs, tauriConfigOverride } from './build-desktop.mjs';
 import { archiveLayout, dataHint } from './package-cross.mjs';
 import {
   NODE_VERSION, archiveExtension, classifyNativeModules, dmgName, expectedSha, findLocaleFiles, findNativeModules, formatPlan,
@@ -149,10 +149,13 @@ test('Tauri override maps resources with absolute sources and ad hoc signing', (
   assert.equal(o.bundle.macOS.signingIdentity, '-');
   assert.equal(tauriConfigOverride({ resourcesDir: '/r', desktopConfig: {}, extraResources: [], target, sign: false }).bundle.macOS, undefined);
   assert.equal(defaultBundles(resolveTarget('win-x64')), 'nsis');
+  assert.deepEqual(tauriBuildArgs('none', '/o.json'), ['tauri', 'build', '--config', '/o.json', '--no-bundle']);
+  assert.deepEqual(tauriBuildArgs('app', '/o.json'), ['tauri', 'build', '--config', '/o.json', '--bundles', 'app']);
 });
 
 test('argument parsing', () => {
   assert.deepEqual(parseArgs(['--target', 'win-x64', '--dry-run']), { target: 'win-x64', 'dry-run': true });
+  assert.deepEqual(parseArgs(['--bundle', '--no-dmg']), { bundle: true, 'no-dmg': true });
   assert.throws(() => parseArgs(['--target']), /needs a value/);
   assert.throws(() => parseArgs(['oops']), /Unexpected/);
 });

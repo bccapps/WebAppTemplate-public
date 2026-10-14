@@ -230,8 +230,13 @@ database. Declare extra processes (a Python engine...) in `desktop.sidecars` of 
 node scripts/add-desktop.mjs --dry-run                 # existing project: print what would happen
 node scripts/add-desktop.mjs --name "My App" --identifier org.acme.myapp
 cd back && npm run desktop:dev                          # needs the Rust toolchain; builds nothing, uses back/dist and front/dist
-cd back && npm run desktop:build                        # builds back + front, then scripts/desktop/build-desktop.mjs --bundle
+./scripts/app.sh                                        # builds the app for this machine and launches it (--no-run, --no-build, --clean)
+./scripts/bundle.sh                                     # packages in desktop/dist/: this machine's installer + win-x64 zip + linux-x64 tar.gz
 ```
+
+`app.sh` and `bundle.sh` (details in `desktop/README.md`, « Build and package scripts ») build back + front, call the project's
+optional `scripts-local/desktop-prepare.sh <target>` (what `packaging.extraResources` copies, e.g. an embedded engine), then
+`scripts/desktop/build-desktop.mjs`. `npm run desktop:build` (from `back/`) is `app.sh --no-run`.
 
 `add-desktop.mjs` has the same effects as answering yes to the question: it copies `desktop/` and the workflow, writes the
 `desktop` section of `project.config.json`, fills `desktop/desktop.config.json`, adds the two scripts to

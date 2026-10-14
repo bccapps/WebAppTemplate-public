@@ -88,7 +88,7 @@ test('buildDesktopConfig fills identity and sidecars, keeps the rest; withDeskto
   assert.deepEqual(config.server, template.server);
   const pkg = withDesktopScripts({ name: 'a', scripts: { 'desktop:dev': 'mine', lint: 'x' } });
   assert.equal(pkg.scripts['desktop:dev'], 'mine');
-  assert.match(pkg.scripts['desktop:build'], /build-desktop\.mjs --root \.\. --bundle/);
+  assert.equal(pkg.scripts['desktop:build'], '../scripts/app.sh --no-run');
 });
 
 test('desktopFiles: the shell and the workflow, no build output', () => {

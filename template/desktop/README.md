@@ -116,6 +116,24 @@ config at run time. Pure logic (config parsing, environment, resources detection
 stop) is covered by `cargo test` in `src-tauri/`; `npm test` runs the Node tests of the sync script. Rust builds are heavy:
 no `cargo build --release` or `tauri build` needed for development.
 
+## Build and package scripts
+
+Two entry points from the project root wrap the steps below (they are what most projects need):
+
+| Script | Does |
+|---|---|
+| `./scripts/app.sh` | Builds the app for **this machine** and launches it. macOS: `<Product>.app` (no DMG), opened with `open` after stopping a running copy (single instance). Linux / Windows (Git Bash): the shell binary only (`--bundles none`), run with `DESKTOP_RESOURCES` on the resources folder. `--no-run` (build only; `npm run desktop:build` from `back/`), `--no-build` (launch the last build), `--clean`. |
+| `./scripts/bundle.sh` | Distributable packages, copied to `desktop/dist/`. Default targets: this machine, `win-x64` and `linux-x64` (`--targets a,b` to choose). This machine: native installer (`tauri build`: macOS `.dmg`, Linux `.deb` + `.AppImage`, Windows NSIS). Other OS: portable archive by `package-cross.mjs`. A target whose tools are missing (mingw-w64 + `zip` for Windows from macOS/Linux, a running Docker for Linux from macOS/Windows; macOS only on a Mac) is skipped with the reason. Exit 1 when a target failed, or when a target named by `--targets` was skipped. `--clean`. |
+
+Both, in order: `npm ci` in `back/`, `front/`, `desktop/` when `node_modules` is missing; `npm run build` in `back/` and `front/`;
+the **prepare hook** of the project; `build-desktop.mjs --target <t> --out desktop/build/resources-<t>` (one resources folder per
+target, so a target never reuses another platform's `node_modules`; `--skip-install` is passed while `back/package-lock.json` is
+unchanged since the last assembly of that target). Shared steps: `scripts/desktop/common.sh`.
+
+**Prepare hook** (optional, project-owned, executable): `scripts-local/desktop-prepare.sh <target>` (or `DESKTOP_PREPARE_HOOK`),
+run from the project root before the assembly of each target. It builds what `packaging.extraResources` copies (an embedded
+engine for that platform...). `DESKTOP_CLEAN=1` (set by `--clean`) asks it for a full rebuild; a non-zero exit stops that target.
+
 ## Packaging
 
 Scripts live in `scripts/desktop/` (zero npm dependencies; run from the project root, `scripts` being the template's
@@ -131,7 +149,7 @@ node scripts/desktop/package-cross.mjs --target win-x64          # portable zip 
 Build the project first (`back/dist`, `front/dist`).
 
 **`build-desktop.mjs`** (`--root`, `--target`, `--out`, `--node-version`, `--cache-dir`, `--version`, `--skip-install`,
-`--no-sign`, `--bundle`, `--bundles`, `--dry-run`) assembles `desktop/build/resources/`:
+`--no-sign`, `--bundle`, `--bundles` (`none`: shell binary only), `--no-dmg`, `--dry-run`) assembles `desktop/build/resources/`:
 
 | Folder | Content |
 |---|---|
@@ -164,8 +182,8 @@ provide the target binary itself, or the packaging is not usable as is.
 sync script (`npm run sync`, run by `dev`/`build`) writes it into `tauri.conf.json` and `Cargo.toml`, and the DMG and
 archive names use it (`<Product>_<version>_<arch>.dmg`, `<Product>-<version>-<target>.zip|tar.gz`).
 
-**Tauri bundle.** `--bundle` passes the resources to `tauri build` through the `TAURI_CONFIG` environment variable
-(absolute paths), so `tauri.conf.json` stays valid for `tauri dev`. Default bundles: `app` (macOS), `deb,appimage`
+**Tauri bundle.** `--bundle` passes the resources to `tauri build` in an override file, `tauri build --config
+desktop/build/tauri.override-<target>.json` (absolute paths; the CLI ignores the `TAURI_CONFIG` variable), so `tauri.conf.json` stays valid for `tauri dev`. Default bundles: `app` (macOS), `deb,appimage`
 (Linux), `nsis` (Windows). Icons: `bundle.icon` points to a placeholder; run `tauri icon <logo>` for the project.
 
 **macOS DMG.** `scripts/desktop/make-dmg.sh --app <App.app> --out <file.dmg> [--name <volume>]` (hdiutil, no Finder);
@@ -212,8 +230,8 @@ Resources for the target must have been assembled with the same `--target`; for 
   `com.example.<project name>` (a placeholder: it names the OS data folder, choose your own).
 - Existing project: `node scripts/add-desktop.mjs [--name ...] [--identifier ...] [--dry-run]`.
 - Both copy this folder (without `node_modules`, `build`, `target`, `src-tauri/gen`) and the workflow, fill `desktop.config.json`
-  (`productName`, `identifier`, `sidecars`) and sync `tauri.conf.json`, and add `desktop:dev` / `desktop:build` to
-  `back/package.local.json` (run them from `back/`; `desktop:dev` needs the Rust toolchain).
+  (`productName`, `identifier`, `sidecars`) and sync `tauri.conf.json`, and add `desktop:dev` / `desktop:build` (= `scripts/app.sh
+  --no-run`) to `back/package.local.json` (run them from `back/`; both need the Rust toolchain).
 - Refused with the `user` module (the shell forces `LOCAL_TRUST=true`), with a database other than SQLite (it forces
   `DATABASE_ENGINE=sqlite`), with an invalid identifier, and when `desktop/` or the workflow already exists (nothing is
   overwritten). Once installed, `desktop/desktop.config.json` is the source of truth: the `desktop` section of
