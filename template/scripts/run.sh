@@ -33,13 +33,14 @@ set -euo pipefail
 #   ./scripts/run.sh status
 #
 # DB migrations (migrate-db.sh) are NEVER run unless --migrate is passed
-# explicitly, and are auto-skipped even then if the target env file has
-# TYPEORM_SYNC (or SYNC) set to true — synchronize already keeps the schema
+# explicitly, and are auto-skipped even then if the target env file sets
+# DB_SCHEMA_MODE=sync (the explicit schema mode, which wins when present) or, without
+# DB_SCHEMA_MODE, has TYPEORM_SYNC (or SYNC) set to true — synchronize already keeps the schema
 # up to date there, so running migrations on top of it is redundant and
 # unsafe (TypeORM's synchronize doesn't understand native table partitioning
 # etc.; mixing the two on the same run is asking for a bad interaction).
-# Set TYPEORM_SYNC=false in that env file first if migrations should be the
-# authoritative way schema changes reach that target.
+# Set DB_SCHEMA_MODE=migrations (or manual) — legacy: TYPEORM_SYNC=false — in that env
+# file first if migrations should be the authoritative way schema changes reach that target.
 # ============================================================
 
 # Resolve project root (parent of scripts/)
@@ -470,7 +471,7 @@ cmd_dev() {
 
 # migrations_enabled_for_target <back_env_file> <cli args...>
 # Returns 0 (run migrations) only if --migrate was passed AND the target's
-# TYPEORM_SYNC/SYNC is not true. See the DB migrations note in the usage
+# DB_SCHEMA_MODE is not sync (legacy: TYPEORM_SYNC/SYNC is not true). See the DB migrations note in the usage
 # header above for why both conditions matter.
 migrations_enabled_for_target() {
   local env_file="$1"
@@ -482,6 +483,20 @@ migrations_enabled_for_target() {
   if [[ "${migrate_flag}" -ne 1 ]]; then
     return 1
   fi
+  # DB_SCHEMA_MODE (docs: modules_shared/database/README.md, "Schema management") wins over the legacy flags when present.
+  local mode_raw
+  mode_raw="$(grep -E '^DB_SCHEMA_MODE=' "${env_file}" 2>/dev/null | tail -1 | cut -d'=' -f2- | tr -d $'"\'' | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
+  case "${mode_raw}" in
+    sync)
+      warn "DB_SCHEMA_MODE=sync in ${env_file} — skipping migrations even though --migrate was passed (synchronize manages the schema; use DB_SCHEMA_MODE=migrations or manual if migrations should run)."
+      return 1
+      ;;
+    migrations|manual)
+      return 0
+      ;;
+    "") ;;
+    *) warn "DB_SCHEMA_MODE=${mode_raw} in ${env_file} is not one of sync|migrations|manual — falling back to the legacy TYPEORM_SYNC/SYNC flags (the back will refuse to start with this value)." ;;
+  esac
   local sync_raw
   sync_raw="$(grep -E '^(TYPEORM_SYNC|SYNC)=' "${env_file}" 2>/dev/null | tail -1 | cut -d'=' -f2- | tr -d $'"\'' | tr '[:upper:]' '[:lower:]')"
   if [[ "${sync_raw}" == "true" || "${sync_raw}" == "1" ]]; then
@@ -546,7 +561,7 @@ cmd_prod() {
     "${SCRIPT_DIR}/migrate-db.sh" \
       || { err "Migration failed — aborting deployment"; exit 1; }
   else
-    info "Skipping database migrations (pass --migrate to run them; also auto-skipped if TYPEORM_SYNC/SYNC=true in ./back/.env)."
+    info "Skipping database migrations (pass --migrate to run them; also auto-skipped if DB_SCHEMA_MODE=sync or TYPEORM_SYNC/SYNC=true in ./back/.env)."
   fi
 
   info "Launching production deployment..."

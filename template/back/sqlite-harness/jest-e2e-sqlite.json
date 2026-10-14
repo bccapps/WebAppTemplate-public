@@ -1,17 +1,34 @@
 {
-  "moduleFileExtensions": ["js", "json", "ts"],
+  "moduleFileExtensions": [
+    "js",
+    "json",
+    "ts"
+  ],
   "rootDir": "..",
   "testEnvironment": "node",
   "testRegex": ".*\\.sqlite-spec\\.ts$",
   "transform": {
-    "^.+\\.(t|j)s$": ["ts-jest", { "isolatedModules": true }]
+    "^.+\\.(t|j)s$": [
+      "ts-jest",
+      {
+        "isolatedModules": true
+      }
+    ]
   },
-  "transformIgnorePatterns": ["node_modules/(?!(.*/)?(@noble|@scure)/)"],
+  "transformIgnorePatterns": [
+    "node_modules/(?!(.*/)?(@noble|@scure)/)"
+  ],
   "moduleNameMapper": {
     "^src/(.*)$": "<rootDir>/src/$1"
   },
-  "setupFiles": ["<rootDir>/test/e2e-setup-sqlite.ts"],
+  "setupFiles": [
+    "<rootDir>/test/e2e-setup-sqlite.ts"
+  ],
   "globalSetup": "<rootDir>/test/e2e-global-setup-sqlite.ts",
   "testTimeout": 20000,
-  "forceExit": true
+  "forceExit": true,
+  "testPathIgnorePatterns": [
+    "/node_modules/",
+    "/\\.libs/"
+  ]
 }

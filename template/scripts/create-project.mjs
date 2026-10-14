@@ -396,7 +396,7 @@ export function backEnvValues(answers, resolved, fromAnswers) {
       DB_HOST: 'localhost', DB_PORT: back + 1, DB_USER: 'postgres', DB_PASSWORD: randomPassword(), DB_NAME: answers.projectName,
     });
   } else if (answers.database.engine === 'sqlite') {
-    // DB_MIGRATIONS_RUN stays unset in dev (synchronize); desktop builds set it to true.
+    // DB_SCHEMA_MODE / DB_MIGRATIONS_RUN stay unset in dev (SQLite: synchronize); a desktop build gets its mode from `schema` in desktop.config.json.
     Object.assign(values, { DATABASE_ENGINE: 'sqlite', DB_PATH: sqliteDbPath(answers.projectName) });
   } else {
     values.DATABASE_ENGINE = DB_ENGINES[answers.database.engine];

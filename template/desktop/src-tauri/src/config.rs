@@ -13,6 +13,8 @@ use serde::Deserialize;
 
 pub const DEFAULT_HEALTH_PATH: &str = "/api/v1/health";
 pub const SERVER_NAME: &str = "server";
+/// Values of `schema` (the back's `DB_SCHEMA_MODE`).
+pub const SCHEMA_MODES: [&str; 3] = ["sync", "migrations", "manual"];
 
 /// One command, or an ordered list of candidates (first usable wins: absolute paths must exist, bare names
 /// are looked up in `PATH`). Lets one config serve both the packaged app and `desktop:dev`.
@@ -174,6 +176,11 @@ pub struct DesktopConfig {
     pub resources: ResourcesConfig,
     #[serde(default = "default_db_file")]
     pub db_file: String,
+    /// How the database schema is managed at boot, forced on the back as `DB_SCHEMA_MODE`: `sync` (synchronize, no migrations),
+    /// `migrations` (the app's own migrations run at start) or `manual`. Absent = the legacy behaviour: the shell forces
+    /// `DB_MIGRATIONS_RUN=true` (the app has hand-written SQLite migrations).
+    #[serde(default)]
+    pub schema: Option<String>,
     pub server: ProcessConfig,
     #[serde(default)]
     pub sidecars: Vec<ProcessConfig>,
@@ -253,6 +260,11 @@ fn validate(cfg: &DesktopConfig) -> Result<(), String> {
     }
     if cfg.identifier.trim().is_empty() {
         return Err("identifier must not be empty".into());
+    }
+    if let Some(schema) = &cfg.schema {
+        if !SCHEMA_MODES.contains(&schema.as_str()) {
+            return Err(format!("schema must be one of {} (got \"{schema}\")", SCHEMA_MODES.join(", ")));
+        }
     }
     validate_process(&cfg.server)?;
     let mut seen: HashSet<&str> = HashSet::from([SERVER_NAME]);
@@ -356,6 +368,16 @@ mod tests {
     fn rejects_unknown_fields_and_empty_names() {
         assert!(parse_config(r#"{"productName":"A","identifier":"x","server":{"command":"n"},"oops":1}"#).is_err());
         assert!(parse_config(r#"{"productName":" ","identifier":"x","server":{"command":"n"}}"#).is_err());
+    }
+
+    #[test]
+    fn schema_is_optional_and_validated() {
+        let with = |s: &str| format!(r#"{{"productName":"A","identifier":"x","server":{{"command":"n"}}{s}}}"#);
+        assert_eq!(parse_config(&with("")).unwrap().schema, None);
+        for mode in SCHEMA_MODES {
+            assert_eq!(parse_config(&with(&format!(r#","schema":"{mode}""#))).unwrap().schema.as_deref(), Some(mode));
+        }
+        assert!(parse_config(&with(r#","schema":"auto""#)).unwrap_err().contains("sync, migrations, manual"));
     }
 
     #[test]

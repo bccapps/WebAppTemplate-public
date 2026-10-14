@@ -123,6 +123,8 @@ pub struct ServerFacts<'a> {
     pub logs_dir: &'a Path,
     pub front_dir: PathBuf,
     pub db_file: &'a str,
+    /// `desktop.config.json` `schema`: forced as `DB_SCHEMA_MODE`. `None` = legacy, `DB_MIGRATIONS_RUN=true` is forced instead.
+    pub schema: Option<&'a str>,
     pub parent_pid: u32,
 }
 
@@ -130,7 +132,7 @@ pub struct ServerFacts<'a> {
 pub fn server_core_env(f: &ServerFacts) -> BTreeMap<String, String> {
     let origin = format!("http://127.0.0.1:{}", f.port);
     let p = |path: &Path| path.to_string_lossy().into_owned();
-    [
+    let mut vars: Vec<(&str, String)> = vec![
         ("HOST", "127.0.0.1".to_string()),
         ("NODE_PORT", f.port.to_string()),
         ("CLIENT_ORIGINS", format!("{origin},http://localhost:{}", f.port)),
@@ -140,7 +142,6 @@ pub fn server_core_env(f: &ServerFacts) -> BTreeMap<String, String> {
         ("DB_ENGINE", "sqlite".into()),
         ("DATABASE_ENGINE", "sqlite".into()),
         ("DB_PATH", p(&f.data_dir.join(f.db_file))),
-        ("DB_MIGRATIONS_RUN", "true".into()),
         ("APP_DATA_DIR", p(f.data_dir)),
         ("LOG_DIR", p(f.logs_dir)),
         ("SHARED_DIRECTORY", p(&f.data_dir.join("shared"))),
@@ -148,10 +149,14 @@ pub fn server_core_env(f: &ServerFacts) -> BTreeMap<String, String> {
         ("APP_ENV", "desktop".into()),
         ("SERVE_FRONT_DIR", p(&f.front_dir)),
         ("DESKTOP_PARENT_PID", f.parent_pid.to_string()),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_string(), v))
-    .collect()
+    ];
+    // Schema management of the back (`nest/database/schemaMode.ts`): an app that declares `schema` gets exactly that mode; an app
+    // that does not keeps the historical forcing of `DB_MIGRATIONS_RUN=true` (SQLite apps with their own migrations).
+    match f.schema {
+        Some(mode) => vars.push(("DB_SCHEMA_MODE", mode.to_string())),
+        None => vars.push(("DB_MIGRATIONS_RUN", "true".into())),
+    }
+    vars.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
 }
 
 /// Final environment of one process: config `env` (placeholders resolved), the shared token, and for the
@@ -256,6 +261,7 @@ mod tests {
             logs_dir: Path::new("/d/logs"),
             front_dir: PathBuf::from("/r/front/dist"),
             db_file: "app.db",
+            schema: None,
             parent_pid: 77,
         };
         let env = server_core_env(&facts);
@@ -266,7 +272,8 @@ mod tests {
         assert_eq!(env["DATABASE_ENGINE"], "sqlite");
         assert_eq!(env["DB_ENGINE"], "sqlite", "DB_ENGINE wins over DATABASE_ENGINE in the back");
         assert_eq!(env["DB_PATH"], "/d/app.db");
-        assert_eq!(env["DB_MIGRATIONS_RUN"], "true");
+        assert_eq!(env["DB_MIGRATIONS_RUN"], "true", "legacy: without `schema` the shell forces DB_MIGRATIONS_RUN=true");
+        assert!(!env.contains_key("DB_SCHEMA_MODE"));
         assert_eq!(env["SHARED_DIRECTORY"], "/d/shared");
         assert_eq!(env["DISABLE_TRANSPORT_CRYPTO"], "true");
         assert_eq!(env["APP_ENV"], "desktop");
@@ -274,6 +281,24 @@ mod tests {
         assert_eq!(env["DESKTOP_PARENT_PID"], "77");
         for key in ["APP_DATA_DIR", "LOG_DIR"] {
             assert!(env.contains_key(key));
+        }
+    }
+
+    #[test]
+    fn a_declared_schema_is_forced_as_db_schema_mode_instead_of_db_migrations_run() {
+        for mode in ["sync", "migrations", "manual"] {
+            let facts = ServerFacts {
+                port: 4321,
+                data_dir: Path::new("/d"),
+                logs_dir: Path::new("/d/logs"),
+                front_dir: PathBuf::from("/r/front/dist"),
+                db_file: "app.db",
+                schema: Some(mode),
+                parent_pid: 77,
+            };
+            let env = server_core_env(&facts);
+            assert_eq!(env["DB_SCHEMA_MODE"], mode);
+            assert!(!env.contains_key("DB_MIGRATIONS_RUN"), "DB_MIGRATIONS_RUN must not be forced next to DB_SCHEMA_MODE");
         }
     }
 

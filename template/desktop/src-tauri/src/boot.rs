@@ -180,6 +180,7 @@ fn server_facts<'a>(cfg: &'a DesktopConfig, ctx: &'a Context) -> ServerFacts<'a>
         logs_dir: &ctx.logs_dir,
         front_dir: ctx.resources.join(&cfg.resources.front_dir),
         db_file: &cfg.db_file,
+        schema: cfg.schema.as_deref(),
         parent_pid: std::process::id(),
     }
 }

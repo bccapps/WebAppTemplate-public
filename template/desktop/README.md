@@ -39,6 +39,7 @@ desktop/
 | `resources.marker` | File, relative to the resources folder, that identifies it (default `back/dist/main.js`). |
 | `resources.frontDir` | Built front relative to the resources folder, exported as `SERVE_FRONT_DIR` (default `front/dist`). |
 | `dbFile` | SQLite file name inside the data folder (default `app.db`), exported as `DB_PATH`. |
+| `schema` | How the database schema is managed at boot: `sync` (synchronize, no migrations), `migrations` (the app's own SQLite migrations run at start) or `manual`. The shell forces it as `DB_SCHEMA_MODE`. Absent = legacy: the shell forces `DB_MIGRATIONS_RUN=true` (apps with hand-written SQLite migrations keep working unchanged). An app whose migrations are PostgreSQL SQL (a desktop *variant* of a web app) declares `"schema": "sync"`. Details: `nest/database/README.md`, "Schema management". |
 | `server` | The back. `command` (string or candidate list), `args`, `cwd`, `env`, `healthPath` (default `/api/v1/health`), `readyTimeoutSec` (default 120), `sharedToken`. |
 | `sidecars[]` | Same shape as `server`, plus `name` (required, unique, not `server`), `label`, `port`, `optional` and `os`. Started in order **before** the server (those whose `os` list does not contain this OS are skipped). |
 | `packaging` | `nodeVersion` (default: pinned) and `extraResources`, read by the packaging scripts only (see Packaging). |
@@ -91,7 +92,7 @@ Example with a sidecar:
 4. **Environment of the back**: the config `env`, then the secrets, then these variables, which always win:
    `HOST=127.0.0.1`, `NODE_PORT`, `CLIENT_ORIGINS` (`http://127.0.0.1:<port>`, `http://localhost:<port>`),
    `LOCAL_TRUST=true`, `DB_ENGINE=sqlite` **and** `DATABASE_ENGINE=sqlite` (the back reads `DB_ENGINE` first: an inherited
-   `DB_ENGINE=postgres` of a developer's shell cannot win), `DB_PATH=<data>/<dbFile>`, `DB_MIGRATIONS_RUN=true`,
+   `DB_ENGINE=postgres` of a developer's shell cannot win), `DB_PATH=<data>/<dbFile>`, `DB_SCHEMA_MODE=<schema>` when the config declares `schema` (otherwise the legacy `DB_MIGRATIONS_RUN=true`, never both),
    `APP_DATA_DIR=<data>`, `LOG_DIR=<data>/logs`, `SHARED_DIRECTORY=<data>/shared`, `DISABLE_TRANSPORT_CRYPTO=true`,
    `APP_ENV=desktop`, `SERVE_FRONT_DIR`, `DESKTOP_PARENT_PID` (the shell pid; the back exits when it disappears, see
    `nest/common/README.md`). Sidecars receive only their config `env` plus the shared token.
@@ -100,7 +101,7 @@ Example with a sidecar:
    `package.json`, the locales and the production `node_modules` only; a desktop variant build excludes every `.env*` of the
    developer's tree), and `node dist/main.js` loads none by itself (`env-cmd` is only used by the project's npm scripts). So the
    engine, the trust mode and the paths are the shell's whatever `back/.env*` says. Variables the shell does not force
-   (e.g. `TYPEORM_SYNC`, an app's own directories) go in the server's `env` of `desktop.config.json`.
+   (an app's own directories…) go in the server's `env` of `desktop.config.json`.
 5. Sidecars, then the server, are started in their own process group; the shell waits for each health path; the window
    then goes to the front. If a process exits during start-up, or the health wait times out, the waiting page shows the
    error and the last 40 log lines. If one dies later, the window returns to the waiting page with the same details.
