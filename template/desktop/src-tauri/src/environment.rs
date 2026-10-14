@@ -135,6 +135,9 @@ pub fn server_core_env(f: &ServerFacts) -> BTreeMap<String, String> {
         ("NODE_PORT", f.port.to_string()),
         ("CLIENT_ORIGINS", format!("{origin},http://localhost:{}", f.port)),
         ("LOCAL_TRUST", "true".into()),
+        // `DB_ENGINE` is read BEFORE `DATABASE_ENGINE` (nest/common/utils/dbEngine.ts): both are forced, so no inherited
+        // `DB_ENGINE=postgres` (a developer's shell) can switch the packaged app to another database.
+        ("DB_ENGINE", "sqlite".into()),
         ("DATABASE_ENGINE", "sqlite".into()),
         ("DB_PATH", p(&f.data_dir.join(f.db_file))),
         ("DB_MIGRATIONS_RUN", "true".into()),
@@ -160,8 +163,10 @@ pub fn process_env(
     server_extra: Option<(&BTreeMap<String, String>, &BTreeMap<String, String>)>,
 ) -> BTreeMap<String, String> {
     let mut env: BTreeMap<String, String> = cfg.env.iter().map(|(k, v)| (k.clone(), substitute(v, ph))).collect();
-    if let Some(var) = &cfg.shared_token {
-        env.insert(var.clone(), token.to_string());
+    if let Some(vars) = &cfg.shared_token {
+        for var in vars.names() {
+            env.insert(var.to_string(), token.to_string());
+        }
     }
     if let Some((secrets, core)) = server_extra {
         env.extend(secrets.clone());
@@ -259,6 +264,7 @@ mod tests {
         assert_eq!(env["CLIENT_ORIGINS"], "http://127.0.0.1:4321,http://localhost:4321");
         assert_eq!(env["LOCAL_TRUST"], "true");
         assert_eq!(env["DATABASE_ENGINE"], "sqlite");
+        assert_eq!(env["DB_ENGINE"], "sqlite", "DB_ENGINE wins over DATABASE_ENGINE in the back");
         assert_eq!(env["DB_PATH"], "/d/app.db");
         assert_eq!(env["DB_MIGRATIONS_RUN"], "true");
         assert_eq!(env["SHARED_DIRECTORY"], "/d/shared");

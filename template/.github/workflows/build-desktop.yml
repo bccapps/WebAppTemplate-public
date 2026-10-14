@@ -5,10 +5,15 @@
 #
 # Licensed under the MIT License. See LICENSE in the project root.
 
-# SKELETON, UNVERIFIED: never run on GitHub Actions. Copied into a project only when the desktop option is chosen
-# (scripts/add-desktop.mjs, task G3). Builds the app natively on each OS: resources (Node, back, front,
-# better-sqlite3) then the Tauri bundle. Signing is ad hoc on macOS; see desktop/README.md for Developer ID and
-# notarization (not automated).
+# SKELETON, UNVERIFIED: never run on GitHub Actions (the steps were checked locally one by one on macOS only).
+# Copied into a project only when the desktop option is chosen (scripts/add-desktop.mjs). Builds the desktop app NATIVELY on
+# each OS with `scripts/bundle.sh`, which does everything project-specific through files the project owns:
+#   - a desktop VARIANT (project.config.json `desktop.variant` or a desktop-flavor.json at the root): the back and the front
+#     are built from an isolated copy with the variant's module set (scripts/desktop/variant.mjs);
+#   - the prepare hook `scripts-local/desktop-prepare.sh <target>` (payload of sidecars, e.g. a runner);
+#   - the optional job hook `scripts-local/desktop-payloads.sh` (below).
+# Outputs: macOS .dmg (arm64, x64), Linux .deb + .AppImage, Windows NSIS .exe + .msi. Signing is ad hoc on macOS and absent
+# elsewhere; see desktop/README.md for Developer ID, notarization and Authenticode (not automated).
 name: build-desktop
 
 on:
@@ -16,18 +21,16 @@ on:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: read
+
 jobs:
-  build:
-    name: ${{ matrix.target }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { target: darwin-arm64, runner: macos-14 }
-          - { target: darwin-x64, runner: macos-13 }
-          - { target: win-x64, runner: windows-2022 }
-          - { target: linux-x64, runner: ubuntu-22.04 }
+  # Linux-built payloads other jobs reuse (a native module that exists as a Linux binary only, shipped to the Windows build
+  # for a sidecar that runs inside WSL2). Runs `scripts-local/desktop-payloads.sh` when the project has it; it writes files
+  # into desktop/build/payloads/. Without the script the job is a no-op and no artifact is produced.
+  payloads:
+    name: payloads (linux-x64)
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,24 +38,60 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Native build tools (node-gyp)
+        run: sudo apt-get update && sudo apt-get install -y python3 make g++ tmux git
+      - name: Build the payloads
+        if: hashFiles('scripts-local/desktop-payloads.sh') != ''
+        run: ./scripts-local/desktop-payloads.sh
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('scripts-local/desktop-payloads.sh') != ''
+        with:
+          name: desktop-payloads
+          path: desktop/build/payloads/*
+          if-no-files-found: ignore
+
+  build:
+    name: ${{ matrix.target }}
+    needs: payloads
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: darwin-arm64, runner: macos-14, bundles: "" }
+          - { target: darwin-x64, runner: macos-15-intel, bundles: "" }
+          - { target: win-x64, runner: windows-2022, bundles: "nsis,msi" }
+          - { target: linux-x64, runner: ubuntu-22.04, bundles: "deb,appimage" }
+    steps:
+      # The repository relies on symlinks (scripts/ -> the template, config links): without this Windows checks them out as text files.
+      - name: Symlinks (Windows)
+        if: runner.os == 'Windows'
+        run: git config --global core.symlinks true
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: dtolnay/rust-toolchain@stable
-      - name: Linux dependencies (WebKitGTK)
+      - name: Linux dependencies (WebKitGTK, native build tools)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
-      - name: Build the back
-        working-directory: back
-        run: npm ci && npm run build
-      - name: Build the front
-        working-directory: front
-        run: npm ci && npm run build
-      - name: Desktop tooling
-        working-directory: desktop
-        run: npm ci
-      - name: Resources and bundle
-        run: node scripts/desktop/build-desktop.mjs --target ${{ matrix.target }} --bundle
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf python3 make g++
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: desktop-payloads
+          path: desktop/build/payloads
+      - name: Bundle (variant stage, prepare hook, resources, Tauri bundle)
+        env:
+          DESKTOP_BUNDLES: ${{ matrix.bundles }}
+        run: ./scripts/bundle.sh --targets ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.target }}
-          path: desktop/src-tauri/target/release/bundle/**/*
+          path: desktop/dist/*

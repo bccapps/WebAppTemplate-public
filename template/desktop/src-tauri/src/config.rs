@@ -56,10 +56,37 @@ pub struct ProcessConfig {
     pub health_path: Option<String>,
     #[serde(default = "default_ready_timeout")]
     pub ready_timeout_sec: u64,
-    /// Name of an env var that receives the per-launch shared token (same value for every process asking).
+    /// Name(s) of the env var(s) that receive the per-launch shared token (same value for every process asking). A list lets
+    /// two processes that name the variable differently share one token (e.g. `LOCAL_RUNNER_TOKEN` on the back, `RUNNER_TOKEN` on a runner).
     #[serde(default)]
-    pub shared_token: Option<String>,
+    pub shared_token: Option<TokenVars>,
+    /// Sidecars only: a failure of this process (cannot start, exits, never becomes ready, dies later) is logged in `shell.log`
+    /// and ignored: the app starts without it. For auxiliary processes whose prerequisites may be missing on a machine.
+    #[serde(default)]
+    pub optional: bool,
+    /// Sidecars only: operating systems this process runs on (`macos`, `linux`, `windows`); empty = all.
+    #[serde(default)]
+    pub os: Vec<String>,
 }
+
+/// One env var name, or several receiving the same token.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum TokenVars {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl TokenVars {
+    pub fn names(&self) -> Vec<&str> {
+        match self {
+            TokenVars::One(v) => vec![v.as_str()],
+            TokenVars::Many(list) => list.iter().map(String::as_str).collect(),
+        }
+    }
+}
+
+pub const KNOWN_OS: [&str; 3] = ["macos", "linux", "windows"];
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -203,6 +230,11 @@ impl ProcessConfig {
     pub fn label(&self) -> &str {
         self.label.as_deref().unwrap_or_else(|| self.name())
     }
+
+    /// Whether this process runs on `os` (`std::env::consts::OS`); no `os` list = everywhere.
+    pub fn runs_on(&self, os: &str) -> bool {
+        self.os.is_empty() || self.os.iter().any(|o| o == os)
+    }
 }
 
 /// Parses and validates the JSON text of `desktop.config.json`.
@@ -236,6 +268,17 @@ fn validate(cfg: &DesktopConfig) -> Result<(), String> {
 
 fn validate_process(p: &ProcessConfig) -> Result<(), String> {
     let name = p.name();
+    if p.name.as_deref() == Some(SERVER_NAME) && (p.optional || !p.os.is_empty()) {
+        return Err("the server cannot be optional or restricted to some operating systems".into());
+    }
+    if let Some(bad) = p.os.iter().find(|o| !KNOWN_OS.contains(&o.as_str())) {
+        return Err(format!("{name}: unknown os \"{bad}\" (expected: {})", KNOWN_OS.join(", ")));
+    }
+    if let Some(vars) = &p.shared_token {
+        if vars.names().iter().any(|v| v.trim().is_empty()) {
+            return Err(format!("{name}: sharedToken names must not be empty"));
+        }
+    }
     if p.command.candidates().iter().all(|c| c.trim().is_empty()) {
         return Err(format!("{name}: command must not be empty"));
     }
@@ -292,6 +335,21 @@ mod tests {
         assert!(parse_config(&with(r#"{"name":"e","command":"p","port":true,"healthPath":"h"}"#)).unwrap_err().contains("start with"));
         let ok = parse_config(&with(r#"{"name":"e","command":"p","port":true,"healthPath":"/h"}"#)).unwrap();
         assert_eq!(ok.sidecars[0].label(), "e");
+    }
+
+    #[test]
+    fn sidecar_optional_os_and_token_lists() {
+        let with = |s: &str| format!(r#"{{"productName":"A","identifier":"x","server":{{"command":"n"}},"sidecars":[{s}]}}"#);
+        let ok = parse_config(&with(r#"{"name":"r","command":"p","optional":true,"os":["macos","linux"],"sharedToken":["A","B"]}"#)).unwrap();
+        let r = &ok.sidecars[0];
+        assert!(r.optional && r.runs_on("macos") && r.runs_on("linux") && !r.runs_on("windows"));
+        assert_eq!(r.shared_token.as_ref().unwrap().names(), vec!["A", "B"]);
+        let single = parse_config(&with(r#"{"name":"r","command":"p","sharedToken":"ONLY"}"#)).unwrap();
+        assert_eq!(single.sidecars[0].shared_token.as_ref().unwrap().names(), vec!["ONLY"]);
+        assert!(single.sidecars[0].runs_on("windows"), "no os list = everywhere");
+        assert!(parse_config(&with(r#"{"name":"r","command":"p","os":["beos"]}"#)).unwrap_err().contains("unknown os"));
+        assert!(parse_config(&with(r#"{"name":"r","command":"p","sharedToken":[" "]}"#)).unwrap_err().contains("must not be empty"));
+        assert!(parse_config(r#"{"productName":"A","identifier":"x","server":{"command":"n","optional":true}}"#).unwrap_err().contains("server cannot"));
     }
 
     #[test]

@@ -8,7 +8,7 @@
 //! Start-up sequence: resources, data folder, secrets, ports, sidecars, server, health wait, then the front;
 //! afterwards a watchdog sends the window back to the waiting page if a process dies.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
@@ -29,6 +29,34 @@ use crate::splash::{error_js, eval, init_js, merged_texts, status_js, Params};
 const SPLASH_LOAD_DELAY: Duration = Duration::from_millis(900);
 const SLOW_START_AFTER: Duration = Duration::from_secs(8);
 const LOG_TAIL_LINES: usize = 40;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::parse_config;
+
+    const CFG: &str = r#"{"productName":"A","identifier":"x","server":{"command":"n"},"sidecars":[
+        {"name":"mac","command":"p","os":["macos","linux"],"optional":true},
+        {"name":"win","command":"p","os":["windows"]},
+        {"name":"any","command":"p"}]}"#;
+
+    #[test]
+    fn processes_are_filtered_by_os_with_the_server_last() {
+        let cfg = parse_config(CFG).unwrap();
+        let names = |os: &str| processes_for(&cfg, os).iter().map(|p| p.name().to_string()).collect::<Vec<_>>();
+        assert_eq!(names("macos"), vec!["mac", "any", "server"]);
+        assert_eq!(names("windows"), vec!["win", "any", "server"]);
+        assert_eq!(names("linux"), vec!["mac", "any", "server"]);
+    }
+
+    #[test]
+    fn optional_names_only_cover_the_running_processes() {
+        let cfg = parse_config(CFG).unwrap();
+        let optional = optional_names(&cfg);
+        assert!(optional.is_empty() || optional.contains("mac"));
+        assert!(!optional.contains("server") && !optional.contains("any"));
+    }
+}
 
 /// A start-up failure, shown on the waiting page (ids are translated by the page).
 pub struct BootError {
@@ -112,8 +140,13 @@ fn prepare(app: &AppHandle, cfg: &DesktopConfig) -> Result<Context, BootError> {
     Ok(Context { resources, data_dir, logs_dir, ports, secrets, token: random_token_hex() })
 }
 
+/// The processes to run on this OS, sidecars first, the server last.
 fn all_processes(cfg: &DesktopConfig) -> Vec<&ProcessConfig> {
-    cfg.sidecars.iter().chain(std::iter::once(&cfg.server)).collect()
+    processes_for(cfg, env::consts::OS)
+}
+
+fn processes_for<'a>(cfg: &'a DesktopConfig, os: &str) -> Vec<&'a ProcessConfig> {
+    cfg.sidecars.iter().filter(|p| p.runs_on(os)).chain(std::iter::once(&cfg.server)).collect()
 }
 
 fn allocate_ports(cfg: &DesktopConfig) -> std::io::Result<BTreeMap<String, u16>> {
@@ -217,11 +250,34 @@ fn start_process(app: &AppHandle, cfg: &DesktopConfig, p: &ProcessConfig, ctx: &
 
 fn start_all(app: &AppHandle, cfg: &DesktopConfig, ctx: &Context) -> Result<bool, BootError> {
     for p in all_processes(cfg) {
-        if !start_process(app, cfg, p, ctx)? {
-            return Ok(false);
+        match start_process(app, cfg, p, ctx) {
+            Ok(true) => {}
+            Ok(false) => return Ok(false),
+            // An optional sidecar that cannot start (missing prerequisite, crash, never ready) must not stop the app.
+            Err(_) if p.optional => {
+                shell_log(&ctx.logs_dir, &format!("optional process {} did not start: the app goes on without it (see {}.log)", p.name(), p.name()));
+                forget_process(app, p.name());
+            }
+            Err(e) => return Err(e),
         }
     }
     Ok(true)
+}
+
+/// Stops tracking a process (an optional one that failed): it is no longer watched.
+fn forget_process(app: &AppHandle, name: &str) {
+    let state = app.state::<Processes>();
+    let mut list = state.0.lock().unwrap();
+    if let Some(pos) = list.iter().position(|m| m.name == name) {
+        let mut managed = list.remove(pos);
+        let _ = managed.child.kill();
+        let _ = managed.child.wait();
+    }
+}
+
+/// Names of the optional processes of this run: their death is logged, never shown to the user.
+fn optional_names(cfg: &DesktopConfig) -> HashSet<String> {
+    all_processes(cfg).into_iter().filter(|p| p.optional).map(|p| p.name().to_string()).collect()
 }
 
 fn window_url(app: &AppHandle) -> Option<String> {
@@ -229,7 +285,9 @@ fn window_url(app: &AppHandle) -> Option<String> {
 }
 
 /// If a process dies mid-session, go back to the waiting page with its log. Returns when the app shuts down.
-fn watch(app: &AppHandle, ctx: &Context, splash_url: Option<String>) {
+fn watch(app: &AppHandle, cfg: &DesktopConfig, ctx: &Context, splash_url: Option<String>) {
+    let optional = optional_names(cfg);
+    let mut reported: HashSet<String> = HashSet::new();
     loop {
         thread::sleep(Duration::from_secs(1));
         let dead = {
@@ -238,7 +296,19 @@ fn watch(app: &AppHandle, ctx: &Context, splash_url: Option<String>) {
             if list.is_empty() {
                 return;
             }
-            list.iter_mut().find_map(|m| m.child.try_wait().ok().flatten().map(|s| (m.name.clone(), m.label.clone(), s)))
+            let mut found = None;
+            for m in list.iter_mut() {
+                let Some(status) = m.child.try_wait().ok().flatten() else { continue };
+                if optional.contains(&m.name) {
+                    if reported.insert(m.name.clone()) {
+                        shell_log(&ctx.logs_dir, &format!("optional process {} exited ({status}): the app goes on without it", m.name));
+                    }
+                    continue;
+                }
+                found = Some((m.name.clone(), m.label.clone(), status));
+                break;
+            }
+            found
         };
         if let Some((name, label, status)) = dead {
             if let Some(url) = splash_url {
@@ -262,7 +332,7 @@ fn run(app: &AppHandle, cfg: &DesktopConfig) -> Result<(), BootError> {
     let splash_url = window_url(app);
     let url = format!("http://127.0.0.1:{}/", ctx.ports[SERVER_NAME]);
     eval(app, format!("window.location.replace({})", crate::splash::js_str(&url)));
-    watch(app, &ctx, splash_url);
+    watch(app, cfg, &ctx, splash_url);
     Ok(())
 }
 

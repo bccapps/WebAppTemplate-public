@@ -12,6 +12,7 @@
     "i18n:check": "node .libs/apptemplate/scripts/check-i18n.mjs --check",
     "i18n:audit": "node .libs/apptemplate/scripts/check-i18n.mjs",
     "locales:sync": "node .libs/apptemplate/scripts/sync-common-locales.mjs",
+    "db:check": "node .libs/apptemplate/scripts/db-portability-check.mjs",
     "prettier-format": "prettier --config .prettierrc 'src/**/*.ts' --write",
     "test": "jest",
     "test:watch": "jest --watch",

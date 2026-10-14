@@ -22,6 +22,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
+import { normalizeVariant } from '../desktop/variant.mjs';
+
 export const STACKS = ['nest', 'react'];
 /** Always linked, public. `database` only exists on the back. */
 export const BASE_MODULES = ['common', 'database'];
@@ -167,6 +169,7 @@ export function normalizeAnswers(input = {}) {
   a.localTrust = Boolean(a.localTrust);
   a.desktop = { ...(a.desktop ?? {}), enabled: Boolean(a.desktop?.enabled) };
   if (a.desktop.sidecars !== undefined && !Array.isArray(a.desktop.sidecars)) a.desktop.sidecars = [a.desktop.sidecars];
+  if (a.desktop.variant !== undefined) a.desktop.variant = normalizeVariant(a.desktop.variant) ?? undefined;
   a.pwa = { ...(a.pwa ?? {}), enabled: Boolean(a.pwa?.enabled) };
   a.modules = [...new Set(a.modules ?? [])];
   a.database = { engine: 'selfhosted', redis: false, ...(a.database ?? {}) };
@@ -394,7 +397,7 @@ export const DESKTOP_NPM_SCRIPTS = {
 };
 
 /**
- * Complete `desktop` section of the answers: `{ enabled, productName, identifier, sidecars }`.
+ * Complete `desktop` section of the answers: `{ enabled, productName, identifier, sidecars, variant? }`.
  * `productName` defaults to the site name, `identifier` to `com.example.<project name without hyphens>`.
  */
 export function resolveDesktop(rawAnswers) {
@@ -404,22 +407,37 @@ export function resolveDesktop(rawAnswers) {
     productName: (a.desktop.productName || a.siteName || a.projectName || '').trim(),
     identifier: (a.desktop.identifier || `com.example.${String(a.projectName ?? '').replace(/-/g, '')}`).trim(),
     sidecars: a.desktop.sidecars ?? [],
+    // A project that uses the `user` module / PostgreSQL in its web version declares a desktop VARIANT (see scripts/desktop/variant.mjs).
+    ...(a.desktop.variant ? { variant: a.desktop.variant } : {}),
   };
 }
 
 /**
  * Messages for an inconsistent `desktop` section; empty when the option is off. The shell always runs the back with
  * `DATABASE_ENGINE=sqlite` and `LOCAL_TRUST=true`, hence the two cross-checks. `resolvedIds` = linked modules.
+ *
+ * With a desktop VARIANT (`desktop.variant`) the app that the shell runs is not the web build: the `user` module and the
+ * database engine of the project are then irrelevant, and what must hold is the variant's own module set — checked with
+ * I/O by the caller (`variantProblems` of scripts/desktop/variant.mjs) and passed in `extra.variantProblems`.
  */
-export function validateDesktop(rawAnswers, resolvedIds) {
-  const a = normalizeAnswers(rawAnswers);
+export function validateDesktop(rawAnswers, resolvedIds, extra = {}) {
+  let a;
+  try {
+    a = normalizeAnswers(rawAnswers);
+  } catch (error) {
+    return [error.message]; // an invalid desktop.variant declaration
+  }
   if (!a.desktop.enabled) return [];
   const desktop = resolveDesktop(a);
   const errors = [];
   if (!desktop.productName) errors.push('desktop.productName is required when the desktop option is enabled (it defaults to the site name)');
   if (!DESKTOP_IDENTIFIER.test(desktop.identifier)) errors.push(`desktop.identifier "${desktop.identifier}" must be a reverse-domain id such as com.example.myapp (letters, digits, hyphens, at least two dot-separated parts)`);
-  if (a.database.engine !== 'sqlite') errors.push('the desktop option requires the sqlite database engine (the shell runs the back with DATABASE_ENGINE=sqlite)');
-  if (resolvedIds.includes('user')) errors.push('the desktop option only applies to applications without the user module (the shell runs the back in local trust mode)');
+  if (desktop.variant) {
+    errors.push(...(extra.variantProblems ?? []));
+  } else {
+    if (a.database.engine !== 'sqlite') errors.push('the desktop option requires the sqlite database engine (the shell runs the back with DATABASE_ENGINE=sqlite); an application on another engine can declare a desktop variant (desktop.variant, scripts/desktop/variant.mjs)');
+    if (resolvedIds.includes('user')) errors.push('the desktop option only applies to applications without the user module (the shell runs the back in local trust mode); an application that uses it can declare a desktop variant without it (desktop.variant, scripts/desktop/variant.mjs)');
+  }
   const seen = new Set();
   for (const [i, sidecar] of desktop.sidecars.entries()) {
     const name = sidecar?.name;

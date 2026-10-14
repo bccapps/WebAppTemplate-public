@@ -56,11 +56,28 @@ ensure_node_modules() {
   (cd "${dir}" && npm ci)
 }
 
-# Builds back/dist and front/dist, and the desktop tooling (@tauri-apps/cli).
+# Desktop VARIANT (project.config.json: desktop.variant, or a desktop-flavor.json descriptor at the root; see
+# scripts/desktop/variant.mjs): prints the variant's module list file when the project has one, nothing otherwise.
+desktop_variant() {
+  node "${DESKTOP_SCRIPTS}/variant.mjs" describe --root "${PROJECT_ROOT}"
+}
+
+# Where back/dist and front/dist of the desktop app are built: the project, or the isolated stage of its variant.
+build_root() {
+  if [[ -n "$(desktop_variant)" ]]; then echo "${PROJECT_ROOT}/desktop/build/variant"; else echo "${PROJECT_ROOT}"; fi
+}
+
+# Builds back/dist and front/dist, and the desktop tooling (@tauri-apps/cli). With a desktop variant the back and the front
+# are built from an isolated copy with the variant's module set (the developer's tree is left untouched).
 build_web() {
+  ensure_node_modules desktop
+  if [[ -n "$(desktop_variant)" ]]; then
+    info "Staging and building the desktop variant ($(desktop_variant))"
+    node "${DESKTOP_SCRIPTS}/variant.mjs" stage --root "${PROJECT_ROOT}" ${DESKTOP_CLEAN:+--clean}
+    return 0
+  fi
   ensure_node_modules back
   ensure_node_modules front
-  ensure_node_modules desktop
   info "Building the back (nest build)"
   (cd back && npm run build)
   info "Building the front"
@@ -90,7 +107,8 @@ assemble() {
   local target="$1"; shift
   local out; out="$(resources_dir "${target}")"
   local skip=()
-  if [[ "${DESKTOP_CLEAN:-0}" != 1 && -d "${out}/back/node_modules" ]] && cmp -s back/package-lock.json "${out}/back/package-lock.json"; then
+  local lock; lock="$(build_root)/back/package-lock.json"
+  if [[ "${DESKTOP_CLEAN:-0}" != 1 && -d "${out}/back/node_modules" ]] && cmp -s "${lock}" "${out}/back/package-lock.json"; then
     skip=(--skip-install)
   fi
   node "${DESKTOP_SCRIPTS}/build-desktop.mjs" --root "${PROJECT_ROOT}" --target "${target}" --out "${out}" ${skip[@]+"${skip[@]}"} "$@"

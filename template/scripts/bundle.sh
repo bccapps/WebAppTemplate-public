@@ -27,6 +27,7 @@ set -euo pipefail
 # A target whose tools are missing is skipped with the reason; the run goes on with the next one. Exit status 1 when
 # a target failed, or when a target named by --targets was skipped.
 # Project hook: scripts-local/desktop-prepare.sh <target> (DESKTOP_PREPARE_HOOK), see scripts/desktop/common.sh.
+# DESKTOP_BUNDLES overrides the `tauri build --bundles` list of the host target (Windows: nsis,msi for an .msi too, needs WiX).
 # Unsigned builds: see desktop/README.md (signing). Cross packages have not been run on their target hardware.
 # ============================================================
 
@@ -82,7 +83,7 @@ missing_tools() {
 collect_host() {
   local found=0 f
   shopt -s nullglob
-  for f in "${BUNDLE_DIR}"/dmg/*.dmg "${BUNDLE_DIR}"/deb/*.deb "${BUNDLE_DIR}"/appimage/*.AppImage "${BUNDLE_DIR}"/nsis/*.exe; do
+  for f in "${BUNDLE_DIR}"/dmg/*.dmg "${BUNDLE_DIR}"/deb/*.deb "${BUNDLE_DIR}"/appimage/*.AppImage "${BUNDLE_DIR}"/nsis/*.exe "${BUNDLE_DIR}"/msi/*.msi; do
     cp -f "${f}" "${DIST}/"; found=1
   done
   shopt -u nullglob
@@ -102,7 +103,7 @@ build_target() {
   local target="$1"
   run_prepare_hook "${target}" || return 1
   if [[ "${target}" == "${HOST}" ]]; then
-    find "${BUNDLE_DIR}" -maxdepth 2 \( -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' -o -name '*-setup.exe' \) -delete 2>/dev/null || true
+    find "${BUNDLE_DIR}" -maxdepth 2 \( -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' -o -name '*-setup.exe' -o -name '*.msi' \) -delete 2>/dev/null || true
     assemble "${target}" --bundle || return 1
     collect_host
   else

@@ -14,6 +14,9 @@
  *   node scripts/desktop/build-desktop.mjs [options]
  *
  *   --root <dir>          project root (default: current directory); back/dist and front/dist must be built
+ *   --build-root <dir>    where back/dist, front/dist and back/package*.json are read from (default: the project root, or the
+ *                         staged desktop variant `desktop/build/variant` when project.config.json declares `desktop.variant`;
+ *                         see scripts/desktop/variant.mjs). desktop.config.json and extra resources always come from --root
  *   --target <id>         darwin-arm64 | darwin-x64 | linux-x64 | linux-arm64 | win-x64 (default: this machine)
  *   --out <dir>           resources folder (default: <root>/desktop/build/resources)
  *   --node-version <v>    Node to embed (default: packaging.nodeVersion of desktop.config.json, else the pinned one)
@@ -22,7 +25,8 @@
  *   --skip-install        keep an existing <out>/back/node_modules (no npm ci)
  *   --no-sign             do not sign ad hoc (macOS)
  *   --bundle              then run `tauri build` (macOS: app, ad hoc re-signature, then make-dmg.sh)
- *   --bundles <list>      bundles passed to `tauri build` (default: app on macOS; deb,appimage on Linux; nsis on Windows);
+ *   --bundles <list>      bundles passed to `tauri build` (default: DESKTOP_BUNDLES, else app on macOS; deb,appimage on Linux; nsis on Windows;
+ *                         add msi for a Windows .msi, it needs the WiX toolset);
  *                         `none` builds the shell binary only (`tauri build --no-bundle`), run it with DESKTOP_RESOURCES
  *   --no-dmg              macOS: stop after the .app (no disk image)
  *   --dry-run             print the plan, download and write nothing
@@ -37,6 +41,7 @@ import path from 'path';
 import { pipeline } from 'stream/promises';
 import { Readable } from 'stream';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { readProjectVariant } from './variant.mjs';
 import {
   RUNTIME_NODE_DIR, classifyNativeModules, dmgName, expectedSha, findLocaleFiles, findNativeModules, formatPlan, headerReader,
   hostTargetId, nativeWarnings, nodeArchiveName, nodeDistName, nodeDistUrl, nodeShasumsUrl, planResources, readPackaging,
@@ -218,6 +223,11 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) return console.log(readFileSync(fileURLToPath(import.meta.url), 'utf8').match(/\/\*\*\n \* Assembles[\s\S]*?\*\//)[0]);
   const root = path.resolve(opts.root ?? process.cwd());
+  const variant = readProjectVariant(root);
+  const buildRoot = path.resolve(opts['build-root'] ?? (variant ? path.join(root, 'desktop', 'build', 'variant') : root));
+  if (variant && !opts['dry-run'] && !existsSync(path.join(buildRoot, 'back', 'dist'))) {
+    throw new Error(`the project declares a desktop variant: stage and build it first (node scripts/desktop/variant.mjs stage), ${path.join(buildRoot, 'back', 'dist')} is missing`);
+  }
   const desktopConfig = JSON.parse(readFileSync(path.join(root, 'desktop', 'desktop.config.json'), 'utf8'));
   const target = resolveTarget(opts.target ?? hostTargetId());
   const { nodeVersion, extraResources } = readPackaging(desktopConfig, opts['node-version']);
@@ -227,6 +237,7 @@ async function main() {
   const version = sync.projectVersion(root, opts.version);
   const steps = planResources({ desktopConfig, target, nodeVersion, extraResources, sign });
   log(`${desktopConfig.productName} ${version ?? '(no version)'} for ${target.id}, resources in ${out}`);
+  if (buildRoot !== root) log(`back/front built from ${buildRoot}${variant ? ` (desktop variant ${variant.sharedModules ?? variant.descriptor})` : ''}`);
   console.log(formatPlan(steps));
   if (opts['dry-run']) return log('dry run: nothing downloaded or written');
 
@@ -234,20 +245,20 @@ async function main() {
   const archive = await fetchNode(nodeVersion, target, cache);
   if (!opts['skip-install']) rmSync(out, { recursive: true, force: true });
   else rmSync(path.join(out, 'back', 'dist'), { recursive: true, force: true });
-  copyDir(path.join(root, 'back', 'dist'), path.join(out, 'back', 'dist'));
+  copyDir(path.join(buildRoot, 'back', 'dist'), path.join(out, 'back', 'dist'));
   stripBuildArtifacts(path.join(out, 'back', 'dist'));
-  cpSync(path.join(root, 'back', 'package.json'), path.join(out, 'back', 'package.json'));
-  copyLocales(root, out);
-  installProdModules(root, out, target, opts['skip-install']);
+  cpSync(path.join(buildRoot, 'back', 'package.json'), path.join(out, 'back', 'package.json'));
+  copyLocales(buildRoot, out);
+  installProdModules(buildRoot, out, target, opts['skip-install']);
   fetchBetterSqlite(out, target, nodeVersion);
-  copyDir(path.join(root, 'front', 'dist'), path.join(out, desktopConfig.resources?.frontDir ?? 'front/dist'));
+  copyDir(path.join(buildRoot, 'front', 'dist'), path.join(out, desktopConfig.resources?.frontDir ?? 'front/dist'));
   extractNode(archive, nodeVersion, target, path.join(out, RUNTIME_NODE_DIR));
   for (const r of extraResources) copyDir(path.join(root, r.from), path.join(out, r.to));
   const marker = path.join(out, desktopConfig.resources?.marker ?? 'back/dist/main.js');
   if (!existsSync(marker)) throw new Error(`Marker missing after assembly: ${marker}`);
   reportNatives(out, target);
   if (sign && target.os === 'darwin' && process.platform === 'darwin') signAdHoc(out);
-  if (opts.bundle) bundle({ root, out, desktopConfig, extra: extraResources, target, sign, bundles: opts.bundles ?? defaultBundles(target), version, dmg: !opts['no-dmg'] });
+  if (opts.bundle) bundle({ root, out, desktopConfig, extra: extraResources, target, sign, bundles: opts.bundles ?? (process.env.DESKTOP_BUNDLES || defaultBundles(target)), version, dmg: !opts['no-dmg'] });
   else log('Resources ready. Next: --bundle, or scripts/desktop/package-cross.mjs for a portable Windows/Linux package.');
 }
 

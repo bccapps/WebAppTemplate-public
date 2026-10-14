@@ -25,6 +25,7 @@ desktop/
   desktop.config.json      # the only file a project edits (embedded in the binary at build time)
   package.json             # scripts: sync, test, dev, build
   splash/                  # waiting page (index.html) + default fr/en messages (messages.json)
+  launchers/                # generic sidecar launchers: run-unix-sidecar.sh (macOS/Linux), run-in-wsl.ps1 (Windows, WSL2)
   scripts/sync-tauri-config.mjs   # desktop.config.json -> src-tauri/tauri.conf.json (+ project version)
   src-tauri/               # Rust shell (config, environment, resources, logs, health, process, splash, downloads, boot)
 ```
@@ -39,7 +40,7 @@ desktop/
 | `resources.frontDir` | Built front relative to the resources folder, exported as `SERVE_FRONT_DIR` (default `front/dist`). |
 | `dbFile` | SQLite file name inside the data folder (default `app.db`), exported as `DB_PATH`. |
 | `server` | The back. `command` (string or candidate list), `args`, `cwd`, `env`, `healthPath` (default `/api/v1/health`), `readyTimeoutSec` (default 120), `sharedToken`. |
-| `sidecars[]` | Same shape as `server`, plus `name` (required, unique, not `server`), `label`, `port`. Started in order **before** the server. |
+| `sidecars[]` | Same shape as `server`, plus `name` (required, unique, not `server`), `label`, `port`, `optional` and `os`. Started in order **before** the server (those whose `os` list does not contain this OS are skipped). |
 | `packaging` | `nodeVersion` (default: pinned) and `extraResources`, read by the packaging scripts only (see Packaging). |
 | `splash.brand` | `background`, `foreground`, `accent` colors of the waiting page (and of the window background). |
 | `splash.texts` | `{ "fr": { id: text }, "en": { ... } }` overrides of the default messages (`splash/messages.json`). |
@@ -53,9 +54,15 @@ Process fields:
   port) and `{port:<name>}` (another process's port, e.g. `{port:engine}`). Other brace text is left untouched.
 - `port` (sidecars; always on for the server): allocate a free loopback port. `healthPath` needs it; a sidecar with a
   `healthPath` is waited for (up to `readyTimeoutSec`) before the next process starts, one without is not waited for.
-- `sharedToken`: name of an env var that receives a token generated at **each launch** (32 random bytes in hex), the
-  same value for every process that asks, e.g. `"sharedToken": "ENGINE_TOKEN"` on both the server and an engine sidecar
-  so the back can authenticate to it.
+- `sharedToken`: name of an env var (or a list of names, all receiving the same value) that receives a token generated at
+  **each launch** (32 random bytes in hex), the same value for every process that asks. The name may differ per process:
+  `"sharedToken": "LOCAL_RUNNER_TOKEN"` on the server and `"sharedToken": "RUNNER_TOKEN"` on a runner sidecar let the back
+  authenticate the runner that connects to it, with no token written anywhere.
+- `optional` (sidecars only, default `false`): the process is auxiliary. If it cannot start, exits at start-up, never becomes
+  ready or dies later, the failure is written to `shell.log` (and its own `<name>.log`) and **the app goes on without it**; the
+  waiting page does not show it. Use it for a process whose prerequisites may be missing on a machine (a runner needing `tmux`).
+- `os` (sidecars only, default: every OS): the operating systems the process runs on, among `macos`, `linux`, `windows`.
+  Declare one sidecar per OS family when the launch differs (see "Launchers").
 
 Example with a sidecar:
 
@@ -83,10 +90,17 @@ Example with a sidecar:
    (32 random bytes, base64, same rule as `backEnvValues` in `scripts/create-project.mjs`), generated on first launch only.
 4. **Environment of the back**: the config `env`, then the secrets, then these variables, which always win:
    `HOST=127.0.0.1`, `NODE_PORT`, `CLIENT_ORIGINS` (`http://127.0.0.1:<port>`, `http://localhost:<port>`),
-   `LOCAL_TRUST=true`, `DATABASE_ENGINE=sqlite`, `DB_PATH=<data>/<dbFile>`, `DB_MIGRATIONS_RUN=true`,
+   `LOCAL_TRUST=true`, `DB_ENGINE=sqlite` **and** `DATABASE_ENGINE=sqlite` (the back reads `DB_ENGINE` first: an inherited
+   `DB_ENGINE=postgres` of a developer's shell cannot win), `DB_PATH=<data>/<dbFile>`, `DB_MIGRATIONS_RUN=true`,
    `APP_DATA_DIR=<data>`, `LOG_DIR=<data>/logs`, `SHARED_DIRECTORY=<data>/shared`, `DISABLE_TRANSPORT_CRYPTO=true`,
    `APP_ENV=desktop`, `SERVE_FRONT_DIR`, `DESKTOP_PARENT_PID` (the shell pid; the back exits when it disappears, see
    `nest/common/README.md`). Sidecars receive only their config `env` plus the shared token.
+   **Precedence.** Forced by the shell > secrets file > config `env` > the environment the shell was started with (inherited).
+   The packaged back does not read any `.env*` file: the resources never contain one (`build-desktop.mjs` copies `back/dist`,
+   `package.json`, the locales and the production `node_modules` only; a desktop variant build excludes every `.env*` of the
+   developer's tree), and `node dist/main.js` loads none by itself (`env-cmd` is only used by the project's npm scripts). So the
+   engine, the trust mode and the paths are the shell's whatever `back/.env*` says. Variables the shell does not force
+   (e.g. `TYPEORM_SYNC`, an app's own directories) go in the server's `env` of `desktop.config.json`.
 5. Sidecars, then the server, are started in their own process group; the shell waits for each health path; the window
    then goes to the front. If a process exits during start-up, or the health wait times out, the waiting page shows the
    error and the last 40 log lines. If one dies later, the window returns to the waiting page with the same details.
@@ -95,6 +109,95 @@ Example with a sidecar:
    kill-on-close on Windows.
 7. Also: single instance (a second launch focuses the window), window built in code (downloads, no drag-and-drop
    interception), Linux DMA-BUF workaround.
+
+## Launchers and sidecars on each OS
+
+`launchers/` (copied into the project, shipped as `packaging.extraResources: [{ "from": "desktop/launchers", "to": "launchers" }]`)
+holds two generic scripts for a sidecar that needs tools of the user's machine:
+
+- **macOS / Linux, `run-unix-sidecar.sh`**: `sh run-unix-sidecar.sh [--require <cmd>]... [--hint <text>] -- <command> [args]`. An
+  application started from the Finder does not get the PATH of the user's login shell (Homebrew, nvm, `~/.local/bin`, the AI CLIs
+  an agent runs): the script reads the login shell's PATH once, adds the usual directories, checks the `--require`d commands
+  (`tmux`, `git`...) and `exec`s the command. A missing prerequisite is written to the sidecar log with the hint and the script
+  exits with code 3; with `"optional": true` the app starts without the sidecar. Declare it with `"command": "/bin/sh"` and the
+  script as first argument (no executable bit needed in the packaged resources).
+- **Windows, `run-in-wsl.ps1`**: for a sidecar that needs Linux. See below.
+
+Prerequisites the sidecar's own tools need are the project's to document; the shell and the launchers never install anything.
+
+### Windows: sidecars inside WSL2
+
+The application, its back (SQLite, local trust) and its interface are native Windows. A sidecar that needs Linux (a runner using
+`tmux` and `node-pty`) runs in the user's WSL2 distribution through `run-in-wsl.ps1`, declared as a Windows-only optional sidecar:
+
+```json
+{ "name": "runner-wsl", "optional": true, "os": ["windows"], "command": ["powershell.exe"],
+  "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "{resources}/launchers/run-in-wsl.ps1",
+           "-Name", "runner", "-Payload", "{resources}/runner/runner-linux.tgz", "-Entry", "dist/main.js",
+           "-Requires", "tmux,git", "-HealthUrl", "http://127.0.0.1:{port:server}/api/v1/health",
+           "-ForwardEnv", "HUB_URL,RUNNER_TOKEN"],
+  "env": { "HUB_URL": "ws://127.0.0.1:{port:server}/api/v1/agenthub/ws/runner" }, "sharedToken": "RUNNER_TOKEN" }
+```
+
+At each launch the script: (1) checks `wsl.exe --status` and that a distribution exists (`VX_WSL_DISTRO` picks one, default
+distribution otherwise); (2) inside it checks Node >= `-NodeMin` (22), the `-Requires` commands and that the Windows-hosted back
+answers at `-HealthUrl` **from WSL**; (3) unpacks the Linux payload (`.tgz`, built by CI for linux-x64) once per version under
+`~/.vx-desktop/<Name>/<sha>` of the distribution; (4) forwards the `-ForwardEnv` variables (through `WSLENV`) and starts
+`node <Entry>` attached, so its output is the sidecar log and stopping the app ends it. Any unmet prerequisite is printed with what
+to do and the script exits with code 3: the app then starts without the sidecar.
+
+- **Reaching the back from WSL.** The back listens on `127.0.0.1` only (local trust refuses anything else, by design: never weaken
+  it) and the Windows loopback is not reachable from WSL2's default NAT network. WSL must use **mirrored networking** (Windows 11
+  22H2+, WSL 2.0+): `%UserProfile%\.wslconfig` with `[wsl2]` / `networkingMode=mirrored`, then `wsl --shutdown`. The launcher checks
+  this and prints exactly that when it is not the case. A relay that exposed the back on the WSL network was rejected: a forwarded
+  connection would reach the back from the loopback and be granted the local administrator.
+- **Paths.** The runner lives and works in the distribution (`~/projects` of its Linux user, its state under `~/.agenthub-runner`
+  or the project's `STATE_DIR`): a pty and tmux sockets need a Linux file system, never `/mnt/c`.
+- **Tmux outlives the app**: the tmux server of the runner keeps running in WSL after the app is closed (the runner re-attaches to
+  its sessions at the next launch, like on macOS/Linux).
+- **Not tested**: written without a Windows machine (PowerShell cannot be run here). `powershell.exe` 5.1 argument passing,
+  `wsl.exe` output encoding (UTF-16, handled), `wslpath` quoting and mirrored networking must be exercised on a real Windows 11.
+
+## Desktop variant (an app that uses the `user` module and PostgreSQL on the web)
+
+The shell runs the back with `LOCAL_TRUST=true` and `DATABASE_ENGINE=sqlite`: it refuses a project that uses the `user` module or
+another database. An application that needs both on the web can still ship a standalone desktop app by declaring a **variant**: the
+same application built with another set of shared modules (no `user`, nothing PostgreSQL-only), the web build being untouched.
+
+```jsonc
+// project.config.json
+{ "desktop": { "enabled": true, "variant": {
+    "sharedModules": "shared-modules.desktop.json",          // same format as shared-modules.json
+    "packageLocal": { "front": "front/package.local.desktop.json" },   // optional (see below)
+    "prune": ["back/src/modules/app/llm"]                    // optional: folders deleted from the STAGED sources
+} } }
+```
+
+The same fields can be written in a descriptor file instead (`"variant": { "descriptor": "desktop-flavor.json" }`), and a
+`desktop-flavor.json` at the project root is found by convention, even in a project that has no `project.config.json` (created
+before the wizard). Explicit fields win over the descriptor. `<stack>/package.local.desktop.json`, when it exists, is the overlay of
+that stack without any declaration.
+
+- **Validation** (`add-desktop.mjs`, `node scripts/desktop/variant.mjs check`): the module list has no `user`; every listed module
+  supports SQLite (`databases` absent or containing `sqlite` in its `module.json`); every `requires` of a listed module is listed;
+  the files named by the variant exist. Without a variant the historical refusal stays (and now points at the variant).
+  `node scripts/add-desktop.mjs --variant <file>` declares it from the command line (a descriptor or a module list).
+- **Build** (`app.sh`, `bundle.sh`, `node scripts/desktop/variant.mjs stage`): the back and the front are built in an **isolated
+  copy** of the project, `desktop/build/variant/` (gitignored with the rest of `desktop/build/`): the sources without
+  `node_modules`, `dist`, `.git` or any `.env*`; a **real copy** of the library checkouts (Node resolves dependencies from the real path
+  of a file); `shared-modules.json` = the variant's list; `package.json` regenerated by `build-package.mjs` from the stack's
+  `package.local.json` **merged with the overlay**; its own `node_modules`; `link-shared` run in the copy. Then `npm run build`
+  in each stack. The developer's `src/modules_shared` symlinks, `package.json`, `node_modules` and `.env*` are never read or written
+  (checked by a test: the tree is identical before and after). `build-desktop.mjs` reads `back/dist`, `front/dist` and
+  `back/package*.json` from that copy (`--build-root`), `desktop.config.json` and the extra resources from the project.
+  `variant.mjs stage` options: `--no-install`, `--no-build`, `--clean`, `--update-lock`.
+- **Dependencies of the variant.** The modules the variant drops used to bring dependencies the application may rely on without
+  declaring them (a front using TanStack Query provided by the `user` module's plugin, a `zod` that only resolved because of a
+  hoisted transitive copy): the stage compile fails with *Cannot find module*. Declare them in the overlay. Pin the variant's
+  dependencies with `back/package-lock.desktop.json` (`stage --update-lock` writes it from the stage); without it the stage runs
+  `npm install` and warns.
+- **Runtime parts the dropped modules provided** (a `QueryClientProvider`, an identity) are the application's to supply in the
+  variant: the shell only builds and runs it.
 
 ## Downloads
 
@@ -173,10 +276,21 @@ Node ABI of the embedded runtime. No compiler is needed when a prebuilt binary e
 An entry is a path relative to the project root (copied to the same path in the resources) or `{ from, to }`. `back`,
 `front` and `runtime` are owned by the build. Sidecar commands then reference `{resources}/<to>/...`.
 
-**Native modules.** After assembly every `node_modules/**/*.node` is listed. `better-sqlite3` is handled; any other
+**Native modules of the back.** After assembly every `back/node_modules/**/*.node` is listed. `better-sqlite3` is handled; any other
 package (for example `sharp`) is reported as *unverified*, and as *mismatch* when its binary is for another OS or CPU
 than the target (common when cross-building). The build does not fix them: a project with such a dependency must
 provide the target binary itself, or the packaging is not usable as is.
+
+**Native modules of a sidecar** (`packaging.extraResources`): the build copies the folders as they are and does not inspect them.
+A sidecar that ships a native module (a runner with `node-pty`, say) must bring the binary for the target in its payload, built
+by the project's prepare hook (`scripts-local/desktop-prepare.sh <target>`, run once per target before the assembly). What a CI
+has to do for such a module: if the package ships prebuilt binaries for the target platform and CPU (`node-pty` 1.1: darwin-arm64,
+darwin-x64, win32-x64, win32-arm64), `npm ci --omit=dev` on any host is enough and the hook only keeps the target's folder; if it does
+not (`node-pty` on Linux), the module is compiled with node-gyp (python3, make, g++) on a host of the **same OS and CPU as the
+target**, so one CI job per such target (the workflow does it: `linux-x64`; `linux-arm64` needs an arm64 runner). A Windows target whose
+sidecar runs in WSL2 needs the **Linux** payload: the Linux job builds it (hook `scripts-local/desktop-payloads.sh`) and uploads it as
+the `desktop-payloads` artifact, the Windows job downloads it into `desktop/build/payloads/`. Embedded Node is the target's own
+(`runtime/node/node`); a payload runs with it, except in WSL2 where it runs with the distribution's Node.
 
 **Version.** One source: `version` of `project.config.json`, else `back/package.json`; `--version` overrides. The
 sync script (`npm run sync`, run by `dev`/`build`) writes it into `tauri.conf.json` and `Cargo.toml`, and the DMG and
@@ -211,8 +325,11 @@ Resources for the target must have been assembled with the same `--target`; for 
 
 ## CI
 
-`template/.github/workflows/build-desktop.yml` is a skeleton (macOS arm64 and x64, Windows, Linux) that runs
-`build-desktop.mjs --bundle` and uploads the bundles. It is copied into a project only when the desktop option is chosen
+`template/.github/workflows/build-desktop.yml` is a skeleton: a `payloads` job (Linux, runs `scripts-local/desktop-payloads.sh` when the
+project has it: Linux-only payloads other builds reuse) and a `build` matrix (macOS arm64 `macos-14`, macOS x64 `macos-15-intel`, Windows
+`windows-2022` with `nsis,msi`, Linux `ubuntu-22.04` with `deb,appimage`) that runs `scripts/bundle.sh --targets <target>` (variant stage,
+prepare hook, resources, Tauri bundle) and uploads `desktop/dist/*` (`.dmg`, `.deb`, `.AppImage`, NSIS `.exe`, `.msi`). `DESKTOP_BUNDLES`
+overrides the host target's bundle list. The Windows job enables `core.symlinks` first (the repository relies on symlinks). It is copied into a project only when the desktop option is chosen
 (`create-project.mjs --desktop` or `scripts/add-desktop.mjs`). It has never run on GitHub Actions.
 
 ## Possible evolution
@@ -232,8 +349,8 @@ Resources for the target must have been assembled with the same `--target`; for 
 - Both copy this folder (without `node_modules`, `build`, `target`, `src-tauri/gen`) and the workflow, fill `desktop.config.json`
   (`productName`, `identifier`, `sidecars`) and sync `tauri.conf.json`, and add `desktop:dev` / `desktop:build` (= `scripts/app.sh
   --no-run`) to `back/package.local.json` (run them from `back/`; both need the Rust toolchain).
-- Refused with the `user` module (the shell forces `LOCAL_TRUST=true`), with a database other than SQLite (it forces
-  `DATABASE_ENGINE=sqlite`), with an invalid identifier, and when `desktop/` or the workflow already exists (nothing is
+- Refused with the `user` module (the shell forces `LOCAL_TRUST=true`) or a database other than SQLite (it forces
+  `DATABASE_ENGINE=sqlite`) **unless the project declares a desktop variant** (see above), with an invalid identifier, and when `desktop/` or the workflow already exists (nothing is
   overwritten). Once installed, `desktop/desktop.config.json` is the source of truth: the `desktop` section of
   `project.config.json` only records the answers.
 - CI: `tools/ci-sandbox.sh anonymous-sqlite-desktop` checks the generation (files, configs, scripts, `build-desktop.mjs --dry-run`)

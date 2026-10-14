@@ -229,3 +229,65 @@ test('add-desktop refuses the user module, another database, a bad identifier, a
   assert.notEqual(node('add-desktop.mjs', ['--bogus']).status, 0);
   rmSync(parent, { recursive: true, force: true });
 });
+
+test('validateDesktop with a variant: the web build (user, PostgreSQL) is irrelevant, the variant problems decide', () => {
+  const app = { ...base, database: { engine: 'selfhosted' }, desktop: { enabled: true, variant: 'shared-modules.desktop.json' } };
+  assert.deepEqual(validateDesktop(app, ['common', 'user']), []);
+  assert.deepEqual(validateDesktop(app, ['common', 'user'], { variantProblems: ['x is wrong'] }), ['x is wrong']);
+  assert.match(validateDesktop({ ...app, desktop: { enabled: true, variant: { sharedModules: '../x.json' } } }, ['common']).join(' | '), /inside the project/);
+  assert.equal(resolveDesktop(app).variant.sharedModules, 'shared-modules.desktop.json');
+  assert.equal('variant' in resolveDesktop({ ...base, desktop: { enabled: true } }), false);
+});
+
+test('add-desktop with a desktop variant: a project with user + PostgreSQL is accepted when the variant is clean', () => {
+  const parent = mkdtempSync(path.join(tmpdir(), 'dk-'));
+  const root = fakeProject(parent, { engine: 'selfhosted', modules: ['common', 'database', 'user'], config: { desktop: { variant: 'shared-modules.desktop.json' } } });
+  // missing file
+  const missing = node('add-desktop.mjs', ['--root', root, '--identifier', 'org.acme.demo', '--dry-run']);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /shared-modules\.desktop\.json.*does not exist/);
+  // clean variant
+  writeFileSync(path.join(root, 'shared-modules.desktop.json'), JSON.stringify({ nestcommon: ['common', 'database'], reactcommon: ['common'] }));
+  const ok = node('add-desktop.mjs', ['--root', root, '--identifier', 'org.acme.demo', '--dry-run']);
+  assert.equal(ok.status, 0, ok.stderr + ok.stdout);
+  assert.match(ok.stdout, /desktop variant shared-modules\.desktop\.json/);
+  // variant listing user
+  writeFileSync(path.join(root, 'shared-modules.desktop.json'), JSON.stringify({ nestcommon: ['common', 'user'], reactcommon: ['common'] }));
+  const bad = node('add-desktop.mjs', ['--root', root, '--identifier', 'org.acme.demo', '--dry-run']);
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /"user" module/);
+  // --variant flag on a project that declares none
+  const root2 = fakeProject(parent, { engine: 'selfhosted', modules: ['common', 'database', 'user'] });
+  writeFileSync(path.join(root2, 'alt.json'), JSON.stringify({ nestcommon: ['common', 'database'], reactcommon: ['common'] }));
+  const flag = node('add-desktop.mjs', ['--root', root2, '--identifier', 'org.acme.demo', '--variant', 'alt.json', '--dry-run']);
+  assert.equal(flag.status, 0, flag.stderr + flag.stdout);
+  // without any variant the refusal is unchanged and points at the variant
+  const none = node('add-desktop.mjs', ['--root', fakeProject(parent, { modules: ['common', 'database', 'user'] }), '--dry-run']);
+  assert.equal(none.status, 2);
+  assert.match(none.stderr, /desktop variant/);
+  rmSync(parent, { recursive: true, force: true });
+});
+
+test('add-desktop on a project older than the wizard: a desktop-flavor.json descriptor is enough, no project.config.json is created', () => {
+  const parent = mkdtempSync(path.join(tmpdir(), 'dk-'));
+  const root = path.join(parent, 'legacy');
+  mkdirSync(path.join(root, 'back'), { recursive: true });
+  writeFileSync(path.join(root, 'shared-modules.json'), JSON.stringify({ nestcommon: ['common', 'database', 'user'], reactcommon: ['common', 'user'] }));
+  writeFileSync(path.join(root, 'back', 'package.local.json'), JSON.stringify({ name: 'legacy-back', version: '0.1.0' }));
+  writeFileSync(path.join(root, 'shared-modules.desktop.json'), JSON.stringify({ nestcommon: ['common', 'database'], reactcommon: ['common'] }));
+  // nothing to go on: still refused as not a project
+  assert.match(node('add-desktop.mjs', ['--root', root, '--dry-run']).stderr, /not a project created by create-project/);
+  writeFileSync(path.join(root, 'desktop-flavor.json'), JSON.stringify({ sharedModules: 'shared-modules.desktop.json', prune: [] }));
+  const noIdentity = node('add-desktop.mjs', ['--root', root, '--dry-run']);
+  assert.equal(noIdentity.status, 2);
+  assert.match(noIdentity.stderr, /productName is required|reverse-domain/);
+  const dry = node('add-desktop.mjs', ['--root', root, '--name', 'Legacy App', '--identifier', 'org.acme.legacy', '--dry-run']);
+  assert.equal(dry.status, 0, dry.stderr + dry.stdout);
+  assert.match(dry.stdout, /desktop variant/);
+  const run = node('add-desktop.mjs', ['--root', root, '--name', 'Legacy App', '--identifier', 'org.acme.legacy']);
+  assert.equal(run.status, 0, run.stderr + run.stdout);
+  assert.equal(existsSync(path.join(root, 'project.config.json')), false);
+  assert.equal(json(path.join(root, 'desktop', 'desktop.config.json')).productName, 'Legacy App');
+  rmSync(parent, { recursive: true, force: true });
+});
+

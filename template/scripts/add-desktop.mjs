@@ -13,12 +13,14 @@
  * of create-project.mjs. Nothing is overwritten.
  *
  *   node scripts/add-desktop.mjs [--root <dir>] [--name <product name>] [--identifier <com.example.app>]
- *                                [--dry-run] [--yes]
+ *                                [--variant <shared-modules.desktop.json>] [--dry-run] [--yes]
  *
  * Copies `desktop/` and `.github/workflows/build-desktop.yml`, writes the `desktop` section of project.config.json,
  * fills `desktop/desktop.config.json`, adds `desktop:dev` and `desktop:build` to back/package.local.json and
  * regenerates back/package.json. Refused when the desktop option is already present, when the project uses the
- * `user` module (the shell runs the back in local trust mode) or a database other than SQLite.
+ * `user` module (the shell runs the back in local trust mode) or a database other than SQLite — unless the project declares
+ * a desktop VARIANT (`desktop.variant` in project.config.json, or `--variant <file>`): the app the shell runs is then built
+ * from the variant's own module list (no `user`, SQLite-capable modules only), see scripts/desktop/variant.mjs.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -26,6 +28,7 @@ import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { readProjectVariant, variantFromFlag, variantProblems } from './desktop/variant.mjs';
 import { installDesktop, planDesktopInstall } from './lib/desktop-install.mjs';
 import { linkedIds, normalizeAnswers, resolveDesktop, validateDesktop } from './lib/project-engine.mjs';
 
@@ -43,7 +46,7 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i].replace(/^--/, '');
     if (['dry-run', 'yes'].includes(key)) opts[key] = true;
-    else if (['root', 'name', 'identifier'].includes(key) && argv[i].startsWith('--')) {
+    else if (['root', 'name', 'identifier', 'variant'].includes(key) && argv[i].startsWith('--')) {
       if (argv[i + 1] === undefined) throw new Error(`option ${argv[i]} needs a value`);
       opts[key] = argv[++i];
     } else throw new Error(`unknown option ${argv[i]}`);
@@ -58,19 +61,43 @@ export async function main(argv, templateRoot = TEMPLATE_ROOT) {
   const root = path.resolve(opts.root ?? process.cwd());
   const configFile = path.join(root, 'project.config.json');
   const sharedFile = path.join(root, 'shared-modules.json');
-  if (!existsSync(configFile) || !existsSync(sharedFile)) {
+  const hasConfig = existsSync(configFile);
+  // A project that predates the wizard has no project.config.json: it can still get the shell when it ships a desktop variant
+  // (a `desktop-flavor.json` descriptor at its root, or --variant): the identity then comes from the flags.
+  let discovered = null;
+  try {
+    discovered = readProjectVariant(root);
+  } catch (error) {
+    log.err(error.message);
+    return 2;
+  }
+  if ((!hasConfig && !discovered && !opts.variant) || !existsSync(sharedFile)) {
     throw new Error(`${root} is not a project created by create-project (project.config.json / shared-modules.json missing)`);
   }
-  const saved = readJson(configFile);
+  const saved = hasConfig ? readJson(configFile) : {};
   if (saved.desktop?.enabled) {
     log.err('the desktop option is already enabled in project.config.json: nothing to do');
     return 2;
   }
-  const answers = normalizeAnswers({
-    ...saved,
-    desktop: { ...(saved.desktop ?? {}), enabled: true, ...(opts.name ? { productName: opts.name } : {}), ...(opts.identifier ? { identifier: opts.identifier } : {}) },
-  });
-  const errors = validateDesktop(answers, linkedIds(readJson(sharedFile)));
+  let answers;
+  try {
+    answers = normalizeAnswers({
+      ...saved,
+      desktop: {
+        ...(saved.desktop ?? {}),
+        enabled: true,
+        ...(opts.name ? { productName: opts.name } : {}),
+        ...(opts.identifier ? { identifier: opts.identifier } : {}),
+        ...(opts.variant ? { variant: variantFromFlag(root, opts.variant) } : {}),
+        ...(!opts.variant && !saved.desktop?.variant && discovered ? { variant: discovered } : {}),
+      },
+    });
+  } catch (error) {
+    log.err(error.message);
+    return 2;
+  }
+  const variant = answers.desktop.variant;
+  const errors = validateDesktop(answers, linkedIds(readJson(sharedFile)), { variantProblems: variant ? variantProblems(root, variant) : [] });
   const { files, conflicts, scripts } = planDesktopInstall(root, templateRoot);
   for (const c of conflicts) errors.push(`${c} already exists: nothing is overwritten (remove it first, or set desktop.enabled by hand if the shell is already installed)`);
   if (errors.length) {
@@ -78,14 +105,16 @@ export async function main(argv, templateRoot = TEMPLATE_ROOT) {
     return 2;
   }
   const desktop = resolveDesktop(answers);
-  log.info(`Desktop shell: "${desktop.productName}" (${desktop.identifier}), ${files.length} files, scripts ${scripts.join(', ')}`);
+  log.info(`Desktop shell: "${desktop.productName}" (${desktop.identifier}), ${files.length} files, scripts ${scripts.join(', ')}${desktop.variant ? `, desktop variant ${desktop.variant.sharedModules ?? desktop.variant.descriptor}` : ''}`);
   if (/^com\.example\./.test(desktop.identifier)) log.warn('the identifier is a placeholder (com.example.*): pass --identifier <your.reverse.domain>; it names the OS data folder of the app');
   if (opts['dry-run']) {
     log.info('--dry-run: nothing written.');
     return 0;
   }
   installDesktop(root, templateRoot, answers);
-  writeFileSync(configFile, `${JSON.stringify({ ...saved, desktop }, null, 2)}\n`);
+  // Without a project.config.json (a project older than the wizard) none is created: the variant descriptor is found by convention.
+  if (hasConfig) writeFileSync(configFile, `${JSON.stringify({ ...saved, desktop }, null, 2)}\n`);
+  else log.warn('no project.config.json: none created (the desktop variant is found through its descriptor file at the project root)');
   rebuildBackPackage(root);
   log.ok('Desktop shell added. Next: node scripts/desktop/build-desktop.mjs --dry-run, or `npm run desktop:dev` in back/ (Rust toolchain required).');
   return 0;
