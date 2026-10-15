@@ -137,10 +137,8 @@ pub fn server_core_env(f: &ServerFacts) -> BTreeMap<String, String> {
         ("NODE_PORT", f.port.to_string()),
         ("CLIENT_ORIGINS", format!("{origin},http://localhost:{}", f.port)),
         ("LOCAL_TRUST", "true".into()),
-        // `DB_ENGINE` is read BEFORE `DATABASE_ENGINE` (nest/common/utils/dbEngine.ts): both are forced, so no inherited
-        // `DB_ENGINE=postgres` (a developer's shell) can switch the packaged app to another database.
+        // Forced, so no inherited `DB_ENGINE=postgres` (a developer's shell) can switch the packaged app to another database.
         ("DB_ENGINE", "sqlite".into()),
-        ("DATABASE_ENGINE", "sqlite".into()),
         ("DB_PATH", p(&f.data_dir.join(f.db_file))),
         ("APP_DATA_DIR", p(f.data_dir)),
         ("LOG_DIR", p(f.logs_dir)),
@@ -269,8 +267,7 @@ mod tests {
         assert_eq!(env["NODE_PORT"], "4321");
         assert_eq!(env["CLIENT_ORIGINS"], "http://127.0.0.1:4321,http://localhost:4321");
         assert_eq!(env["LOCAL_TRUST"], "true");
-        assert_eq!(env["DATABASE_ENGINE"], "sqlite");
-        assert_eq!(env["DB_ENGINE"], "sqlite", "DB_ENGINE wins over DATABASE_ENGINE in the back");
+        assert_eq!(env["DB_ENGINE"], "sqlite");
         assert_eq!(env["DB_PATH"], "/d/app.db");
         assert_eq!(env["DB_MIGRATIONS_RUN"], "true", "legacy: without `schema` the shell forces DB_MIGRATIONS_RUN=true");
         assert!(!env.contains_key("DB_SCHEMA_MODE"));

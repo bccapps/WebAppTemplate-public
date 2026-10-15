@@ -19,7 +19,6 @@
 const fs = require('fs');
 const path = require('path');
 
-process.env.DATABASE_ENGINE = 'sqlite';
 process.env.DB_ENGINE = 'sqlite';
 process.env.DB_PATH = ':memory:';
 process.env.DB_PORTABLE_LOG = 'false';

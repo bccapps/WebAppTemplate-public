@@ -15,7 +15,7 @@ import { resolveEngine } from './dbEngine';
  * Automatic Postgres → SQLite adaptation of entity metadata.
  *
  * An entity is written once, with Postgres column types (`jsonb`, `timestamptz`, `enum`, `array: true`, `bytea`…). When the engine
- * is SQLite (`DATABASE_ENGINE=sqlite`) the `database` module calls `applyPortableColumnTypes()` while it builds the DataSource
+ * is SQLite (`DB_ENGINE=sqlite`) the `database` module calls `applyPortableColumnTypes()` while it builds the DataSource
  * options: every column / index / check / generation already registered by the entity decorators is rewritten in place, and every
  * decorator evaluated later is rewritten as it registers (TypeORM imports the entity files after the options are built).
  *

@@ -28,6 +28,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/lib/db-engine.sh"
 cd "${PROJECT_ROOT}"
 
 # ---------- Colours ----------
@@ -227,12 +228,8 @@ stop_prod() {
   local project="${PROJECT_NAME:-app}"
 
   # Determine compose file (same logic as deploy-full.sh)
-  local db_engine
-  db_engine="$(echo "${DATABASE_ENGINE:-postgres}" | tr '[:upper:]' '[:lower:]')"
-  local compose_file="scripts/docker-compose-cloud.yml"
-  if [[ "${db_engine}" == "postgres" || "${db_engine}" == "selfhosted" ]]; then
-    compose_file="scripts/docker-compose.yml"
-  fi
+  resolve_db_engine
+  local compose_file="${DEFAULT_COMPOSE_FILE}"
   if [[ ! -f "${compose_file}" ]]; then
     # fallback: try both
     for f in scripts/docker-compose.yml scripts/docker-compose-cloud.yml; do

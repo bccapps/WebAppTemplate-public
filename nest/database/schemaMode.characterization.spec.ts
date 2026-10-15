@@ -24,7 +24,7 @@ import { join } from 'path';
 import { buildMainDataSourceOptions } from './databases';
 
 const KEYS = [
-  'DB_ENGINE', 'DATABASE_ENGINE', 'DB_PATH', 'DB_SYNC', 'TYPEORM_SYNC', 'DB_MIGRATIONS_RUN', 'DB_SQLITE_MIGRATIONS',
+  'DB_ENGINE', 'DB_PATH', 'DB_SYNC', 'TYPEORM_SYNC', 'DB_MIGRATIONS_RUN', 'DB_SQLITE_MIGRATIONS',
   'DB_SCHEMA_MODE', 'NODE_ENV', 'DB_CONNECTIONS', 'DB_MODULE_ROUTING', 'TYPEORM_CLI',
 ];
 
@@ -59,7 +59,7 @@ describe('legacy schema options (DB_SCHEMA_MODE unset) are unchanged', () => {
     for (const [key, expected] of Object.entries(fixture)) {
       const [engine, nodeEnv, dbSync, typeormSync, migrationsRun, sqliteMigrations] = JSON.parse(key) as [string, string | null, string | null, string | null, string | null, string | null];
       for (const k of KEYS) delete process.env[k];
-      process.env.DATABASE_ENGINE = engine;
+      process.env.DB_ENGINE = engine;
       if (engine === 'sqlite') process.env.DB_PATH = ':memory:';
       const set = (name: string, value: string | null) => {
         if (value !== null) process.env[name] = value;

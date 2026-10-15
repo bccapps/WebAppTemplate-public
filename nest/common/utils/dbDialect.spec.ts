@@ -29,9 +29,7 @@ describe('dialect (Postgres)', () => {
   const pg = dialect('main');
   it('is Postgres by default and produces Postgres SQL', () => {
     const previous = process.env.DB_ENGINE;
-    const previousLegacy = process.env.DATABASE_ENGINE;
     delete process.env.DB_ENGINE;
-    delete process.env.DATABASE_ENGINE;
     try {
       const d = dialect();
       expect(d.sqlite).toBe(false);
@@ -43,7 +41,6 @@ describe('dialect (Postgres)', () => {
       expect(d.forUpdate()).toBe(' FOR UPDATE');
     } finally {
       if (previous !== undefined) process.env.DB_ENGINE = previous;
-      if (previousLegacy !== undefined) process.env.DATABASE_ENGINE = previousLegacy;
     }
     expect(pg).toBeDefined();
   });

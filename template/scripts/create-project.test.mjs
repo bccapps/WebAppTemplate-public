@@ -88,7 +88,7 @@ test('multi-user project with fixture private libs: closure, questions, config, 
   assert.deepEqual(json(path.join(app, 'shared-modules.json')).nestcommon, ['common', 'database', 'commerce', 'infra', 'llm', 'user']);
   const back = readFileSync(path.join(app, 'back', '.env.dev'), 'utf8');
   assert.doesNotMatch(back, /^ADMIN_TOKEN=/m);
-  assert.match(back, /^DATABASE_ENGINE=neon$/m);
+  assert.match(back, /^DB_ENGINE=neon$/m);
   assert.match(back, /^REDIS_URL=redis:\/\/localhost:6379$/m);
   assert.match(back, /JWT_SECRET/, 'user block active');
   assert.match(readFileSync(path.join(app, 'front', '.env.dev'), 'utf8'), /^VITE_REOWN_PROJECT_ID=rp-123$/m);
@@ -137,7 +137,7 @@ test('incoherent answers are refused (exit 2) and --dry-run writes nothing', () 
 test('sqlite: generated back env and package.local.json (pure functions)', () => {
   const answers = { projectName: 'notes', ports: { back: 3000, front: 5173 }, database: { engine: 'sqlite', redis: false } };
   const env = backEnvValues(answers, { ids: ['common', 'database'] }, { back: {}, front: {} });
-  assert.equal(env.DATABASE_ENGINE, 'sqlite');
+  assert.equal(env.DB_ENGINE, 'sqlite');
   assert.equal(env.DB_PATH, 'data/notes.db');
   assert.equal(sqliteDbPath('notes'), 'data/notes.db');
   for (const k of ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DB_MIGRATIONS_RUN', 'REDIS_URL']) assert.equal(k in env, false, `${k} must not be written`);
@@ -147,7 +147,7 @@ test('sqlite: generated back env and package.local.json (pure functions)', () =>
   const pgEnv = backEnvValues(pg, { ids: ['common'] }, { back: {}, front: {} });
   assert.equal(pgEnv.DB_HOST, 'localhost');
   assert.equal('DB_PATH' in pgEnv, false);
-  assert.equal('DATABASE_ENGINE' in pgEnv, false);
+  assert.equal('DB_ENGINE' in pgEnv, false);
   assert.equal(backEnvValues({ ...answers, database: { engine: 'sqlite', redis: true } }, { ids: [] }, { back: {}, front: {} }).REDIS_URL, 'redis://localhost:6379');
   assert.match(renderPlan({ ...answers, siteName: 'N', languages: ['en'], privateAccess: false }, { ids: ['common'], perStack: { nest: [], react: [] }, added: [] }, { byId: new Map(), byStack: {} }, '/x'), /Database\s+sqlite \(data\/notes.db/);
 });

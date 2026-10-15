@@ -84,7 +84,7 @@ describe('detectTypeormCli', () => {
 describe('DataSource options carry the resolution', () => {
   let saved: Record<string, string | undefined>;
   let dir: string;
-  const KEYS = ['DATABASE_ENGINE', 'DB_ENGINE', 'DB_PATH', 'DB_SYNC', 'TYPEORM_SYNC', 'DB_MIGRATIONS_RUN', 'DB_SQLITE_MIGRATIONS', 'DB_SCHEMA_MODE', 'NODE_ENV', 'TYPEORM_CLI', 'DB_CONNECTIONS', 'DB_MODULE_ROUTING', 'DB__ARCHIVE__ENGINE', 'DB__ARCHIVE__PATH', 'DB__ARCHIVE__SCHEMA_MODE'];
+  const KEYS = ['DB_ENGINE', 'DB_PATH', 'DB_SYNC', 'TYPEORM_SYNC', 'DB_MIGRATIONS_RUN', 'DB_SQLITE_MIGRATIONS', 'DB_SCHEMA_MODE', 'NODE_ENV', 'TYPEORM_CLI', 'DB_CONNECTIONS', 'DB_MODULE_ROUTING', 'DB__ARCHIVE__ENGINE', 'DB__ARCHIVE__PATH', 'DB__ARCHIVE__SCHEMA_MODE'];
   const ctx = () => ({ baseDir: join(dir, 'src'), migrationGlobs: [join(dir, 'src/migrations/*.{js,ts}')], certBaseDir: dir });
 
   beforeEach(() => {
@@ -106,7 +106,7 @@ describe('DataSource options carry the resolution', () => {
   });
 
   it.each([['postgres'], ['sqlite']])('%s: DB_SCHEMA_MODE drives synchronize / migrationsRun / migrations', (engine) => {
-    process.env.DATABASE_ENGINE = engine;
+    process.env.DB_ENGINE = engine;
     if (engine === 'sqlite') process.env.DB_PATH = ':memory:';
     process.env.NODE_ENV = 'production';
     process.env.DB_SCHEMA_MODE = 'migrations';
@@ -121,7 +121,7 @@ describe('DataSource options carry the resolution', () => {
   });
 
   it.each([['postgres'], ['sqlite']])('%s: the CLI entry ignores sync flags and DB_SCHEMA_MODE', (engine) => {
-    process.env.DATABASE_ENGINE = engine;
+    process.env.DB_ENGINE = engine;
     if (engine === 'sqlite') process.env.DB_PATH = ':memory:';
     process.env.TYPEORM_SYNC = 'true';
     process.env.DB_MIGRATIONS_RUN = 'true';
@@ -135,7 +135,7 @@ describe('DataSource options carry the resolution', () => {
   });
 
   it('a named connection reads its own DB__<NAME>__SCHEMA_MODE', () => {
-    process.env.DATABASE_ENGINE = 'postgres';
+    process.env.DB_ENGINE = 'postgres';
     process.env.DB_CONNECTIONS = 'archive';
     process.env.DB_MODULE_ROUTING = 'x=archive';
     process.env.DB__ARCHIVE__ENGINE = 'sqlite';

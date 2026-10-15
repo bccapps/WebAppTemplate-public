@@ -39,6 +39,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/lib/db-engine.sh"
 cd "${PROJECT_ROOT}"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || "${1:-}" == "help" ]]; then
@@ -153,16 +154,10 @@ fi
 FORCE_REBUILD="${FORCE_REBUILD:-0}"
 NO_CACHE_FLAG=""
 [[ "${FORCE_REBUILD}" == "1" ]] && NO_CACHE_FLAG="--no-cache"
-DATABASE_ENGINE_VALUE="${DATABASE_ENGINE:-postgres}"
-DATABASE_ENGINE_NORMALIZED="$(echo "${DATABASE_ENGINE_VALUE}" | tr '[:upper:]' '[:lower:]')"
-DEFAULT_COMPOSE_FILE="scripts/docker-compose-cloud.yml"
-IS_SELF_HOSTED_DB=0
-if [[ "${DATABASE_ENGINE_NORMALIZED}" == "postgres" || "${DATABASE_ENGINE_NORMALIZED}" == "selfhosted" ]]; then
-  IS_SELF_HOSTED_DB=1
-  DEFAULT_COMPOSE_FILE="scripts/docker-compose.yml"
-fi
+resolve_db_engine
 COMPOSE_FILE_PATH="${COMPOSE_FILE_NAME:-${DEFAULT_COMPOSE_FILE}}"
 COMPOSE_FILE_PATH="${COMPOSE_FILE_PATH#./}"
+assert_compose_matches_db_engine "${COMPOSE_FILE_PATH}"
 KEEP_BUILD_CONTEXT="${KEEP_BUILD_CONTEXT:-0}"
 
 # Base image for the back builder stage (NestJS CLI pre-installed).
@@ -212,6 +207,16 @@ fi
 if [[ "${DEPLOY_TARGET}" != "front" && -z "${BACK_HOSTS_RAW}" ]]; then
   echo "Error: BACK_HOSTS must specify at least one host (comma-separated)."
   exit 1
+fi
+
+# SQLite is one file in the `sqlite_data` volume of ONE host: several back hosts would each get their own copy,
+# and several replicas share the file only through that volume (single writer at a time).
+if [[ "${IS_SQLITE_DB}" -eq 1 && "${DEPLOY_TARGET}" != "front" ]]; then
+  if [[ "${BACK_HOSTS_RAW}" == *,* ]]; then
+    echo "Error: DB_ENGINE=sqlite supports a single back host (BACK_HOSTS='${BACK_HOSTS_RAW}')." >&2
+    exit 1
+  fi
+  [[ "${BACK_REPLICAS:-1}" -gt 1 ]] && echo "Warning: DB_ENGINE=sqlite with BACK_REPLICAS=${BACK_REPLICAS}: replicas share one SQLite file (writes are serialized); prefer BACK_REPLICAS=1." >&2
 fi
 
 # ======================

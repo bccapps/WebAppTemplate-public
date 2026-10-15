@@ -30,6 +30,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/lib/db-engine.sh"
 cd "${PROJECT_ROOT}"
 
 # ---------- Colours ----------
@@ -93,15 +94,10 @@ restart_remote() {
   [[ -z "${hosts_raw}" ]] && err "BACK_HOSTS is not set in ${env_file}"
 
   # Determine compose file — mirrors deploy-full.sh logic exactly
-  local db_engine
-  db_engine="$(echo "${DATABASE_ENGINE:-postgres}" | tr '[:upper:]' '[:lower:]')"
-  local compose_file
-  if [[ "${db_engine}" == "postgres" || "${db_engine}" == "selfhosted" ]]; then
-    compose_file="${COMPOSE_FILE_NAME:-scripts/docker-compose.yml}"
-  else
-    compose_file="${COMPOSE_FILE_NAME:-scripts/docker-compose-cloud.yml}"
-  fi
+  resolve_db_engine
+  local compose_file="${COMPOSE_FILE_NAME:-${DEFAULT_COMPOSE_FILE}}"
   [[ ! -f "${compose_file}" ]] && err "Compose file not found: ${compose_file}"
+  assert_compose_matches_db_engine "${compose_file}"
 
   local key_path
   key_path="$(resolve_key_path "${ssh_key}")"

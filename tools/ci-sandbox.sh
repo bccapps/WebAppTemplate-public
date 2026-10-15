@@ -16,7 +16,7 @@
 #
 # Modes:
 #   anonymous    (default) common + database + voice, no `user`: admin protected by ADMIN_TOKEN
-#   anonymous-sqlite  same as anonymous with the SQLite engine: DATABASE_ENGINE=sqlite + DB_PATH in back/.env.dev,
+#   anonymous-sqlite  same as anonymous with the SQLite engine: DB_ENGINE=sqlite + DB_PATH in back/.env.dev,
 #                better-sqlite3 in back/package.local.json, no Postgres variables; the entity discovery check
 #                runs against a SQLite file
 #   anonymous-sqlite-desktop  same as anonymous-sqlite with the desktop option: checks that desktop/, the workflow,
@@ -126,7 +126,7 @@ else
 fi
 
 if [[ "${MODE}" == "anonymous-sqlite" || "${MODE}" == "anonymous-sqlite-desktop" ]]; then
-  grep -q '^DATABASE_ENGINE=sqlite$' "${APP}/back/.env.dev" || { echo "DATABASE_ENGINE=sqlite missing in back/.env.dev" >&2; exit 1; }
+  grep -q '^DB_ENGINE=sqlite$' "${APP}/back/.env.dev" || { echo "DB_ENGINE=sqlite missing in back/.env.dev" >&2; exit 1; }
   grep -q '^DB_PATH=data/app\.db$' "${APP}/back/.env.dev" || { echo "DB_PATH=data/app.db missing in back/.env.dev" >&2; exit 1; }
   if grep -qE '^(DB_HOST|DB_PASSWORD)=' "${APP}/back/.env.dev"; then echo "Postgres variables must not be generated with SQLite" >&2; exit 1; fi
   grep -q '"better-sqlite3"' "${APP}/back/package.local.json" || { echo "better-sqlite3 missing in back/package.local.json" >&2; exit 1; }
@@ -203,7 +203,7 @@ import AppDataSource, { dbContext } from './src/config/Datasource';
 })();
 TS
 if [[ "${MODE}" == "anonymous-sqlite" || "${MODE}" == "anonymous-sqlite-desktop" ]]; then
-  export DATABASE_ENGINE=sqlite DB_PATH="${SB}/ci.db" EXPECT_ENTITIES="${EXPECT_ENTITY}"
+  export DB_ENGINE=sqlite DB_PATH="${SB}/ci.db" EXPECT_ENTITIES="${EXPECT_ENTITY}"
 else
   export DB_HOST=localhost DB_PORT=5432 DB_USER=ci DB_PASSWORD=ci DB_NAME=ci EXPECT_ENTITIES="${EXPECT_ENTITY}"
 fi

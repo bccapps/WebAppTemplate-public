@@ -110,6 +110,10 @@ RUN rm -f .no-cert.crt
 ARG APP_RUNTIME_DIR=.cache
 RUN mkdir -p "/app/${APP_RUNTIME_DIR}" && chown -R node:node "/app/${APP_RUNTIME_DIR}"
 
+# Persistent data dir (DB_ENGINE=sqlite: the compose files mount the `sqlite_data` volume here and set DB_PATH). It is
+# created owned by node so the named volume inherits write access for the unprivileged user; empty and unused otherwise.
+RUN mkdir -p /data && chown node:node /data
+
 COPY --chown=node:node --from=builder /locales/app ./src/locales
 COPY --chown=node:node --from=builder /locales/modules/src/ ./src/
 COPY --chown=node:node --from=builder /app/dist ./dist

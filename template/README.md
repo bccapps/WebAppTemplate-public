@@ -9,7 +9,7 @@ All environments are managed through the unified `scripts/run.sh` launcher.
 ./scripts/run.sh dev              # Infra (postgres + optional redis) + backend (watch) + frontend (vite)
 ./scripts/run.sh dev --infra-only # Only infrastructure containers
 ```
-With `DATABASE_ENGINE=sqlite` (or `DB_ENGINE=sqlite`) no container is started: the database is a file read by the back
+With `DB_ENGINE=sqlite` no container is started: the database is a file read by the back
 process; Docker is used only when `REDIS_URL` is set, and `--infra-only` then has nothing to start (it says so).
 Ctrl+C stops everything (back, front, containers).
 
@@ -54,9 +54,10 @@ Requires `back/.env` (production).
 | Category | Variables | Description |
 |----------|-----------|-------------|
 | **Project** | `PROJECT_NAME`, `NODE_PORT`, `FRONT_PORT` | Project identity and port mapping |
-| **Database** | `DATABASE_ENGINE`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_NAME`, `DB_PASSWORD` | Postgres connection (`DATABASE_ENGINE`: `postgres`, `cloud`, `supabase`, `neon`) |
+| **Database** | `DB_ENGINE`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_NAME`, `DB_PASSWORD` | Postgres connection (`DB_ENGINE`: `postgres`, `cloud`, `supabase`, `neon`) |
 | **DB options** | `DB_SSLMODE`, `DB_SSLROOTCERT`, `DB_POOLSIZE`, `TYPEORM_SYNC`, `DB_MIGRATIONS_RUN` | SSL, pool tuning, schema sync, migrations at startup |
-| **SQLite** | `DATABASE_ENGINE=sqlite` (or `DB_ENGINE=sqlite`), `DB_PATH` | Local file database instead of Postgres, single instance (see `modules_shared/database/README.md`). Written by the wizard (`DB_PATH=data/<project>.db`); `better-sqlite3` is added to `back/package.local.json` |
+| **SQLite** | `DB_ENGINE=sqlite`, `DB_PATH` | Local file database instead of Postgres, single instance (see `modules_shared/database/README.md`). Written by the wizard (`DB_PATH=data/<project>.db`); `better-sqlite3` is added to `back/package.local.json` |
+| **Database engine (scripts)** | `DB_ENGINE` | The only engine variable (the former `DATABASE_ENGINE` is refused by the back and by every script: rename it). `scripts/lib/db-engine.sh` is the single reader: `postgres`/`selfhosted` use `docker-compose.yml` (the `db` Postgres service), every other engine (`cloud`, `supabase`, `neon`, `sqlite`) uses `docker-compose-cloud.yml`, which has no database container; a compose file with a `db` service is refused for those engines. With `sqlite`, deploys keep the file on the `sqlite_data` volume (`DB_PATH=/data/<project>.db` set by the compose file, `/data` owned by the `node` user), require a single back host, and `migrate-db.sh`, `migrate-server.sh`, `backup-db.sh`, `restore-db.sh` refuse to run (Postgres only) |
 | **Security** | `ADMIN_TOKEN`, `CRYPT_DB_MASTER_KEY`, `CRYPT_DB_DERIVATION_SALT`, `CRYPT_SESSION_PRIVATE_KEY`, `CLIENT_ORIGINS` | Anonymous-mode admin key, encryption keys, CORS (`*` refused in production) |
 | **HTTP server** | `HOST`, `TRUST_PROXY`, `RAW_BODY_PATHS`, `APP_VERSION`, `LOG_DIR`, `LOG_TO_FILE`, `APP_DATA_DIR` | Listen address, proxy trust, webhook raw-body paths, version in `/api/v1/health`, file logs (all optional, see `back/.env.example` and `nest/common/README.md`) |
 | **Front served by the back** | `SERVE_FRONT_DIR` | Optional same-origin front (directory of the built front); see « Servir le front » in `nest/common/README.md` |
@@ -173,7 +174,7 @@ plugins (`plugin.ts` / `plugin.tsx`). Questions (Enter = default; each has a CLI
 | 4 | **selling** (products, subscriptions)? | `features.commerce.enabled` seeded `true` / `false` and adds the `commerce` module (declining leaves it out); needs multi-user |
 | 4b | **monitoring / health / Redis cache** (`infra`)? | adds the `infra` module (default yes when multi-user, else no) |
 | 5 | functional modules (grouped by category, with description) | closure of `requires` shown before confirmation |
-| 6 | database (selfhosted / cloud / supabase / neon / **sqlite**), Redis (default no) | `DATABASE_ENGINE`, `.env` blocks; sqlite: `DB_PATH=data/<project>.db`, no `DB_*` Postgres variables, `better-sqlite3` in `back/package.local.json`. The question is asked **before** the modules: those that do not support the engine are not offered |
+| 6 | database (selfhosted / cloud / supabase / neon / **sqlite**), Redis (default no) | `DB_ENGINE`, `.env` blocks; sqlite: `DB_PATH=data/<project>.db`, no `DB_*` Postgres variables, `better-sqlite3` in `back/package.local.json`. The question is asked **before** the modules: those that do not support the engine are not offered |
 | 6b | **installable app (PWA)?** (`--pwa` / `--no-pwa`, default no; `--pwa-name`, `--pwa-short-name` (12 characters at most), `--pwa-theme-color`, `--pwa-background-color`) | writes the `pwa` section of `project.config.json` (`enabled`, `name`, `shortName`, `themeColor`, `backgroundColor`; name defaults to the site name, colors to a neutral pair); enabled: copies `front/pwa.plugin.ts`, `front/pwa-assets.config.ts`, `front/src/sw.ts`, `front/src/components/PwaInstallButton.tsx`, keeps the PWA tags of `front/index.html`, the `Header` button and the PWA lines of `front/public/_headers`, and adds `vite-plugin-pwa`, `@vite-pwa/assets-generator`, `workbox-*` and the `pwa:icons` script to `front/package.local.json` (see « Front public files and PWA ») |
 | 7 | languages | `back/src/locales/custom.<lang>.json`, `localesLanguages`, `localeDefault` |
 | 8 | recap | confirmation, then generation |
@@ -222,7 +223,7 @@ node scripts/add-module.mjs --remove voice      # refused when another linked mo
 
 The desktop option turns the project into a Tauri 2 application (shell in `desktop/`, packaging scripts in `scripts/desktop/`,
 details and `desktop.config.json` keys in `desktop/README.md`). Nothing is copied unless the option is chosen; the shell
-runs the back with `DATABASE_ENGINE=sqlite` and `LOCAL_TRUST=true`, hence the refusal with the `user` module or another
+runs the back with `DB_ENGINE=sqlite` and `LOCAL_TRUST=true`, hence the refusal with the `user` module or another
 database. Declare extra processes (a Python engine...) in `desktop.sidecars` of `project.config.json` before creation, or in
 `desktop/desktop.config.json` afterwards (`desktop.config.json` is the source of truth once the shell is installed).
 

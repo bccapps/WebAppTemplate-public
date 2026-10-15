@@ -39,7 +39,7 @@ set -euo pipefail
 #   BACK_HOSTS (comma-separated) or REMOTE_HOST (single host)
 #
 # Optional env vars:
-#   DATABASE_ENGINE   - "postgres"/"selfhosted" (default, self-hosted DB) or cloud DB name
+#   DB_ENGINE   - "postgres"/"selfhosted" (default, self-hosted DB) or cloud DB name
 #   COMPOSE_FILE_NAME - override compose file (default: scripts/docker-compose.yml
 #                       for self-hosted, scripts/docker-compose-cloud.yml for cloud)
 #   BACK_BUILD_DIR    - temporary build dir (default: ./back_build)
@@ -47,6 +47,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/lib/db-engine.sh"
 cd "${PROJECT_ROOT}"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || "${1:-}" == "help" ]]; then
@@ -78,16 +79,10 @@ fi
 source "${BACK_ENV_FILE}"
 
 # ---------------------------------------------------------------------------
-# DATABASE_ENGINE: determines compose file and self-hosted DB behaviour
+# DB_ENGINE: determines compose file and self-hosted DB behaviour
 # ---------------------------------------------------------------------------
-DATABASE_ENGINE_VALUE="${DATABASE_ENGINE:-postgres}"
-DATABASE_ENGINE_NORMALIZED="$(echo "${DATABASE_ENGINE_VALUE}" | tr '[:upper:]' '[:lower:]')"
-DEFAULT_COMPOSE_FILE="scripts/docker-compose-cloud.yml"
-IS_SELF_HOSTED_DB=0
-if [[ "${DATABASE_ENGINE_NORMALIZED}" =~ ^(postgres|selfhosted)$ ]]; then
-  DEFAULT_COMPOSE_FILE="scripts/docker-compose.yml"
-  IS_SELF_HOSTED_DB=1
-fi
+resolve_db_engine
+require_postgres_engine "migrate-db.sh"
 
 COMPOSE_FILE_PATH="${COMPOSE_FILE_NAME:-${DEFAULT_COMPOSE_FILE}}"
 COMPOSE_FILE_PATH="${COMPOSE_FILE_PATH#./}"
@@ -512,7 +507,7 @@ for entry in "${BACK_HOSTS_LIST[@]}"; do
         fi; \
         npx typeorm -d dist/config/Datasource.js migration:run"
   else
-    echo "==> [BACK:${target_host}] DATABASE_ENGINE='${DATABASE_ENGINE_VALUE}' -> running migrations (cloud DB)"
+    echo "==> [BACK:${target_host}] DB_ENGINE='${DB_ENGINE_VALUE}' -> running migrations (cloud DB)"
     DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
       --project-directory "${BUILD_CONTEXT_DIR}" \
       --file "${STAGED_COMPOSE_FILE}" \

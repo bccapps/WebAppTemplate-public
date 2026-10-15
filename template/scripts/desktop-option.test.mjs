@@ -153,7 +153,7 @@ test('create-project --desktop: shell copied, desktop.config.json and project.co
   const local = json(path.join(app, 'back', 'package.local.json'));
   assert.ok(local.scripts['desktop:dev'] && local.scripts['desktop:build']);
   assert.equal(local.dependencies['better-sqlite3'] !== undefined, true);
-  assert.match(readFileSync(path.join(app, 'back', '.env.dev'), 'utf8'), /^DATABASE_ENGINE=sqlite$/m);
+  assert.match(readFileSync(path.join(app, 'back', '.env.dev'), 'utf8'), /^DB_ENGINE=sqlite$/m);
   assert.ok(json(path.join(app, 'back', 'package.json')).scripts['desktop:build'], 'generated back/package.json carries the scripts');
   // without the option: no desktop files, nothing in package.local.json
   const plain = create(parent, [...COMMON, '--name', 'plain', '--no-desktop', '--db', 'sqlite']);

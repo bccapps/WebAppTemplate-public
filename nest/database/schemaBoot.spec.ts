@@ -43,7 +43,7 @@ class BootItemV2 {
 }
 
 describe('SQLite boot: backup, then schema', () => {
-  const KEYS = ['DATABASE_ENGINE', 'DB_ENGINE', 'DB_PATH', 'DB_SCHEMA_MODE', 'APP_VERSION', 'TYPEORM_SYNC', 'DB_SYNC', 'DB_MIGRATIONS_RUN', 'DB_SQLITE_MIGRATIONS', 'NODE_ENV'];
+  const KEYS = ['DB_ENGINE', 'DB_PATH', 'DB_SCHEMA_MODE', 'APP_VERSION', 'TYPEORM_SYNC', 'DB_SYNC', 'DB_MIGRATIONS_RUN', 'DB_SQLITE_MIGRATIONS', 'NODE_ENV'];
   let saved: Record<string, string | undefined>;
   let dir: string;
 
@@ -64,7 +64,7 @@ describe('SQLite boot: backup, then schema', () => {
   });
 
   const boot = async (entity: unknown, version: string): Promise<DataSource> => {
-    process.env.DATABASE_ENGINE = 'sqlite';
+    process.env.DB_ENGINE = 'sqlite';
     process.env.DB_PATH = join(dir, 'app.db');
     process.env.DB_SCHEMA_MODE = 'sync';
     process.env.APP_VERSION = version;

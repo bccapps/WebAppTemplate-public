@@ -36,9 +36,16 @@ export function readConnectionEnv(
   return process.env[connectionEnvPrefix(name) + key] ?? (isMain && legacy ? process.env[legacy] : undefined);
 }
 
-/** Lower-cased engine of a connection (default `postgres`). */
+/**
+ * Lower-cased engine of a connection (default `postgres`): `DB_ENGINE` for the main one, `DB__<NAME>__ENGINE` for a
+ * named one. The former `DATABASE_ENGINE` is no longer read: when it is still set without `DB_ENGINE`, fail loudly
+ * rather than silently falling back to Postgres.
+ */
 export function resolveEngine(name: string = MAIN_CONNECTION): string {
-  return (readConnectionEnv(name, 'ENGINE', 'DATABASE_ENGINE') ?? 'postgres').toLowerCase();
+  if (name === MAIN_CONNECTION && process.env.DATABASE_ENGINE !== undefined && process.env.DB_ENGINE === undefined) {
+    throw new Error('DATABASE_ENGINE is no longer supported: rename it to DB_ENGINE (same values) in your .env files and environment.');
+  }
+  return (readConnectionEnv(name, 'ENGINE') ?? 'postgres').toLowerCase();
 }
 
 /** True when the given connection runs on SQLite. */

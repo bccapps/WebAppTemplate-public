@@ -162,7 +162,7 @@ test('defaultConfig.ts patch (create) and addition (add-module)', () => {
   assert.equal((more.source.match(/name: 'a'/g) ?? []).length, 1);
 });
 
-test('sqlite: engine accepted, family mapping, DATABASE_ENGINE value', () => {
+test('sqlite: engine accepted, family mapping, DB_ENGINE value', () => {
   assert.equal(DB_ENGINES.sqlite, 'sqlite');
   assert.equal(dbFamily('sqlite'), 'sqlite');
   for (const e of ['selfhosted', 'cloud', 'supabase', 'neon']) assert.equal(dbFamily(e), 'postgres');

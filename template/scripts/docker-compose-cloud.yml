@@ -21,8 +21,13 @@ services:
     user: "1000:1000"
     env_file:
       - ../back/.env
+    # SQLite only (DB_ENGINE=sqlite): the database file lives on the sqlite_data volume, whatever DB_PATH says in
+    # back/.env (a relative path would sit in the container's writable layer and vanish at each deploy). Unused otherwise.
     environment:
       NODE_ROLE: api
+      DB_PATH: /data/${PROJECT_NAME}.db
+    volumes:
+      - sqlite_data:/data
     expose:
       - '${NODE_PORT}'
     deploy:
@@ -48,6 +53,9 @@ services:
       - ../back/.env
     environment:
       NODE_ROLE: worker
+      DB_PATH: /data/${PROJECT_NAME}.db
+    volumes:
+      - sqlite_data:/data
     expose:
       - '${NODE_PORT}'
     healthcheck:
@@ -202,6 +210,7 @@ services:
 volumes:
   redis_data:
   vmagent_data:
+  sqlite_data:
 
 configs:
   vmagent_config:

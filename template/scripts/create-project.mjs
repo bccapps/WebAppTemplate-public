@@ -309,7 +309,7 @@ build
 !.env.example
 *.local
 
-# SQLite database files (DATABASE_ENGINE=sqlite, DB_PATH=data/<project>.db)
+# SQLite database files (DB_ENGINE=sqlite, DB_PATH=data/<project>.db)
 back/data/
 
 # Shared modules (materialized as symlinks by link-shared.mjs)
@@ -397,9 +397,9 @@ export function backEnvValues(answers, resolved, fromAnswers) {
     });
   } else if (answers.database.engine === 'sqlite') {
     // DB_SCHEMA_MODE / DB_MIGRATIONS_RUN stay unset in dev (SQLite: synchronize); a desktop build gets its mode from `schema` in desktop.config.json.
-    Object.assign(values, { DATABASE_ENGINE: 'sqlite', DB_PATH: sqliteDbPath(answers.projectName) });
+    Object.assign(values, { DB_ENGINE: 'sqlite', DB_PATH: sqliteDbPath(answers.projectName) });
   } else {
-    values.DATABASE_ENGINE = DB_ENGINES[answers.database.engine];
+    values.DB_ENGINE = DB_ENGINES[answers.database.engine];
   }
   if (answers.database.redis) values.REDIS_URL = 'redis://localhost:6379';
   if (!resolved.ids.includes('user')) values.ADMIN_TOKEN = randomBytes(32).toString('hex');

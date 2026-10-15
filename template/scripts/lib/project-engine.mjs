@@ -27,7 +27,7 @@ import { normalizeVariant } from '../desktop/variant.mjs';
 export const STACKS = ['nest', 'react'];
 /** Always linked, public. `database` only exists on the back. */
 export const BASE_MODULES = ['common', 'database'];
-/** Wizard database choice -> value of DATABASE_ENGINE (read by nest/database/databases.ts). */
+/** Wizard database choice -> value of DB_ENGINE (read by nest/database/databases.ts). */
 export const DB_ENGINES = { selfhosted: 'postgres', cloud: 'cloud', supabase: 'supabase', neon: 'neon', sqlite: 'sqlite' };
 /** Label shown by the wizard for each choice (keys of DB_ENGINES). */
 export const DB_ENGINE_LABELS = {
@@ -414,7 +414,7 @@ export function resolveDesktop(rawAnswers) {
 
 /**
  * Messages for an inconsistent `desktop` section; empty when the option is off. The shell always runs the back with
- * `DATABASE_ENGINE=sqlite` and `LOCAL_TRUST=true`, hence the two cross-checks. `resolvedIds` = linked modules.
+ * `DB_ENGINE=sqlite` and `LOCAL_TRUST=true`, hence the two cross-checks. `resolvedIds` = linked modules.
  *
  * With a desktop VARIANT (`desktop.variant`) the app that the shell runs is not the web build: the `user` module and the
  * database engine of the project are then irrelevant, and what must hold is the variant's own module set — checked with
@@ -435,7 +435,7 @@ export function validateDesktop(rawAnswers, resolvedIds, extra = {}) {
   if (desktop.variant) {
     errors.push(...(extra.variantProblems ?? []));
   } else {
-    if (a.database.engine !== 'sqlite') errors.push('the desktop option requires the sqlite database engine (the shell runs the back with DATABASE_ENGINE=sqlite); an application on another engine can declare a desktop variant (desktop.variant, scripts/desktop/variant.mjs)');
+    if (a.database.engine !== 'sqlite') errors.push('the desktop option requires the sqlite database engine (the shell runs the back with DB_ENGINE=sqlite); an application on another engine can declare a desktop variant (desktop.variant, scripts/desktop/variant.mjs)');
     if (resolvedIds.includes('user')) errors.push('the desktop option only applies to applications without the user module (the shell runs the back in local trust mode); an application that uses it can declare a desktop variant without it (desktop.variant, scripts/desktop/variant.mjs)');
   }
   const seen = new Set();

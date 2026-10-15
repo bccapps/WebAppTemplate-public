@@ -7,6 +7,12 @@ services:
     container_name: ${PROJECT_NAME}_preprod_back
     env_file:
       - ../back/.env.preprod
+    # SQLite only (DB_ENGINE=sqlite): the database file lives on the sqlite_data volume, whatever DB_PATH says in
+    # back/.env (a relative path would sit in the container's writable layer and vanish at each deploy). Unused otherwise.
+    environment:
+      DB_PATH: /data/${PROJECT_NAME}_preprod.db
+    volumes:
+      - sqlite_data:/data
     ports:
       - '${NODE_PORT}:${NODE_PORT}'
     healthcheck:
@@ -39,3 +45,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  sqlite_data:

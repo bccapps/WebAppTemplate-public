@@ -8,7 +8,7 @@
     "common"
   ],
   "env": [
-    "DATABASE_ENGINE",
+    "DB_ENGINE",
     "DB_CONNECTIONS",
     "DB_MODULE_ROUTING",
     "DB_POOLSIZE",

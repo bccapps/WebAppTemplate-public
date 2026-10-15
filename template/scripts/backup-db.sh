@@ -39,7 +39,7 @@ set -euo pipefail
 #   falls back to the pooler. Use --pooler to skip the switch entirely.
 #
 #   Supabase also owns the auth/storage/realtime/vault/graphql/extensions
-#   schemas, which must never be dumped or restored. DATABASE_ENGINE=supabase
+#   schemas, which must never be dumped or restored. DB_ENGINE=supabase
 #   therefore restricts the dump to the public schema by default.
 #
 # Required env vars (in the env file):
@@ -48,7 +48,7 @@ set -euo pipefail
 # Optional env vars:
 #   DB_SSLMODE       — SSL mode (default: disable)
 #   DB_SSLROOTCERT   — path to SSL root certificate
-#   DATABASE_ENGINE  — 'supabase' restricts the dump to the public schema
+#   DB_ENGINE  — 'supabase' restricts the dump to the public schema
 #   BACKUP_SCHEMAS   — comma-separated schemas to dump (overrides the above;
 #                      empty means every schema)
 #   DB_DIRECT_HOST   — override the direct (non-pooler) host
@@ -60,6 +60,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_PATH="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/lib/db-engine.sh"
 cd "${PROJECT_ROOT}"
 
 # ---------- Colours ----------
@@ -109,6 +110,8 @@ source "$ENV_FILE"
 set +a
 
 info "Loaded env from $ENV_FILE"
+resolve_db_engine
+require_postgres_engine "backup-db.sh"
 
 # ---------- Validate ----------
 for var in DB_HOST DB_PORT DB_USER DB_NAME DB_PASSWORD; do
@@ -171,7 +174,7 @@ mkdir -p "$BACKUP_DIR"
 # produces a backup that cannot be restored into another Supabase project.
 SCHEMA_ARGS=()
 DEFAULT_SCHEMAS=""
-[[ "${DATABASE_ENGINE:-}" == "supabase" ]] && DEFAULT_SCHEMAS="public"
+[[ "${DB_ENGINE_NORMALIZED}" == "supabase" ]] && DEFAULT_SCHEMAS="public"
 SCHEMAS="${BACKUP_SCHEMAS-$DEFAULT_SCHEMAS}"
 if [[ -n "$SCHEMAS" ]]; then
   IFS=',' read -ra schema_list <<< "$SCHEMAS"

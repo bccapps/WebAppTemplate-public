@@ -13,6 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/lib/db-engine.sh"
 cd "${PROJECT_ROOT}"
 
 # ======================
@@ -204,12 +205,8 @@ set +a
 COMPOSE_PROJECT_NAME="${PROJECT_NAME:?PROJECT_NAME is required in back/.env}"
 
 # Database config
-DATABASE_ENGINE_VALUE="${DATABASE_ENGINE:-postgres}"
-DATABASE_ENGINE_NORMALIZED="$(echo "${DATABASE_ENGINE_VALUE}" | tr '[:upper:]' '[:lower:]')"
-IS_SELF_HOSTED_DB=0
-if [[ "${DATABASE_ENGINE_NORMALIZED}" == "postgres" || "${DATABASE_ENGINE_NORMALIZED}" == "selfhosted" ]]; then
-  IS_SELF_HOSTED_DB=1
-fi
+resolve_db_engine
+require_postgres_engine "migrate-server.sh"
 
 # Ports
 NODE_PORT_VALUE="${NODE_PORT:-9741}"
@@ -283,14 +280,14 @@ require_cmd ssh
 require_cmd rsync
 
 if [[ "${IS_SELF_HOSTED_DB}" -eq 0 ]]; then
-  log "Cloud database (${DATABASE_ENGINE_VALUE}) — DB migration will be skipped"
+  log "Cloud database (${DB_ENGINE_VALUE}) — DB migration will be skipped"
   SKIP_DB=1
 fi
 
 log_step "Migration: ${SOURCE_HOST} -> ${TARGET_HOST}"
 
 echo "  Project:       ${COMPOSE_PROJECT_NAME}"
-echo "  Database:      ${DATABASE_ENGINE_VALUE} (selfhosted: ${IS_SELF_HOSTED_DB})"
+echo "  Database:      ${DB_ENGINE_VALUE} (selfhosted: ${IS_SELF_HOSTED_DB})"
 echo "  SSH port:      ${EFFECTIVE_SSH_PORT}"
 echo "  SSH key:       ${EFFECTIVE_SSH_KEY:-<agent/default>}"
 echo "  Skip DB:       ${SKIP_DB}"

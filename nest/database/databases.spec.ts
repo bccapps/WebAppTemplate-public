@@ -19,7 +19,7 @@ import {
 import { isSqlite, isSqliteDataSource, jsonColumnType, portableQuery, timestampColumnType } from './dbEngine';
 
 const ENV_KEYS = [
-  'DB_ENGINE', 'DATABASE_ENGINE', 'DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME',
+  'DB_ENGINE', 'DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME',
   'DB_SSLMODE', 'DB_POOLSIZE', 'DB_PATH', 'DB_SYNC', 'TYPEORM_SYNC', 'DB_MIGRATIONS_RUN',
   'DB_CONNECTIONS', 'DB_MODULE_ROUTING', 'DB__ARCHIVE__ENGINE', 'DB__ARCHIVE__PATH',
   'DB__ARCHIVE__HOST', 'NODE_ENV', 'APP_DATA_DIR', 'DB_SQLITE_MIGRATIONS', 'DB_BUSY_TIMEOUT_MS',
@@ -88,7 +88,7 @@ describe('database options', () => {
     });
 
     it('keeps the cloud pool tuning', () => {
-      process.env.DATABASE_ENGINE = 'neon';
+      process.env.DB_ENGINE = 'neon';
       const o = buildMainDataSourceOptions(ctx()) as unknown as { extra: Record<string, unknown> };
       expect(o.extra).toMatchObject({ max: 10, keepAlive: true, options: '-c statement_timeout=30000' });
     });
@@ -101,7 +101,7 @@ describe('database options', () => {
 
   describe('sqlite', () => {
     it('resolves a relative path from certBaseDir and creates the parent folder', () => {
-      process.env.DATABASE_ENGINE = 'sqlite';
+      process.env.DB_ENGINE = 'sqlite';
       process.env.DB_PATH = 'data/app.db';
       const o = buildMainDataSourceOptions(ctx()) as unknown as Record<string, unknown>;
       expect(o.type).toBe('better-sqlite3');
@@ -121,15 +121,14 @@ describe('database options', () => {
 
     it('resolves a relative path from APP_DATA_DIR when set, not from certBaseDir', () => {
       const dataDir = join(backDir, 'userdata');
-      process.env.DATABASE_ENGINE = 'sqlite';
+      process.env.DB_ENGINE = 'sqlite';
       process.env.DB_PATH = 'data/app.db';
       process.env.APP_DATA_DIR = dataDir;
       expect(buildMainDataSourceOptions(ctx())).toMatchObject({ database: join(dataDir, 'data/app.db') });
       expect(existsSync(join(dataDir, 'data'))).toBe(true);
     });
 
-    it('keeps an absolute path and prefers DB_ENGINE over DATABASE_ENGINE', () => {
-      process.env.DATABASE_ENGINE = 'postgres';
+    it('keeps an absolute path and reads the engine case-insensitively', () => {
       process.env.DB_ENGINE = 'SQLite';
       const abs = join(backDir, 'abs', 'x.db');
       process.env.DB_PATH = abs;
@@ -216,7 +215,7 @@ describe('database options', () => {
     });
 
     it('returns SQLite types for a sqlite connection', () => {
-      process.env.DATABASE_ENGINE = 'sqlite';
+      process.env.DB_ENGINE = 'sqlite';
       process.env.DB__ARCHIVE__ENGINE = 'postgres';
       expect(isSqlite()).toBe(true);
       expect(jsonColumnType()).toBe('simple-json');

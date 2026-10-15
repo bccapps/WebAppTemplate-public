@@ -17,7 +17,7 @@
  * Env per connection:
  *   main:        DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME /
  *                DB_SSLMODE / DB_SSLROOTCERT / DB_POOLSIZE /
- *                DATABASE_ENGINE / TYPEORM_SYNC / DB_MIGRATIONS_RUN
+ *                DB_ENGINE / TYPEORM_SYNC / DB_MIGRATIONS_RUN
  *                (sqlite: DB_PATH instead of host/port/user/password/ssl/pool)
  *   named "<N>": DB__<N>__HOST / DB__<N>__PORT / DB__<N>__USER /
  *                DB__<N>__PASSWORD / DB__<N>__NAME / DB__<N>__SSLMODE /

@@ -91,8 +91,7 @@ Example with a sidecar:
    (32 random bytes, base64, same rule as `backEnvValues` in `scripts/create-project.mjs`), generated on first launch only.
 4. **Environment of the back**: the config `env`, then the secrets, then these variables, which always win:
    `HOST=127.0.0.1`, `NODE_PORT`, `CLIENT_ORIGINS` (`http://127.0.0.1:<port>`, `http://localhost:<port>`),
-   `LOCAL_TRUST=true`, `DB_ENGINE=sqlite` **and** `DATABASE_ENGINE=sqlite` (the back reads `DB_ENGINE` first: an inherited
-   `DB_ENGINE=postgres` of a developer's shell cannot win), `DB_PATH=<data>/<dbFile>`, `DB_SCHEMA_MODE=<schema>` when the config declares `schema` (otherwise the legacy `DB_MIGRATIONS_RUN=true`, never both),
+   `LOCAL_TRUST=true`, `DB_ENGINE=sqlite` (forced, so an inherited `DB_ENGINE=postgres` of a developer's shell cannot win), `DB_PATH=<data>/<dbFile>`, `DB_SCHEMA_MODE=<schema>` when the config declares `schema` (otherwise the legacy `DB_MIGRATIONS_RUN=true`, never both),
    `APP_DATA_DIR=<data>`, `LOG_DIR=<data>/logs`, `SHARED_DIRECTORY=<data>/shared`, `DISABLE_TRANSPORT_CRYPTO=true`,
    `APP_ENV=desktop`, `SERVE_FRONT_DIR`, `DESKTOP_PARENT_PID` (the shell pid; the back exits when it disappears, see
    `nest/common/README.md`). Sidecars receive only their config `env` plus the shared token.
@@ -161,7 +160,7 @@ to do and the script exits with code 3: the app then starts without the sidecar.
 
 ## Desktop variant (an app that uses the `user` module and PostgreSQL on the web)
 
-The shell runs the back with `LOCAL_TRUST=true` and `DATABASE_ENGINE=sqlite`: it refuses a project that uses the `user` module or
+The shell runs the back with `LOCAL_TRUST=true` and `DB_ENGINE=sqlite`: it refuses a project that uses the `user` module or
 another database. An application that needs both on the web can still ship a standalone desktop app by declaring a **variant**: the
 same application built with another set of shared modules (no `user`, nothing PostgreSQL-only), the web build being untouched.
 
@@ -351,7 +350,7 @@ overrides the host target's bundle list. The Windows job enables `core.symlinks`
   (`productName`, `identifier`, `sidecars`) and sync `tauri.conf.json`, and add `desktop:dev` / `desktop:build` (= `scripts/app.sh
   --no-run`) to `back/package.local.json` (run them from `back/`; both need the Rust toolchain).
 - Refused with the `user` module (the shell forces `LOCAL_TRUST=true`) or a database other than SQLite (it forces
-  `DATABASE_ENGINE=sqlite`) **unless the project declares a desktop variant** (see above), with an invalid identifier, and when `desktop/` or the workflow already exists (nothing is
+  `DB_ENGINE=sqlite`) **unless the project declares a desktop variant** (see above), with an invalid identifier, and when `desktop/` or the workflow already exists (nothing is
   overwritten). Once installed, `desktop/desktop.config.json` is the source of truth: the `desktop` section of
   `project.config.json` only records the answers.
 - CI: `tools/ci-sandbox.sh anonymous-sqlite-desktop` checks the generation (files, configs, scripts, `build-desktop.mjs --dry-run`)

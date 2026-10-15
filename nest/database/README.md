@@ -87,7 +87,7 @@ imports: [
 |----------|-----------|-------------|
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | main | Connexion par défaut (inchangé) |
 | `DB_SSLMODE` / `DB_SSLROOTCERT` / `DB_POOLSIZE` | main | SSL + pool |
-| `DB_ENGINE` ou `DATABASE_ENGINE` (`postgres`/`cloud`/`neon`/`supabase`/`sqlite`) / `TYPEORM_SYNC` | main | Moteur (défaut `postgres`) + synchronize |
+| `DB_ENGINE` (`postgres`/`cloud`/`neon`/`supabase`/`sqlite`) / `TYPEORM_SYNC` | main | Moteur (défaut `postgres`) + synchronize |
 | `DB_SCHEMA_MODE` (`sync` / `migrations` / `manual`) | main (`DB__<NAME>__SCHEMA_MODE` pour une nommée) | **Gestion du schéma** (voir « Schema management » ci-dessous) ; vide = anciens réglages |
 | `DB_PATH` | main | SQLite : fichier de base (absolu, `:memory:`, ou relatif à `APP_DATA_DIR` si défini, sinon au dossier `back/`) |
 | `DB_MIGRATIONS_RUN=true` | main | ANCIEN alias : exécute les migrations au démarrage (tous moteurs ; usage typique : app de bureau) |
@@ -141,7 +141,7 @@ inclus dans `package.base.json`).
 
 ### Portabilité automatique Postgres → SQLite
 
-Choisir SQLite (`DATABASE_ENGINE=sqlite`) ne demande plus de réécrire les entités : `buildMainDataSourceOptions()` appelle
+Choisir SQLite (`DB_ENGINE=sqlite`) ne demande plus de réécrire les entités : `buildMainDataSourceOptions()` appelle
 `applyPortableColumnTypes('sqlite')` (`common/utils/portableTypes.ts`, ré-exporté ici) avant que TypeORM ne valide les métadonnées.
 Sous Postgres rien n'est appelé : le comportement est identique.
 

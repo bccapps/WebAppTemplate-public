@@ -40,7 +40,7 @@ set -euo pipefail
 #
 #   The auth/storage/realtime/vault/graphql/extensions schemas belong to
 #   Supabase and must never be restored — doing so breaks the project. When
-#   DATABASE_ENGINE=supabase, a backup containing DDL for those schemas is
+#   DB_ENGINE=supabase, a backup containing DDL for those schemas is
 #   rejected. Re-dump with backup-db.sh (public schema only), or pass --force
 #   if you really know what you are doing.
 #
@@ -50,7 +50,7 @@ set -euo pipefail
 # Optional env vars:
 #   DB_SSLMODE       — SSL mode (default: disable)
 #   DB_SSLROOTCERT   — path to SSL root certificate
-#   DATABASE_ENGINE  — 'supabase' enables the schema guard
+#   DB_ENGINE  — 'supabase' enables the schema guard
 #   DB_DIRECT_HOST   — override the direct (non-pooler) host
 #
 # Prerequisites: psql, gunzip
@@ -61,6 +61,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/lib/db-engine.sh"
 cd "${PROJECT_ROOT}"
 
 # ---------- Colours ----------
@@ -114,6 +115,8 @@ source "$ENV_FILE"
 set +a
 
 info "Loaded env from $ENV_FILE"
+resolve_db_engine
+require_postgres_engine "restore-db.sh"
 
 # ---------- Validate ----------
 for var in DB_HOST DB_PORT DB_USER DB_NAME DB_PASSWORD; do
@@ -165,7 +168,7 @@ fi
 # ---------- Supabase: reject backups carrying Supabase-owned schemas ----------
 # auth/storage/realtime/vault/graphql/extensions belong to the platform.
 # Restoring them over a live project breaks authentication and storage.
-if [[ "${DATABASE_ENGINE:-}" == "supabase" && "$FORCE_RESTORE" -eq 0 ]]; then
+if [[ "${DB_ENGINE_NORMALIZED}" == "supabase" && "$FORCE_RESTORE" -eq 0 ]]; then
   RESERVED='auth|storage|realtime|vault|graphql|graphql_public|extensions|supabase_migrations'
   FOUND="$(gunzip -c "$BACKUP_FILE" \
     | grep -m1 -ioE "(CREATE|DROP|ALTER) SCHEMA (IF (NOT )?EXISTS )?(${RESERVED})\b" || true)"

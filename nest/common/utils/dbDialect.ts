@@ -11,7 +11,7 @@ import type { ObjectLiteral, SelectQueryBuilder } from 'typeorm';
 import { MAIN_CONNECTION, isSqlite, isSqliteDataSource } from './dbEngine';
 
 /**
- * SQL fragments that differ between Postgres and SQLite, chosen by `DATABASE_ENGINE` (or by the live driver of a DataSource).
+ * SQL fragments that differ between Postgres and SQLite, chosen by `DB_ENGINE` (or by the live driver of a DataSource).
  * Use them in `createQueryBuilder()` strings and raw queries instead of writing Postgres-only SQL.
  *
  * For a plain text match prefer TypeORM's own portable `ILike()` find operator (`where: { name: ILike('%x%') }`: `ILIKE` on
@@ -89,7 +89,7 @@ const sqlite: Dialect = {
   lockForWrite: (qb) => qb,
 };
 
-/** The dialect of a connection, from `DATABASE_ENGINE` / `DB__<NAME>__ENGINE` (default: the main connection). */
+/** The dialect of a connection, from `DB_ENGINE` / `DB__<NAME>__ENGINE` (default: the main connection). */
 export function dialect(connection: string = MAIN_CONNECTION): Dialect {
   return isSqlite(connection) ? sqlite : postgres;
 }

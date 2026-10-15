@@ -105,13 +105,13 @@ describe('inspectSchemaState / runSchemaGuard on a real SQLite file', () => {
   });
 
   sqliteIt('prepareSchema (the DatabaseModule hook) applies the guard and the backup to options built by buildMainDataSourceOptions', async () => {
-    const keys = ['DATABASE_ENGINE', 'DB_PATH', 'DB_SCHEMA_MODE', 'APP_VERSION', 'TYPEORM_SYNC', 'DB_MIGRATIONS_RUN', 'DB_SYNC', 'DB_SQLITE_MIGRATIONS'];
+    const keys = ['DB_ENGINE', 'DB_PATH', 'DB_SCHEMA_MODE', 'APP_VERSION', 'TYPEORM_SYNC', 'DB_MIGRATIONS_RUN', 'DB_SYNC', 'DB_SQLITE_MIGRATIONS'];
     const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
     for (const k of keys) delete process.env[k];
     try {
       const file = join(dir, 'app.db');
       makeDb(file, ['CREATE TABLE items (id integer)']);
-      process.env.DATABASE_ENGINE = 'sqlite';
+      process.env.DB_ENGINE = 'sqlite';
       process.env.DB_PATH = file;
       const ctx = { baseDir: join(dir, 'src'), migrationGlobs: [join(dir, 'src/migrations/*.{js,ts}')], certBaseDir: dir };
 

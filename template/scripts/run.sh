@@ -46,6 +46,7 @@ set -euo pipefail
 # Resolve project root (parent of scripts/)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/lib/db-engine.sh"
 cd "${PROJECT_ROOT}"
 
 # ---------- Colours ----------
@@ -200,8 +201,8 @@ cmd_dev() {
   # Activate profiles based on env config
   local compose_profiles=""
   local db_engine
-  # Same precedence as nest/database/databases.ts: DB_ENGINE first, then DATABASE_ENGINE.
-  db_engine="$(echo "${DB_ENGINE:-${DATABASE_ENGINE:-postgres}}" | tr '[:upper:]' '[:lower:]')"
+  resolve_db_engine
+  db_engine="${DB_ENGINE_NORMALIZED}"
   local needs_local_db=0
   if [[ "${db_engine}" =~ ^(postgres|selfhosted)$ && "${DB_HOST:-localhost}" =~ ^(localhost|127\.|0\.0\.0\.0|db$|postgres$|${PROJECT_NAME}) ]]; then
     compose_profiles="--profile localdb"

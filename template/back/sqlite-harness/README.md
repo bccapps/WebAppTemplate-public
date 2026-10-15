@@ -5,7 +5,7 @@ Copy these files into an app's `back/test/` to run a Jest suite against the **re
 | File | Role |
 |---|---|
 | `jest-e2e-sqlite.json` | Jest config: `*.sqlite-spec.ts` files, `setupFiles` + `globalSetup` below |
-| `e2e-setup-sqlite.ts` | Forces `DATABASE_ENGINE=sqlite`, `DB_PATH`, `DB_SCHEMA_MODE=sync` **before** any entity is imported (decorators read the engine at import time) |
+| `e2e-setup-sqlite.ts` | Forces `DB_ENGINE=sqlite`, `DB_PATH`, `DB_SCHEMA_MODE=sync` **before** any entity is imported (decorators read the engine at import time) |
 | `e2e-global-setup-sqlite.ts` | Starts every run from an empty database file under `back/.tmp/e2e-sqlite/` (never your dev database) |
 | `example.sqlite-spec.ts` | Minimal spec: the app's entities synchronise and a JSON + date round trip works |
 
