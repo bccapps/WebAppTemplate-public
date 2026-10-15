@@ -7,7 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { INestApplication, Type } from '@nestjs/common';
+import { INestApplication, NestApplicationOptions, Type } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import type { RequestHandler } from 'express';
@@ -24,14 +24,23 @@ import { exitWhenParentGone } from './watchParentProcess';
 export interface StartAppOptions {
   /** Root module of the app (`AppModule`). */
   appModule: Type<unknown>;
-  /** Swagger document (served on /api only when `resolveSwaggerEnabled()`). `description` defaults to `<title> description`. */
-  swagger: { title: string; tag: string; description?: string };
+  /**
+   * Swagger document, served on /api only when enabled: `enabled` when given, else `resolveSwaggerEnabled()` (SWAGGER_ENABLED, off in
+   * production by default). `description` defaults to `<title> description`; `customize` adds to the builder (API key, bearer auth...).
+   */
+  swagger: { title: string; tag?: string; description?: string; enabled?: boolean; customize?: (builder: DocumentBuilder) => DocumentBuilder };
+  /** Options of `NestFactory.create` (custom logger or log levels). */
+  nest?: NestApplicationOptions;
   /** Options of `configureHttpApp` (body limit, validation, extra CORS headers, public CORS paths...). */
   http?: HttpAppOptions;
   /** Middlewares installed BEFORE everything else (helmet, CORS and body parsing included): URL rewriting, for instance. */
   early?: RequestHandler[];
-  /** Runs first, before the app is created: file logging, extra console banner. Replaces nothing of the common steps. */
-  beforeCreate?: () => void;
+  /** Runs first, before the app is created (may be async): file logging, a schema guard. Replaces nothing of the common steps. */
+  beforeCreate?: () => void | Promise<void>;
+  /** Runs right after the app is created, before any middleware: shutdown hooks, Express settings, process handlers. */
+  afterCreate?: (app: INestApplication) => void;
+  /** Runs once the app listens (and the shell watch is armed): a project post-start step. */
+  afterListen?: (app: INestApplication) => void | Promise<void>;
   /** Runs after the common middlewares and BEFORE `app.init()`: the place for a project middleware or route. */
   beforeInit?: (app: INestApplication) => void | Promise<void>;
 }
@@ -55,10 +64,11 @@ function logDatabase(): void {
 
 async function bootstrap(options: StartAppOptions): Promise<void> {
   installDnsCache();
-  options.beforeCreate?.();
+  await options.beforeCreate?.();
   logDatabase();
 
-  const app = await NestFactory.create(options.appModule);
+  const app = await NestFactory.create(options.appModule, options.nest ?? {});
+  options.afterCreate?.(app);
 
   // Everything below, including the project hooks, must be registered BEFORE app.init(): Nest appends its 404 handler and exception
   // filter at the end of init(), so a middleware or route added afterwards is never reached.
@@ -79,10 +89,12 @@ async function bootstrap(options: StartAppOptions): Promise<void> {
   );
 
   // Swagger on /api: SWAGGER_ENABLED=true|false, else only outside production (never public by accident).
-  if (resolveSwaggerEnabled()) {
-    const { title, tag, description } = options.swagger;
-    const config = new DocumentBuilder().setTitle(title).setDescription(description ?? `${title} description`).setVersion('1.0').addTag(tag).build();
-    SwaggerModule.setup('api', app, SwaggerModule.createDocument(app, config));
+  const { title, tag, description, enabled, customize } = options.swagger;
+  if (enabled ?? resolveSwaggerEnabled()) {
+    let builder = new DocumentBuilder().setTitle(title).setDescription(description ?? `${title} description`).setVersion('1.0');
+    if (tag) builder = builder.addTag(tag);
+    if (customize) builder = customize(builder);
+    SwaggerModule.setup('api', app, SwaggerModule.createDocument(app, builder.build()));
   }
 
   // Optional same-origin front (SERVE_FRONT_DIR=<built front dir>, set by the desktop shell): static files, SPA fallback.
@@ -97,16 +109,20 @@ async function bootstrap(options: StartAppOptions): Promise<void> {
   // Bootstrap lifecycle hooks (OnApplicationBootstrap): seeds config to the DB.
   await app.init();
 
+  const port = process.env.NODE_PORT;
+  if (!port) throw new Error('NODE_PORT is not set: check your .env file.');
   try {
     const host = resolveListenHost();
-    await app.listen(process.env.NODE_PORT, host);
-    console.log(`Listening on ${host}:${process.env.NODE_PORT}`);
+    await app.listen(port, host);
+    console.log(`Listening on ${host}:${port}`);
     // Desktop shell only (DESKTOP_PARENT_PID): exit if the shell dies without stopping us.
     exitWhenParentGone();
   } catch (err) {
     console.error('FATAL: app.listen() failed:', err);
     process.exit(1);
   }
+
+  await options.afterListen?.(app);
 
   const prowlService = app.get(ProwlService);
   process.on('uncaughtException', (error) => {

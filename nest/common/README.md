@@ -425,13 +425,16 @@ Exemples :
 
 | Option | Rôle |
 |---|---|
-| `appModule`, `swagger` | Module racine ; titre, tag et description (défaut `<titre> description`) du document Swagger. |
+| `appModule`, `swagger` | Module racine ; document Swagger : `title`, `tag?`, `description?`, `enabled?` (sinon `resolveSwaggerEnabled()`), `customize?(builder)` (clé d'API, bearer...). |
+| `nest` | Options de `NestFactory.create` (logger, niveaux de log). |
 | `http` | Options de `configureHttpApp` : `jsonLimit`, `validation: false`, `extraCorsHeaders`, `publicCorsPaths`, `corsOriginPolicy`... |
 | `early` | Middlewares posés avant tout le reste (réécriture d'URL). |
-| `beforeCreate` | Avant la création de l'app : journalisation fichier (`installFileLogging`). |
+| `beforeCreate` | Avant la création de l'app (peut être asynchrone) : journalisation fichier (`installFileLogging`), garde de schéma. |
+| `afterCreate` | Juste après la création, avant tout middleware : `enableShutdownHooks`, réglages Express, handlers de processus. |
+| `afterListen` | Une fois l'app à l'écoute : étape propre au projet (par exemple couper les crons d'une instance API). |
 | `beforeInit` | Après les middlewares communs, avant `init()` : middleware ou route propres au projet. |
 
-Un `main.ts` qui appelle encore `configureHttpApp`, `serveFrontend` ... à la main continue de fonctionner (ces fonctions restent exportées) mais ne reçoit plus les correctifs du démarrage : migrer vers `startApp`. Swagger obéit toujours à `SWAGGER_ENABLED` (pas de documentation publique en production par défaut).
+Un `main.ts` qui appelle encore `configureHttpApp`, `serveFrontend` ... à la main continue de fonctionner (ces fonctions restent exportées) mais ne reçoit plus les correctifs du démarrage : migrer vers `startApp`. Swagger obéit à `SWAGGER_ENABLED` (pas de documentation publique en production par défaut) sauf `swagger.enabled` explicite. `NODE_PORT` absent : le démarrage échoue avec un message (sinon Node écouterait sur un port aléatoire).
 
 ## Démarrage HTTP (`bootstrap/`)
 
