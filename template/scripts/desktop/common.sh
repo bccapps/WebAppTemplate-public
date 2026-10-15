@@ -48,12 +48,18 @@ desktop_field() {
   node -e "const c = JSON.parse(require('fs').readFileSync('desktop/desktop.config.json', 'utf8')); console.log($1)"
 }
 
-# npm ci in <dir> when node_modules is missing (an existing install is the developer's business).
+# npm ci in <dir> when node_modules is missing (an existing install is the developer's business); npm install when there is no
+# package-lock.json (the desktop shell ships none: npm ci refuses to run without one).
 ensure_node_modules() {
   local dir="$1"
   [[ -d "${dir}/node_modules" ]] && return 0
-  info "Installing ${dir} dependencies (npm ci)"
-  (cd "${dir}" && npm ci)
+  if [[ -f "${dir}/package-lock.json" ]]; then
+    info "Installing ${dir} dependencies (npm ci)"
+    (cd "${dir}" && npm ci)
+  else
+    info "Installing ${dir} dependencies (npm install: no package-lock.json)"
+    (cd "${dir}" && npm install)
+  fi
 }
 
 # Desktop VARIANT (project.config.json: desktop.variant, or a desktop-flavor.json descriptor at the root; see
