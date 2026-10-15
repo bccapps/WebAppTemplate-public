@@ -12,10 +12,12 @@
 set -euo pipefail
 
 # ============================================================
-# restore-db.sh — Restore a compressed SQL backup into a Postgres database
+# restore-db.sh — Restore a backup made by backup-db.sh
 # ============================================================
-# Connects directly from your local machine to the database
-# defined in the env file and restores the given backup via psql.
+# PostgreSQL: connects directly from your local machine to the database defined in the env
+# file and restores the given .sql.gz via psql.
+# SQLite (DB_ENGINE=sqlite): dev only — replaces the local DB_PATH file with the given
+# .sqlite.gz (the previous file is kept); a remote restore is manual (the script says how).
 #
 # Usage:
 #   ./scripts/restore-db.sh <env> <backup_file>            Run restore
@@ -116,7 +118,11 @@ set +a
 
 info "Loaded env from $ENV_FILE"
 resolve_db_engine
-require_postgres_engine "restore-db.sh"
+if [[ "${IS_SQLITE_DB}" -eq 1 ]]; then
+  source "${SCRIPT_DIR}/lib/sqlite-db.sh"
+  sqlite_restore "${ENV}" "${BACKUP_FILE}"
+  exit 0
+fi
 
 # ---------- Validate ----------
 for var in DB_HOST DB_PORT DB_USER DB_NAME DB_PASSWORD; do

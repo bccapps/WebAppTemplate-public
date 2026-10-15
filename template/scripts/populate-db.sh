@@ -45,6 +45,10 @@ set -a
 source ./back/.env
 set +a
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/db-engine.sh"
+resolve_db_engine
+require_postgres_engine "populate-db.sh"
+
 REMOTE_USER="${REMOTE_USER:?REMOTE_USER is required}"
 REMOTE_SSH_PORT="${REMOTE_SSH_PORT:?REMOTE_SSH_PORT is required}"
 SSH_KEY_FILE="${SSH_KEY_FILE:?SSH_KEY_FILE is required}"

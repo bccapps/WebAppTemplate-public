@@ -12,10 +12,12 @@
 set -euo pipefail
 
 # ============================================================
-# backup-db.sh — Backup a Postgres database to a compressed file
+# backup-db.sh — Backup the database of an environment to a compressed file
 # ============================================================
-# Connects directly from your local machine to the database
-# defined in the env file and dumps it via pg_dump.
+# PostgreSQL (DB_ENGINE postgres/selfhosted/cloud/neon/supabase): connects directly from your
+# local machine to the database defined in the env file and dumps it via pg_dump.
+# SQLite (DB_ENGINE=sqlite): consistent online copy of the file (dev: the local DB_PATH file;
+# preprod/prod: the file inside the running back container, read over SSH), integrity-checked.
 #
 # Usage:
 #   ./scripts/backup-db.sh <env>            Run backup
@@ -27,7 +29,7 @@ set -euo pipefail
 #   preprod  → reads back/.env.preprod
 #   prod     → reads back/.env
 #
-# Output: ./backups/<PROJECT_NAME>_<env>_YYYY-MM-DD_HH-MM-SS.sql.gz
+# Output: ./backups/<PROJECT_NAME>_<env>_YYYY-MM-DD_HH-MM-SS.sql.gz (SQLite: .sqlite.gz)
 #
 # Supabase:
 #   Supavisor (the *.pooler.supabase.com endpoint) closes the SSL connection
@@ -111,7 +113,11 @@ set +a
 
 info "Loaded env from $ENV_FILE"
 resolve_db_engine
-require_postgres_engine "backup-db.sh"
+if [[ "${IS_SQLITE_DB}" -eq 1 ]]; then
+  source "${SCRIPT_DIR}/lib/sqlite-db.sh"
+  sqlite_backup "${ENV}" "./backups/${PROJECT_NAME:-app}_${ENV}_$(date +%Y-%m-%d_%H-%M-%S).sqlite.gz"
+  exit 0
+fi
 
 # ---------- Validate ----------
 for var in DB_HOST DB_PORT DB_USER DB_NAME DB_PASSWORD; do
