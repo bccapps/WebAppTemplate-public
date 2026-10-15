@@ -34,12 +34,11 @@ set -euo pipefail
 #
 # DB migrations (migrate-db.sh) are NEVER run unless --migrate is passed
 # explicitly, and are auto-skipped even then if the target env file sets
-# DB_SCHEMA_MODE=sync (the explicit schema mode, which wins when present) or, without
-# DB_SCHEMA_MODE, has TYPEORM_SYNC (or SYNC) set to true — synchronize already keeps the schema
+# DB_SCHEMA_MODE=sync — synchronize already keeps the schema
 # up to date there, so running migrations on top of it is redundant and
 # unsafe (TypeORM's synchronize doesn't understand native table partitioning
 # etc.; mixing the two on the same run is asking for a bad interaction).
-# Set DB_SCHEMA_MODE=migrations (or manual) — legacy: TYPEORM_SYNC=false — in that env
+# Set DB_SCHEMA_MODE=migrations (or manual) in that env
 # file first if migrations should be the authoritative way schema changes reach that target.
 # ============================================================
 
@@ -472,8 +471,7 @@ cmd_dev() {
 
 # migrations_enabled_for_target <back_env_file> <cli args...>
 # Returns 0 (run migrations) only if --migrate was passed AND the target's
-# DB_SCHEMA_MODE is not sync (legacy: TYPEORM_SYNC/SYNC is not true). See the DB migrations note in the usage
-# header above for why both conditions matter.
+# DB_SCHEMA_MODE is not sync. See the DB migrations note in the usage header above for why both conditions matter.
 migrations_enabled_for_target() {
   local env_file="$1"
   shift
@@ -484,7 +482,8 @@ migrations_enabled_for_target() {
   if [[ "${migrate_flag}" -ne 1 ]]; then
     return 1
   fi
-  # DB_SCHEMA_MODE (docs: modules_shared/database/README.md, "Schema management") wins over the legacy flags when present.
+  # DB_SCHEMA_MODE: docs in modules_shared/database/README.md, "Schema management". Unset = the back's default for a deployed
+  # (NODE_ENV=production) back: no synchronize, so the migrations are the schema authority and may run.
   local mode_raw
   mode_raw="$(grep -E '^DB_SCHEMA_MODE=' "${env_file}" 2>/dev/null | tail -1 | cut -d'=' -f2- | tr -d $'"\'' | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
   case "${mode_raw}" in
@@ -495,16 +494,12 @@ migrations_enabled_for_target() {
     migrations|manual)
       return 0
       ;;
-    "") ;;
-    *) warn "DB_SCHEMA_MODE=${mode_raw} in ${env_file} is not one of sync|migrations|manual — falling back to the legacy TYPEORM_SYNC/SYNC flags (the back will refuse to start with this value)." ;;
+    "") return 0 ;;
+    *)
+      warn "DB_SCHEMA_MODE=${mode_raw} in ${env_file} is not one of sync|migrations|manual (the back refuses to start with it) — skipping migrations."
+      return 1
+      ;;
   esac
-  local sync_raw
-  sync_raw="$(grep -E '^(TYPEORM_SYNC|SYNC)=' "${env_file}" 2>/dev/null | tail -1 | cut -d'=' -f2- | tr -d $'"\'' | tr '[:upper:]' '[:lower:]')"
-  if [[ "${sync_raw}" == "true" || "${sync_raw}" == "1" ]]; then
-    warn "TYPEORM_SYNC/SYNC=true in ${env_file} — skipping migrations even though --migrate was passed (synchronize already manages the schema; set TYPEORM_SYNC=false there first if migrations should run)."
-    return 1
-  fi
-  return 0
 }
 
 # ============================================================
@@ -535,7 +530,7 @@ cmd_preprod() {
     BACK_ENV_FILE="${back_env}" "${SCRIPT_DIR}/migrate-db.sh" \
       || { err "Migration failed — aborting deployment"; exit 1; }
   else
-    info "Skipping database migrations (pass --migrate to run them; also auto-skipped if TYPEORM_SYNC/SYNC=true in ${back_env})."
+    info "Skipping database migrations (pass --migrate to run them; also auto-skipped if DB_SCHEMA_MODE=sync in ${back_env})."
   fi
 
   info "Launching preprod deployment (back: ${back_env}, front: ${front_env})..."
@@ -562,7 +557,7 @@ cmd_prod() {
     "${SCRIPT_DIR}/migrate-db.sh" \
       || { err "Migration failed — aborting deployment"; exit 1; }
   else
-    info "Skipping database migrations (pass --migrate to run them; also auto-skipped if DB_SCHEMA_MODE=sync or TYPEORM_SYNC/SYNC=true in ./back/.env)."
+    info "Skipping database migrations (pass --migrate to run them; also auto-skipped if DB_SCHEMA_MODE=sync in ./back/.env)."
   fi
 
   info "Launching production deployment..."

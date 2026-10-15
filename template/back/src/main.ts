@@ -32,11 +32,9 @@ async function bootstrap() {
   // Timestamp every console line and tee it to <LOG_DIR>/back-<day>.log (LOG_TO_FILE=false disables the file).
   installFileLogging();
 
+  const dbEngine = (process.env.DB_ENGINE ?? 'postgres').toLowerCase();
   console.log(
-    'Connecting to DB provider : ' +
-      process.env.DBFRONT_HOST +
-      ':' +
-      process.env.DBFRONT_PORT
+    'Database: ' + (dbEngine === 'sqlite' ? `sqlite ${process.env.DB_PATH ?? ''}` : `${dbEngine} ${process.env.DB_HOST ?? ''}:${process.env.DB_PORT ?? ''}`)
   );
 
   const app = await NestFactory.create(AppModule);

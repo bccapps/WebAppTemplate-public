@@ -113,6 +113,7 @@ describeWithSqlite('applyPortableColumnTypes on SQLite (entities written for Pos
   }
 
   let AfterEntity: new () => { id: string; tags: string[]; state: string; blob: Buffer; at: Date; big: string; count: number };
+  let GeneratedBigEntity: new () => { id: number; label: string };
   let ds: DataSource;
   let report: ReturnType<typeof applyPortableColumnTypes>;
 
@@ -131,7 +132,13 @@ describeWithSqlite('applyPortableColumnTypes on SQLite (entities written for Pos
       @Column({ type: 'int4', default: 0 }) count!: number;
     }
     AfterEntity = DeclaredAfter as unknown as typeof AfterEntity;
-    ds = new DataSource({ type: 'better-sqlite3', database: ':memory:', entities: [BeforeEntity, DeclaredAfter], synchronize: true });
+    @Entity({ name: 'portable_generated_big' })
+    class DeclaredGeneratedBig {
+      @PrimaryGeneratedColumn({ type: 'bigint' }) id!: number;
+      @Column({ type: 'varchar', length: 16 }) label!: string;
+    }
+    GeneratedBigEntity = DeclaredGeneratedBig as unknown as typeof GeneratedBigEntity;
+    ds = new DataSource({ type: 'better-sqlite3', database: ':memory:', entities: [BeforeEntity, DeclaredAfter, DeclaredGeneratedBig], synchronize: true });
     await ds.initialize();
   });
 
@@ -173,6 +180,13 @@ describeWithSqlite('applyPortableColumnTypes on SQLite (entities written for Pos
     expect(reloaded.tags).toEqual([]);
     expect(reloaded.state).toBe('new');
     expect(Math.abs(reloaded.at.getTime() - Date.now())).toBeLessThan(60_000);
+  });
+
+  it('retypes a generated bigint primary key integer (AUTOINCREMENT needs it) and numbers the rows', async () => {
+    const repo = ds.getRepository(GeneratedBigEntity);
+    const first = await repo.save(repo.create({ label: 'a' }));
+    const second = await repo.save(repo.create({ label: 'b' }));
+    expect(Number(second.id)).toBe(Number(first.id) + 1);
   });
 
   it('drops a partial UNIQUE index it cannot express rather than over-constraining, keeps a plain partial one without its Postgres cast', async () => {

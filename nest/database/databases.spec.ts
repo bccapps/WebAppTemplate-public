@@ -167,18 +167,23 @@ describe('database options', () => {
       expect(buildMainDataSourceOptions(ctx())).toMatchObject({ migrationsRun: true });
     });
 
-    it('app with SQLite migrations: synchronize follows the Postgres rules (production default off, override on)', () => {
+    it('app with SQLite migrations: synchronize follows the Postgres rules (production default off, DB_SCHEMA_MODE=sync turns it on)', () => {
       Object.assign(process.env, { DB_ENGINE: 'sqlite', DB_PATH: ':memory:', NODE_ENV: 'production', DB_MIGRATIONS_RUN: 'true' });
       expect(buildMainDataSourceOptions(ctx())).toMatchObject({ synchronize: false });
-      process.env.DB_SYNC = 'true';
+      process.env.DB_SCHEMA_MODE = 'sync';
       expect(buildMainDataSourceOptions(ctx())).toMatchObject({ synchronize: true });
     });
 
-    it('app without SQLite migrations: synchronize is ON by default even in production, an explicit false wins', () => {
+    it('app without SQLite migrations: synchronize is ON by default even in production, DB_SCHEMA_MODE=manual turns it off', () => {
       Object.assign(process.env, { DB_ENGINE: 'sqlite', DB_PATH: ':memory:', NODE_ENV: 'production' });
       expect(buildMainDataSourceOptions(ctx())).toMatchObject({ synchronize: true });
-      process.env.DB_SYNC = 'false';
+      process.env.DB_SCHEMA_MODE = 'manual';
       expect(buildMainDataSourceOptions(ctx())).toMatchObject({ synchronize: false });
+    });
+
+    it('refuses the removed TYPEORM_SYNC / DB_SYNC flags', () => {
+      Object.assign(process.env, { DB_ENGINE: 'sqlite', DB_PATH: ':memory:', TYPEORM_SYNC: 'true' });
+      expect(() => buildMainDataSourceOptions(ctx())).toThrow(/no longer supported: set DB_SCHEMA_MODE/);
     });
 
     it('requires DB_PATH', () => {

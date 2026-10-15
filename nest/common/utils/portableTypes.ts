@@ -269,6 +269,18 @@ function hook<T>(list: T[], keep: (item: T) => boolean): void {
   list.push = (...items: T[]): number => push(...items.filter(keep));
 }
 
+/**
+ * SQLite only allows AUTOINCREMENT on a column typed exactly INTEGER (its rowid is 64-bit anyway): a generated `bigint` /
+ * `int8` primary key is retyped `integer`.
+ */
+function narrowGeneratedBigint(generation: { target?: unknown; propertyName?: string }): void {
+  const column = (getMetadataArgsStorage().columns as unknown as Array<{ target?: unknown; propertyName?: string; options?: ColumnOptionsLike }>).find(
+    (candidate) => candidate.target === generation.target && candidate.propertyName === generation.propertyName
+  );
+  const type = column?.options?.type;
+  if (column?.options && typeof type === 'string' && (type.toLowerCase() === 'bigint' || type.toLowerCase() === 'int8')) column.options.type = 'integer';
+}
+
 function sweep<T>(list: T[], keep: (item: T) => boolean): void {
   for (let i = list.length - 1; i >= 0; i -= 1) if (!keep(list[i] as T)) list.splice(i, 1);
 }
@@ -289,8 +301,9 @@ export function applyPortableColumnTypes(engine: string = resolveEngine()): Port
   };
   const keepIndex = (index: IndexArgsLike): boolean => adaptIndex(index, report);
   const keepCheck = (check: CheckArgsLike): boolean => adaptCheck(check, report);
-  const keepGeneration = (generation: { strategy?: string }): boolean => {
+  const keepGeneration = (generation: { target?: unknown; propertyName?: string; strategy?: string }): boolean => {
     if (generation.strategy === 'identity') generation.strategy = 'increment';
+    if (generation.strategy === 'increment') narrowGeneratedBigint(generation);
     return true;
   };
   const keepTable = (table: { schema?: string; options?: { schema?: string } }): boolean => {
@@ -304,12 +317,12 @@ export function applyPortableColumnTypes(engine: string = resolveEngine()): Port
   sweep(storage.columns as unknown as Array<{ options?: ColumnOptionsLike }>, keepColumn);
   sweep(storage.indices as unknown as IndexArgsLike[], keepIndex);
   sweep(storage.checks as unknown as CheckArgsLike[], keepCheck);
-  sweep(storage.generations as unknown as Array<{ strategy?: string }>, keepGeneration);
+  sweep(storage.generations as unknown as Array<{ target?: unknown; propertyName?: string; strategy?: string }>, keepGeneration);
   sweep(storage.tables as unknown as Array<{ schema?: string }>, keepTable);
   hook(storage.columns as unknown as Array<{ options?: ColumnOptionsLike }>, keepColumn);
   hook(storage.indices as unknown as IndexArgsLike[], keepIndex);
   hook(storage.checks as unknown as CheckArgsLike[], keepCheck);
-  hook(storage.generations as unknown as Array<{ strategy?: string }>, keepGeneration);
+  hook(storage.generations as unknown as Array<{ target?: unknown; propertyName?: string; strategy?: string }>, keepGeneration);
   hook(storage.tables as unknown as Array<{ schema?: string }>, keepTable);
 
   if (report.columns + report.indices + report.checks + report.tables > 0) scheduleSummary();

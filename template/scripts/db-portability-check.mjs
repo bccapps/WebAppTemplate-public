@@ -25,7 +25,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scanTree, summarize } from './lib/db-portability.mjs';
@@ -115,7 +115,9 @@ export async function main(argv = process.argv.slice(2)) {
   return report.ok ? 0 : 1;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+// Compared by real path: the project reaches this file through the `.libs/apptemplate` symlink, and Node resolves
+// `import.meta.url` to the real file (without it `npm run db:check` silently did nothing).
+if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(path.resolve(process.argv[1]))) {
   main().then(
     (code) => {
       process.exitCode = code;

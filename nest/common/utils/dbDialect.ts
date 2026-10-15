@@ -29,6 +29,11 @@ export interface Dialect {
   monthBucket(column: string): string;
   /** `YYYY-MM-DD` bucket of a timestamp column. */
   dayBucket(column: string): string;
+  /**
+   * Start of the month / quarter / year holding the timestamp (`date_trunc` on Postgres). SQLite returns an ISO-8601 UTC string
+   * (`2026-04-01T00:00:00Z`), which `new Date(...)` reads as the same instant as the Date Postgres returns.
+   */
+  dateBucket(column: string, unit: DateBucketUnit): string;
   /** The current timestamp. */
   now(): string;
   /** Seconds since the epoch of a timestamp column. */
@@ -48,6 +53,9 @@ export interface Dialect {
   lockForWrite<T extends ObjectLiteral>(qb: SelectQueryBuilder<T>): SelectQueryBuilder<T>;
 }
 
+/** Calendar units accepted by `Dialect.dateBucket()`. */
+export type DateBucketUnit = 'month' | 'quarter' | 'year';
+
 const JSON_PATH = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$/;
 
 function assertJsonPath(path: string): void {
@@ -59,6 +67,7 @@ const postgres: Dialect = {
   ilike: (column, param) => `${column} ILIKE ${param}`,
   monthBucket: (column) => `to_char(${column}, 'YYYY-MM')`,
   dayBucket: (column) => `to_char(${column}, 'YYYY-MM-DD')`,
+  dateBucket: (column, unit) => `date_trunc('${unit}', ${column})`,
   now: () => 'now()',
   epochSeconds: (column) => `EXTRACT(EPOCH FROM ${column})`,
   castText: (column) => `CAST(${column} AS TEXT)`,
@@ -76,6 +85,12 @@ const sqlite: Dialect = {
   ilike: (column, param) => `LOWER(${column}) LIKE LOWER(${param})`,
   monthBucket: (column) => `strftime('%Y-%m', ${column})`,
   dayBucket: (column) => `strftime('%Y-%m-%d', ${column})`,
+  dateBucket: (column, unit) =>
+    unit === 'year'
+      ? `strftime('%Y-01-01T00:00:00Z', ${column})`
+      : unit === 'quarter'
+        ? `(strftime('%Y-', ${column}) || printf('%02d', ((CAST(strftime('%m', ${column}) AS INTEGER) - 1) / 3) * 3 + 1) || '-01T00:00:00Z')`
+        : `strftime('%Y-%m-01T00:00:00Z', ${column})`,
   now: () => 'CURRENT_TIMESTAMP',
   epochSeconds: (column) => `CAST(strftime('%s', ${column}) AS INTEGER)`,
   castText: (column) => `CAST(${column} AS TEXT)`,

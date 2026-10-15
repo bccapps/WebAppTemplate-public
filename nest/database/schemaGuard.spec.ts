@@ -45,7 +45,7 @@ describe('evaluateSchemaGuard', () => {
   });
 
   it('only WARNS for legacy DB_MIGRATIONS_RUN on such a database (idempotent migrations used to work there)', () => {
-    const legacy = resolveSchemaMode('postgres', env({ DB_MIGRATIONS_RUN: 'true', TYPEORM_SYNC: 'false' }));
+    const legacy = resolveSchemaMode('postgres', env({ DB_MIGRATIONS_RUN: 'true' }), { nodeEnv: 'production' });
     const verdict = evaluateSchemaGuard(state({ hasUserTables: true }), legacy);
     expect(verdict.error).toBeUndefined();
     expect(verdict.warnings.join(' ')).toContain('idempotent');

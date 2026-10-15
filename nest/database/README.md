@@ -87,15 +87,15 @@ imports: [
 |----------|-----------|-------------|
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | main | Connexion par défaut (inchangé) |
 | `DB_SSLMODE` / `DB_SSLROOTCERT` / `DB_POOLSIZE` | main | SSL + pool |
-| `DB_ENGINE` (`postgres`/`cloud`/`neon`/`supabase`/`sqlite`) / `TYPEORM_SYNC` | main | Moteur (défaut `postgres`) + synchronize |
-| `DB_SCHEMA_MODE` (`sync` / `migrations` / `manual`) | main (`DB__<NAME>__SCHEMA_MODE` pour une nommée) | **Gestion du schéma** (voir « Schema management » ci-dessous) ; vide = anciens réglages |
+| `DB_ENGINE` (`postgres`/`cloud`/`neon`/`supabase`/`sqlite`) | main (`DB__<NAME>__ENGINE` pour une nommée) | Moteur (défaut `postgres`) |
+| `DB_SCHEMA_MODE` (`sync` / `migrations` / `manual`) | main (`DB__<NAME>__SCHEMA_MODE` pour une nommée) | **Gestion du schéma** (voir « Schema management » ci-dessous) ; vide = défauts ci-dessous. `DB_SYNC` / `TYPEORM_SYNC` n'existent plus : les poser arrête le démarrage |
 | `DB_PATH` | main | SQLite : fichier de base (absolu, `:memory:`, ou relatif à `APP_DATA_DIR` si défini, sinon au dossier `back/`) |
 | `DB_MIGRATIONS_RUN=true` | main | ANCIEN alias : exécute les migrations au démarrage (tous moteurs ; usage typique : app de bureau) |
 | `DB_BACKUP_REQUIRED=true` | sqlite | Une sauvegarde échouée avant mise à jour du schéma bloque le démarrage (sinon : journalisée) |
 | `APP_VERSION` | sqlite | Version de l'appli pour la sauvegarde (défaut : `version` du `package.json` du dossier `back/`) |
 | `DB_CONNECTIONS=analytics,archive` | — | Liste des connexions nommées additionnelles |
 | `DB__<NAME>__HOST` / `__PORT` / `__USER` / `__PASSWORD` / `__NAME` | nommée | Idem `DB_*` mais pour la connexion `<NAME>` |
-| `DB__<NAME>__SSLMODE` / `__SSLROOTCERT` / `__POOLSIZE` / `__ENGINE` / `__SYNC` / `__PATH` | nommée | Options de la connexion `<NAME>` |
+| `DB__<NAME>__SSLMODE` / `__SSLROOTCERT` / `__POOLSIZE` / `__ENGINE` / `__SCHEMA_MODE` / `__PATH` | nommée | Options de la connexion `<NAME>` |
 | `DB_MODULE_ROUTING={"token-trader":"analytics"}` | — | Route un `moduleId` vers une connexion |
 
 ## Moteurs
@@ -170,7 +170,7 @@ fuseau (UTC par convention), un entier au-delà de 2^53 perd de la précision, *
 `busy_timeout` = `DB_BUSY_TIMEOUT_MS`, 5000 ms par défaut), pas de verrous de ligne, `ALTER` = recréation de table (garder les
 changements d'entités **additifs** entre deux versions, sauvegarder le fichier avant une mise à jour).
 
-**Défauts SQLite** : sans migrations propres, le schéma vient de `synchronize` (**activé par défaut, même en production** ; `DB_SYNC=false`
+**Défauts SQLite** : sans migrations propres, le schéma vient de `synchronize` (**activé par défaut, même en production** ; `DB_SCHEMA_MODE=manual`
 l'emporte) et les migrations (écrites en SQL Postgres) ne sont **pas chargées**. Une appli qui livre ses **propres migrations SQLite**
 (`DB_MIGRATIONS_RUN=true` ou `DB_SQLITE_MIGRATIONS=true`) garde le comportement historique : migrations chargées, `synchronize` résolu
 comme sous Postgres (défaut désactivé en production). Pragmas : WAL, `synchronous = NORMAL`, `foreign_keys = ON`, `busy_timeout`.
@@ -225,11 +225,11 @@ Un `DB_SCHEMA_MODE` invalide arrête le démarrage en nommant les valeurs accept
 **Ordre de résolution** — (1) le **CLI typeorm** (détecté : `typeorm`/`typeorm-ts-node-*` dans `argv`, ou `TYPEORM_CLI=1`, ou
 `buildMainDataSourceOptions(ctx, { cli: true })`) charge **toujours** les migrations et ne synchronise **ni** ne joue jamais rien
 automatiquement, quel que soit l'environnement ; (2) `DB_SCHEMA_MODE` ; (3) les **anciens réglages**, résolus exactement comme avant
-(la table complète est figée dans `schemaMode.legacy.fixture.json`, test `schemaMode.characterization.spec.ts`) :
+(la table est figée dans `schemaMode.legacy.fixture.json`, test `schemaMode.characterization.spec.ts` ; `DB_SYNC` et `TYPEORM_SYNC`, retirés, **arrêtent le démarrage** en nommant `DB_SCHEMA_MODE=sync` comme remplaçant) :
 
 | Moteur | Anciens réglages (sans `DB_SCHEMA_MODE`) |
 |---|---|
-| Postgres | `DB_SYNC`/`TYPEORM_SYNC` → `synchronize` (défaut : `NODE_ENV !== 'production'`), `DB_MIGRATIONS_RUN` → `migrationsRun`, **indépendants**, migrations toujours chargées |
+| Postgres | `synchronize` (défaut : `NODE_ENV !== 'production'`), `DB_MIGRATIONS_RUN` → `migrationsRun`, **indépendants**, migrations toujours chargées |
 | SQLite | `DB_MIGRATIONS_RUN` ou `DB_SQLITE_MIGRATIONS` vrai → migrations propres (chargées, `synchronize` comme Postgres) ; sinon `synchronize` (défaut **oui**) et migrations non chargées |
 
 **Garde-fous au démarrage** (`schemaGuard.ts`, appelés par `DatabaseModule` avant que TypeORM n'applique le schéma, via une connexion
@@ -251,9 +251,9 @@ de `back/`. Le CLI typeorm ne sauvegarde pas.
 | Scénario | Réglage |
 |---|---|
 | Dev (Postgres ou SQLite) | rien : `synchronize` actif hors production (SQLite : toujours) |
-| Prod Postgres, migrations manuelles | `DB_SCHEMA_MODE=manual` (ancien équivalent : `TYPEORM_SYNC=false`) puis `typeorm migration:run` / `run.sh prod --migrate` |
-| Prod Postgres, migrations jouées au démarrage | `DB_SCHEMA_MODE=migrations` (ancien : `DB_MIGRATIONS_RUN=true` + `TYPEORM_SYNC=false`) |
-| Prod Postgres pilotée par `synchronize` (AgentHub) | `DB_SCHEMA_MODE=sync` (ancien : `TYPEORM_SYNC=true`, **inchangé** tant qu'il n'est pas migré) ; les migrations restent applicables à la main par le CLI |
+| Prod Postgres, migrations manuelles | `DB_SCHEMA_MODE=manual` puis `typeorm migration:run` / `run.sh prod --migrate` |
+| Prod Postgres, migrations jouées au démarrage | `DB_SCHEMA_MODE=migrations` |
+| Prod Postgres pilotée par `synchronize` (AgentHub) | `DB_SCHEMA_MODE=sync` (équivalent de l'ancien `TYPEORM_SYNC=true`) ; les migrations restent applicables à la main par le CLI |
 | Bureau SQLite, schéma par `synchronize` | `"schema": "sync"` dans `desktop.config.json` (la coquille force `DB_SCHEMA_MODE=sync`) |
 | Bureau SQLite, migrations propres | `"schema": "migrations"` (absent = ancien comportement : la coquille force `DB_MIGRATIONS_RUN=true`) |
 

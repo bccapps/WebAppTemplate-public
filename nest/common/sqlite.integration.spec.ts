@@ -39,14 +39,14 @@ type Imports = {
   eventRepo: Repository<import('./events/EventFeedEntityBase').EventFeedEntityBase>;
 };
 
-const previousEnv = { engine: process.env.DB_ENGINE, path: process.env.DB_PATH, sync: process.env.DB_SYNC };
+const previousEnv = { engine: process.env.DB_ENGINE, path: process.env.DB_PATH, schemaMode: process.env.DB_SCHEMA_MODE };
 let ctx: Imports;
 let moduleRef: TestingModule;
 
 beforeAll(async () => {
   process.env.DB_ENGINE = 'sqlite';
   process.env.DB_PATH = ':memory:';
-  process.env.DB_SYNC = 'true';
+  process.env.DB_SCHEMA_MODE = 'sync';
   const { Test: TestingTest } = await import('@nestjs/testing');
   const { TypeOrmModule } = await import('@nestjs/typeorm');
   const { DataSource: Ds, Entity } = await import('typeorm');
@@ -77,7 +77,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await moduleRef?.close();
-  for (const [key, value] of Object.entries({ DB_ENGINE: previousEnv.engine, DB_PATH: previousEnv.path, DB_SYNC: previousEnv.sync })) {
+  for (const [key, value] of Object.entries({ DB_ENGINE: previousEnv.engine, DB_PATH: previousEnv.path, DB_SCHEMA_MODE: previousEnv.schemaMode })) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }

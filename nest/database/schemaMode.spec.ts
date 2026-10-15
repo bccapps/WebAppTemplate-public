@@ -27,15 +27,15 @@ describe('resolveSchemaMode', () => {
 
   it('never combines synchronize and migrationsRun from DB_SCHEMA_MODE, whatever the legacy flags say', () => {
     for (const mode of SCHEMA_MODES) {
-      const r = resolveSchemaMode('postgres', env({ DB_SCHEMA_MODE: mode, TYPEORM_SYNC: 'true', DB_MIGRATIONS_RUN: 'true' }));
+      const r = resolveSchemaMode('postgres', env({ DB_SCHEMA_MODE: mode, DB_MIGRATIONS_RUN: 'true' }));
       expect(r.synchronize && r.migrationsRun).toBe(false);
       expect(r.mode).toBe(mode);
     }
   });
 
-  it('is case and space insensitive, and an empty value falls through to the legacy flags', () => {
+  it('is case and space insensitive, and an empty value falls through to the remaining legacy flags', () => {
     expect(resolveSchemaMode('postgres', env({ DB_SCHEMA_MODE: ' Migrations ' })).mode).toBe('migrations');
-    expect(resolveSchemaMode('postgres', env({ DB_SCHEMA_MODE: '', TYPEORM_SYNC: 'true' })).source).toBe('legacy');
+    expect(resolveSchemaMode('postgres', env({ DB_SCHEMA_MODE: '', DB_MIGRATIONS_RUN: 'true' })).source).toBe('legacy');
   });
 
   it('refuses an unknown value and names the accepted ones', () => {
@@ -44,23 +44,32 @@ describe('resolveSchemaMode', () => {
   });
 
   it('the TypeORM CLI always loads the migrations and never synchronizes nor auto-runs, whatever the env', () => {
-    const noisy = env({ DB_SCHEMA_MODE: 'sync', TYPEORM_SYNC: 'true', DB_MIGRATIONS_RUN: 'true' });
+    const noisy = env({ DB_SCHEMA_MODE: 'sync', DB_MIGRATIONS_RUN: 'true' });
     for (const engine of ['postgres', 'sqlite'] as const) {
       expect(resolveSchemaMode(engine, noisy, { cli: true })).toMatchObject({ mode: 'manual', synchronize: false, migrationsRun: false, loadMigrations: true, source: 'cli' });
     }
   });
 
-  it('legacy flags that set both synchronize and migrationsRun are reported as mixed (kept for existing apps)', () => {
-    expect(resolveSchemaMode('postgres', env({ TYPEORM_SYNC: 'true', DB_MIGRATIONS_RUN: 'true' }))).toMatchObject({ mode: 'mixed', synchronize: true, migrationsRun: true });
+  it('DB_MIGRATIONS_RUN without DB_SCHEMA_MODE next to the default synchronize is reported as mixed (kept for existing apps)', () => {
+    expect(resolveSchemaMode('postgres', env({ DB_MIGRATIONS_RUN: 'true' }), { nodeEnv: 'development' })).toMatchObject({ mode: 'mixed', synchronize: true, migrationsRun: true });
+    expect(resolveSchemaMode('postgres', env({ DB_MIGRATIONS_RUN: 'true' }), { nodeEnv: 'production' })).toMatchObject({ mode: 'migrations', synchronize: false, migrationsRun: true });
   });
 
-  it('warns about synchronize in production on Postgres (explicit mode or legacy flag), but allows it', () => {
-    const viaMode = resolveSchemaMode('postgres', env({ DB_SCHEMA_MODE: 'sync' }), { nodeEnv: 'production' });
-    const viaLegacy = resolveSchemaMode('postgres', env({ TYPEORM_SYNC: 'true' }), { nodeEnv: 'production' });
-    for (const r of [viaMode, viaLegacy]) {
-      expect(r.synchronize).toBe(true);
-      expect(r.warnings.join(' ')).toContain('can DROP data');
+  it('refuses the removed DB_SYNC / TYPEORM_SYNC flags (any value, any path) and names DB_SCHEMA_MODE', () => {
+    for (const vars of [{ TYPEORM_SYNC: 'true' }, { TYPEORM_SYNC: 'false' }, { DB_SYNC: 'true' }, { DB_SCHEMA_MODE: 'sync', TYPEORM_SYNC: 'true' }]) {
+      expect(() => resolveSchemaMode('postgres', env(vars))).toThrow(/no longer supported: set DB_SCHEMA_MODE instead/);
+      expect(() => resolveSchemaMode('sqlite', env(vars), { cli: true })).toThrow(/DB_SCHEMA_MODE/);
     }
+    expect(() => resolveSchemaMode('sqlite', env({}), { prefix: 'DB__ARCHIVE__' })).not.toThrow();
+    const named: EnvGetter = (key) => (key === 'SYNC' ? 'true' : undefined);
+    expect(() => resolveSchemaMode('postgres', named, { prefix: 'DB__ARCHIVE__' })).toThrow(/DB__ARCHIVE__SYNC is no longer supported: set DB__ARCHIVE__SCHEMA_MODE/);
+    expect(() => resolveSchemaMode('postgres', env({ TYPEORM_SYNC: '  ' }))).not.toThrow();
+  });
+
+  it('warns about synchronize in production on Postgres, but allows it', () => {
+    const viaMode = resolveSchemaMode('postgres', env({ DB_SCHEMA_MODE: 'sync' }), { nodeEnv: 'production' });
+    expect(viaMode.synchronize).toBe(true);
+    expect(viaMode.warnings.join(' ')).toContain('can DROP data');
     expect(resolveSchemaMode('sqlite', env({ DB_SCHEMA_MODE: 'sync' }), { nodeEnv: 'production' }).warnings).toEqual([]);
     expect(resolveSchemaMode('postgres', env({ DB_SCHEMA_MODE: 'sync' }), { nodeEnv: 'development' }).warnings).toEqual([]);
   });
@@ -120,10 +129,9 @@ describe('DataSource options carry the resolution', () => {
     expect(buildMainDataSourceOptions(ctx())).toMatchObject({ synchronize: false, migrations: [join(dir, 'src/migrations/*.{js,ts}')] });
   });
 
-  it.each([['postgres'], ['sqlite']])('%s: the CLI entry ignores sync flags and DB_SCHEMA_MODE', (engine) => {
+  it.each([['postgres'], ['sqlite']])('%s: the CLI entry ignores DB_MIGRATIONS_RUN and DB_SCHEMA_MODE', (engine) => {
     process.env.DB_ENGINE = engine;
     if (engine === 'sqlite') process.env.DB_PATH = ':memory:';
-    process.env.TYPEORM_SYNC = 'true';
     process.env.DB_MIGRATIONS_RUN = 'true';
     process.env.DB_SCHEMA_MODE = 'sync';
     const options = buildMainDataSourceOptions(ctx(), { cli: true }) as { synchronize: boolean; migrationsRun?: boolean; migrations: string[] };

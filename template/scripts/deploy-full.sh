@@ -1048,6 +1048,9 @@ RUN rm -f .no-cert.crt
 ARG APP_RUNTIME_DIR=.cache
 RUN mkdir -p "/app/${APP_RUNTIME_DIR}" && chown -R node:node "/app/${APP_RUNTIME_DIR}"
 
+# Persistent data dir for DB_ENGINE=sqlite (the compose files mount the sqlite_data volume here), owned by node.
+RUN mkdir -p /data && chown node:node /data
+
 COPY --chown=node:node _prebuilt_locales/app ./src/locales
 COPY --chown=node:node _prebuilt_locales/modules/src/ ./src/
 COPY --chown=node:node dist ./dist

@@ -14,7 +14,7 @@
     "DB_POOLSIZE",
     "DB_SSLMODE",
     "DB_SSLROOTCERT",
-    "TYPEORM_SYNC"
+    "DB_SCHEMA_MODE"
   ],
   "questions": []
 }

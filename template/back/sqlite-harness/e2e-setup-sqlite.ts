@@ -18,5 +18,4 @@ config({ path: resolve(__dirname, '../.env.dev') });
 process.env.DB_ENGINE = 'sqlite';
 process.env.DB_PATH = SQLITE_E2E_DB_PATH;
 process.env.DB_SCHEMA_MODE = 'sync';
-delete process.env.TYPEORM_SYNC;
 delete process.env.DB_MIGRATIONS_RUN;

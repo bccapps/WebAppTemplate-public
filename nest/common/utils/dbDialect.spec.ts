@@ -45,6 +45,10 @@ describe('dialect (Postgres)', () => {
     expect(pg).toBeDefined();
   });
 
+  it('dateBucket is date_trunc', () => {
+    expect(pg.dateBucket('o."paidAt"', 'quarter')).toBe(`date_trunc('quarter', o."paidAt")`);
+  });
+
   it('rejects a JSON path that is not plain keys (no injection through the path)', () => {
     expect(() => dialectOf({ options: { type: 'postgres' } }).jsonExtract('c', "a'); DROP TABLE x;--")).toThrow('Invalid JSON path');
     expect(() => dialectOf({ options: { type: 'better-sqlite3' } }).jsonExtract('c', 'a b')).toThrow('Invalid JSON path');
@@ -149,6 +153,17 @@ describeWithSqlite('dialect on the real SQLite engine', () => {
     expect(Number(epoch[0].e)).toBe(Date.UTC(2026, 2, 4, 5, 6, 7) / 1000);
     const text = await qb().select(sqlite().castText('r.at'), 't').orderBy('t').getRawMany();
     expect(typeof text[0].t).toBe('string');
+  });
+
+  it('dateBucket truncates to the start of the month / quarter / year as an ISO UTC string', async () => {
+    const bucket = async (unit: 'month' | 'quarter' | 'year'): Promise<string[]> => {
+      const rows = await qb().select(sqlite().dateBucket('COALESCE(r.at, r.at)', unit), 'b').groupBy('b').orderBy('b').getRawMany();
+      return rows.map((r: { b: string }) => r.b);
+    };
+    expect(await bucket('month')).toEqual(['2026-03-01T00:00:00Z', '2026-04-01T00:00:00Z']);
+    expect(await bucket('quarter')).toEqual(['2026-01-01T00:00:00Z', '2026-04-01T00:00:00Z']);
+    expect(await bucket('year')).toEqual(['2026-01-01T00:00:00Z']);
+    expect(new Date('2026-04-01T00:00:00Z').toISOString()).toBe('2026-04-01T00:00:00.000Z');
   });
 
   it('now() is a valid default/expression and lockForWrite is a no-op', async () => {

@@ -17,12 +17,12 @@
  * Resolution order:
  *   1. the TypeORM CLI (`typeorm migration:run`…): migrations always loaded, never synchronized, never auto-run;
  *   2. `DB_SCHEMA_MODE` = `sync` | `migrations` | `manual` (explicit, wins over everything below);
- *   3. LEGACY flags, resolved exactly as before `DB_SCHEMA_MODE` existed (apps in production depend on it):
- *        Postgres: `DB_SYNC`/`TYPEORM_SYNC` → synchronize (default: NODE_ENV !== 'production'), `DB_MIGRATIONS_RUN` →
- *                  migrationsRun, independent flags, migrations always loaded;
+ *   3. without it, the remaining LEGACY flags and defaults, resolved exactly as before `DB_SCHEMA_MODE` existed:
+ *        Postgres: synchronize ON unless NODE_ENV=production, `DB_MIGRATIONS_RUN` → migrationsRun, migrations always loaded;
  *        SQLite:   `DB_MIGRATIONS_RUN` or `DB_SQLITE_MIGRATIONS` true → the app has its own migrations (loaded, `synchronize`
- *                  resolved like Postgres), otherwise the schema comes from `synchronize` (default ON, migrations not loaded).
- *   The pre-`DB_SCHEMA_MODE` table is frozen in `schemaMode.legacy.fixture.json` / `schemaMode.characterization.spec.ts`.
+ *                  ON unless production), otherwise the schema comes from `synchronize` (ON, migrations not loaded).
+ *   The former `DB_SYNC` / `TYPEORM_SYNC` flags are gone: setting one throws, naming the `DB_SCHEMA_MODE` to use instead.
+ *   The pre-`DB_SCHEMA_MODE` table (minus those two flags) is frozen in `schemaMode.legacy.fixture.json` / `schemaMode.characterization.spec.ts`.
  */
 
 export const SCHEMA_MODES = ['sync', 'migrations', 'manual'] as const;
@@ -67,17 +67,24 @@ const isTrue = (value: string | undefined): boolean => {
 const modeOf = (synchronize: boolean, migrationsRun: boolean): SchemaResolution['mode'] =>
   synchronize && migrationsRun ? 'mixed' : synchronize ? 'sync' : migrationsRun ? 'migrations' : 'manual';
 
-/** `synchronize` from `DB_SYNC`/`TYPEORM_SYNC`; `undefined` = not set (the caller applies the engine default). */
-function explicitSync(get: EnvGetter): boolean | undefined {
-  const raw = get('SYNC', 'TYPEORM_SYNC')?.trim().toLowerCase();
-  return raw ? raw === 'true' || raw === '1' : undefined;
+/**
+ * `DB_SYNC` / `TYPEORM_SYNC` (and `DB__<NAME>__SYNC`) were replaced by `DB_SCHEMA_MODE`: a leftover one is refused, whatever its value,
+ * rather than silently ignored (a production database falling back to another schema policy is not a safe surprise).
+ */
+function assertNoRemovedSyncFlag(get: EnvGetter, prefix: string): void {
+  if (!get('SYNC', 'TYPEORM_SYNC')?.trim()) return;
+  const main = prefix === 'DB_';
+  throw new Error(
+    `${main ? 'DB_SYNC / TYPEORM_SYNC are' : `${prefix}SYNC is`} no longer supported: set ${prefix}SCHEMA_MODE instead ` +
+      `(sync = synchronize at boot, was ${main ? 'TYPEORM_SYNC=true' : 'SYNC=true'}; migrations = run the migrations at boot; manual = neither).`
+  );
 }
 
 /** The historical wording, kept verbatim. */
 const NO_SYNC_WARNING =
   '[DB] synchronize=false (production default). ' +
   'Schema changes will NOT be applied automatically. ' +
-  'Set DB_SYNC=true in back/.env if you need to run a controlled schema migration.';
+  'Set DB_SCHEMA_MODE=sync in back/.env if you need to run a controlled schema migration.';
 
 const PRODUCTION_SYNC_WARNING =
   '[DB] synchronize=true with NODE_ENV=production: entity changes (renamed/removed columns, changed types) are applied to the ' +
@@ -88,6 +95,7 @@ export function resolveSchemaMode(engine: SchemaEngine, get: EnvGetter, opts: Re
   const nodeEnv = opts.nodeEnv;
   const prefix = opts.prefix ?? 'DB_';
   const warnings: string[] = [];
+  assertNoRemovedSyncFlag(get, prefix);
 
   if (opts.cli) {
     return {
@@ -119,46 +127,43 @@ export function resolveSchemaMode(engine: SchemaEngine, get: EnvGetter, opts: Re
     };
   }
 
-  const sync = explicitSync(get);
   const migrationsFlag = isTrue(get('MIGRATIONS_RUN'));
 
   if (engine === 'sqlite') {
     const ownMigrations = migrationsFlag || isTrue(get('SQLITE_MIGRATIONS'));
     if (!ownMigrations) {
-      const synchronize = sync ?? true;
       return {
-        mode: synchronize ? 'sync' : 'manual',
-        synchronize,
+        mode: 'sync',
+        synchronize: true,
         migrationsRun: false,
         loadMigrations: false,
-        reason: sync === undefined ? 'legacy default for SQLite: the schema comes from synchronize' : `legacy ${sync ? 'DB_SYNC/TYPEORM_SYNC=true' : 'DB_SYNC/TYPEORM_SYNC=false'}`,
+        reason: 'default for SQLite: the schema comes from synchronize',
         source: 'legacy',
         warnings,
       };
     }
     // An SQLite app with its OWN migrations: `synchronize` resolved like Postgres (production default OFF).
-    const synchronize = sync ?? nodeEnv !== 'production';
-    if (!synchronize && sync === undefined) warnings.push(NO_SYNC_WARNING);
+    const synchronize = nodeEnv !== 'production';
+    if (!synchronize) warnings.push(NO_SYNC_WARNING);
     return {
       mode: modeOf(synchronize, migrationsFlag),
       synchronize,
       migrationsRun: migrationsFlag,
       loadMigrations: true,
-      reason: `legacy flags (SQLite app with its own migrations: DB_MIGRATIONS_RUN=${migrationsFlag}, synchronize ${sync === undefined ? 'by default' : 'explicit'})`,
+      reason: `legacy flags (SQLite app with its own migrations: DB_MIGRATIONS_RUN=${migrationsFlag}, synchronize by default for NODE_ENV=${nodeEnv ?? 'unset'})`,
       source: 'legacy',
       warnings,
     };
   }
 
-  const synchronize = sync ?? nodeEnv !== 'production';
-  if (!synchronize && sync === undefined) warnings.push(NO_SYNC_WARNING);
-  if (synchronize && nodeEnv === 'production') warnings.push(PRODUCTION_SYNC_WARNING);
+  const synchronize = nodeEnv !== 'production';
+  if (!synchronize) warnings.push(NO_SYNC_WARNING);
   return {
     mode: modeOf(synchronize, migrationsFlag),
     synchronize,
     migrationsRun: migrationsFlag,
     loadMigrations: true,
-    reason: `legacy flags (synchronize ${sync === undefined ? `by default for NODE_ENV=${nodeEnv ?? 'unset'}` : 'explicit'}, DB_MIGRATIONS_RUN=${migrationsFlag})`,
+    reason: `legacy flags (synchronize by default for NODE_ENV=${nodeEnv ?? 'unset'}, DB_MIGRATIONS_RUN=${migrationsFlag})`,
     source: 'legacy',
     warnings,
   };
