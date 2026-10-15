@@ -7,7 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { describe, expect, it } from '@jest/globals'
+import { describe, expect, it } from 'vitest'
 import {
   PRELOAD_GUARD_RESET_MS,
   PRELOAD_RELOAD_KEY,
