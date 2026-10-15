@@ -12,3 +12,4 @@ export * from './serveFrontend';
 export * from './swaggerEnabled';
 export * from './compressionMiddleware';
 export * from './watchParentProcess';
+export * from './startApp';

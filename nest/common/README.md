@@ -15,6 +15,7 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 | Email | `EmailService` envoie des emails via Brevo (SMTP relay) ou un serveur SMTP custom, configurable depuis l'admin via `emailConfigSchema`. Le transport est recréé automatiquement lorsqu'un paramètre change.
 | Démarrage HTTP | `bootstrap/configureHttpApp.ts` : `configureHttpApp(app, options?)` applique le durcissement commun (voir « Démarrage HTTP » plus bas). |
 | Service du front | `bootstrap/serveFrontend.ts` : `serveFrontend(app, dir)`, option activée par `SERVE_FRONT_DIR` (voir « Servir le front » plus bas). |
+| Démarrage complet | `bootstrap/startApp.ts` : `startApp({ appModule, swagger, http?, early?, beforeCreate?, beforeInit? })` enchaîne toutes les étapes communes dans le bon ordre (voir « Démarrage de l'app » plus bas). |
 | Arrêt avec le parent | `bootstrap/watchParentProcess.ts` : `exitWhenParentGone()`, active si `DESKTOP_PARENT_PID` est défini (voir « Arrêt si le parent disparaît » plus bas). |
 | Santé | `HealthController` : `GET /api/v1/health` public, agrège les contributeurs `HEALTH_CONTRIBUTORS`. |
 | Limiteur de débit | `throttle/` : garde globale `CommonThrottlerGuard`, inerte sauf `common_throttleEnabled`, stockage Redis à échec ouvert. Voir « Limiteur de débit » plus bas. |
@@ -417,6 +418,20 @@ Exemples :
 - `commerce_defaultCurrency`
 
 ---
+
+## Démarrage de l'app (`startApp`)
+
+`main.ts` d'un projet ne contient que ce qui lui est propre : `startApp({ appModule: AppModule, swagger: { title, tag }, ... })`. `startApp` fait, dans l'ordre : cache DNS (`cacheable-lookup`), `beforeCreate`, ligne de log du moteur de base, `NestFactory.create`, middlewares `early`, `configureHttpApp(app, http)`, gzip paresseux, Swagger (si `resolveSwaggerEnabled()`), `serveFrontend` (si `SERVE_FRONT_DIR`), `beforeInit(app)`, `app.init()`, `listen` (`resolveListenHost()`), `exitWhenParentGone()`, puis les rapports Prowl des erreurs non gérées. Tout ce qui précède `app.init()` y est enregistré avant lui (voir « Ordre des middlewares » plus bas) : un correctif du démarrage se fait ici, une seule fois, et arrive dans tous les projets avec `update_common.sh`.
+
+| Option | Rôle |
+|---|---|
+| `appModule`, `swagger` | Module racine ; titre, tag et description (défaut `<titre> description`) du document Swagger. |
+| `http` | Options de `configureHttpApp` : `jsonLimit`, `validation: false`, `extraCorsHeaders`, `publicCorsPaths`, `corsOriginPolicy`... |
+| `early` | Middlewares posés avant tout le reste (réécriture d'URL). |
+| `beforeCreate` | Avant la création de l'app : journalisation fichier (`installFileLogging`). |
+| `beforeInit` | Après les middlewares communs, avant `init()` : middleware ou route propres au projet. |
+
+Un `main.ts` qui appelle encore `configureHttpApp`, `serveFrontend` ... à la main continue de fonctionner (ces fonctions restent exportées) mais ne reçoit plus les correctifs du démarrage : migrer vers `startApp`. Swagger obéit toujours à `SWAGGER_ENABLED` (pas de documentation publique en production par défaut).
 
 ## Démarrage HTTP (`bootstrap/`)
 
