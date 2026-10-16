@@ -252,6 +252,7 @@ const AdminThemesContent = () => {
           <Table size="small">
             <TableHead>
               <TableRow>
+                <TableCell sx={{ width: 1, whiteSpace: 'nowrap' }}>ID</TableCell>
                 <TableCell><I18nLabel id="common.themes.name" /></TableCell>
                 <TableCell><I18nLabel id="common.themes.code" /></TableCell>
                 <TableCell><I18nLabel id="common.themes.description" /></TableCell>
@@ -262,7 +263,7 @@ const AdminThemesContent = () => {
             <TableBody>
               {rows.length === 0 && !loading && (
                 <TableRow>
-                  <TableCell colSpan={5} align="center">
+                  <TableCell colSpan={6} align="center">
                     <Typography variant="body2" sx={{
                       color: "text.secondary"
                     }}>
@@ -273,6 +274,7 @@ const AdminThemesContent = () => {
               )}
               {rows.map((row: ThemeDto) => (
                 <TableRow key={row.id}>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>{row.id}</TableCell>
                   <TableCell>{row.name}</TableCell>
                   <TableCell>
                     <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
