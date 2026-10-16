@@ -316,6 +316,7 @@
   "common_copied": "Copied to clipboard.",
   "common.back": "Back",
   "common.form.user.country.locked": "Country cannot be changed once your account has been verified.",
+  "common.form.user.country.vatHint": "This country determines the VAT applied to your purchases. I certify that the information provided is accurate.",
   "common.forms.create": "Create",
   "common.forms.search": "Search",
   "market.admin.markets.updateDataPending": "Refreshing data for {0}",

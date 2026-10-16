@@ -316,6 +316,7 @@
   "common_copied": "Copié dans le presse-papier.",
   "common.back": "Retour",
   "common.form.user.country.locked": "Le pays ne peut plus être modifié une fois votre compte vérifié.",
+  "common.form.user.country.vatHint": "Ce pays détermine la TVA appliquée à vos achats. Je certifie que les renseignements fournis sont exacts.",
   "common.forms.create": "Créer",
   "common.forms.search": "Rechercher",
   "market.admin.markets.updateDataPending": "Actualisation des données pour {0}",
