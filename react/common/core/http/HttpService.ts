@@ -146,6 +146,8 @@ class HttpService {
    * Register a bearer token for all URLs matching a given prefix.
    * When a request URL starts with `prefix`, this token is used
    * instead of the user JWT from localStorage.
+   * @deprecated Any token registered here ships in the public bundle. Remote modules are read through the app's own
+   * back relay (`configurationService.getReadApiUrl`); kept only because unused `configApis.ts` files still call it.
    */
   registerApiToken(urlPrefix: string, token: string): void {
     const existing = this.apiTokens.find((e) => e.prefix === urlPrefix);

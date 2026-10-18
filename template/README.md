@@ -220,9 +220,11 @@ Every `VITE_*` value is inlined into the public bundle: never put a secret there
 - it rewrites `import.meta.env ? import.meta.env.X : void 0|undefined` (and `import.meta.env && import.meta.env.X`) to
   `import.meta.env.X` — the guard of zustand's devtools middleware (pulled in by wagmi / Reown) made Vite inline the
   WHOLE env object, every `VITE_*` value included, into the `vanilla-*.js` chunk;
-- at `generateBundle`, it **warns** (never fails: some apps ship legitimately public keys) when the value of a `VITE_*`
-  variable whose name matches `/TOKEN|SECRET|PASSWORD|PRIVATE/i` (8 characters or more) is found in an emitted file,
-  without printing the value.
+- at `generateBundle`, it **fails the build** (since 2026-10-18; it only warned before) when the value of a `VITE_*`
+  variable whose name matches `/TOKEN|SECRET|PASSWORD|PRIVATE|API_KEY/i` (8 characters or more) is found in an emitted
+  file, without printing the value. A key that is public by design (e.g. a publishable key) is listed per app:
+  `createViteConfig({ allowPublicEnv: ['VITE_OPENFORT_PUBLISHABLE_KEY'] })`. Only `vite build` runs this check (not the
+  dev server); variables of the build machine's shell count too (`loadEnv` reads them).
 
 ### Front public files and PWA
 

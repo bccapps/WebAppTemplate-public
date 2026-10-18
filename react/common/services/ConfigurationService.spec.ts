@@ -79,3 +79,35 @@ describe('ConfigurationService.init() — idempotent (PERFORMANCE_PLAN.md §1.4)
     expect(httpServiceMock.get).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ConfigurationService.getReadApiUrl() — remote modules read through the back relay', () => {
+  let service: import('./ConfigurationService').ConfigurationService;
+  let httpServiceMock: { registerApiToken: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn> };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const httpModule = await import('../core/http/HttpService');
+    httpServiceMock = httpModule.httpService as unknown as typeof httpServiceMock;
+    httpServiceMock.registerApiToken.mockClear();
+    const mod = await import('./ConfigurationService');
+    service = new mod.ConfigurationService();
+  });
+
+  it('uses the module URL when local and this app\'s relay when remote', () => {
+    service.set('api_url_local-mod', '');
+    service.set('api_url_remote-mod', 'https://data.example/api/v1');
+    const ownApi = service.getApiUrl();
+    expect(service.getReadApiUrl('local-mod')).toBe(ownApi);
+    expect(service.getReadApiUrl('remote-mod')).toBe(`${ownApi}/relay`);
+    expect(service.getApiUrl('remote-mod')).toBe('https://data.example/api/v1');
+  });
+
+  it('never registers a remote token from the loaded configuration', async () => {
+    const result = new FakeHttpResult();
+    httpServiceMock.get.mockReturnValue(result);
+    service.init('/api', () => undefined);
+    result.resolve([{ name: 'api_url_remote-mod', value: 'https://data.example/api/v1' }]);
+    await Promise.resolve();
+    expect(httpServiceMock.registerApiToken).not.toHaveBeenCalled();
+  });
+});

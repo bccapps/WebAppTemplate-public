@@ -14,6 +14,12 @@ import { Configuration } from '@/config/config';
 
 const DEFAULT_API_URL: string = (import.meta as any).env?.VITE_API_URL || '/api/v1';
 
+/**
+ * Prefix, on this app's own back, of the read relay that serves REMOTE modules to the browser
+ * (see `getReadApiUrl`). The relay mirrors the module's local route paths under it.
+ */
+export const REMOTE_READ_RELAY_PATH = '/relay';
+
 export class ConfigurationService {
   public preloadKey = 'ConfigurationService';
   /**
@@ -71,7 +77,6 @@ export class ConfigurationService {
               merged[elem['name']] = elem['value'];
             }
             appSession.set('config', merged);
-            this.registerRemoteApiTokens(merged);
           }
           this.loaded = true;
           resolve();
@@ -84,6 +89,15 @@ export class ConfigurationService {
   /** True when the module is served by a remote API (an absolute `api_url_<moduleId>`), not this app's own backend. */
   isRemoteModule(moduleId: string): boolean {
     return this.getApiUrl(moduleId) !== DEFAULT_API_URL;
+  }
+
+  /**
+   * Base URL for the browser's READS of `moduleId`: the module's own API when it is local; when it is remote, this
+   * app's back relay (`<api>/relay`), which calls the remote API server-side with its own scoped key — no remote
+   * credential ever reaches the browser. Writes and admin routes of a remote module are not relayed.
+   */
+  getReadApiUrl(moduleId: string): string {
+    return this.isRemoteModule(moduleId) ? DEFAULT_API_URL + REMOTE_READ_RELAY_PATH : this.getApiUrl(moduleId);
   }
 
   getApiUrl(moduleId?: string): string {
@@ -99,16 +113,6 @@ export class ConfigurationService {
       return fromConfig;
     }
     return DEFAULT_API_URL;
-  }
-
-  private registerRemoteApiTokens(config: Record<string, any>): void {
-    const techToken = (import.meta as any).env?.VITE_TECH_TOKEN as string | undefined;
-    if (!techToken) return;
-    for (const [key, value] of Object.entries(config)) {
-      if (key.startsWith('api_url_') && typeof value === 'string' && value.startsWith('https://')) {
-        httpService.registerApiToken(value, techToken);
-      }
-    }
   }
 
   /**

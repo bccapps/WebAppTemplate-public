@@ -289,13 +289,17 @@ ne les contient pas, par construction : pour vérifier une clé de module front,
 typiquement la clé Prowl personnelle de l'utilisateur connecté (`prowlid` de son profil). Les notifications de l'application
 elle-même passent par le back (`nest/common` `ProwlService`, clé dans `back/.env`). Aucun consommateur front recensé à cette date.
 
-**`VITE_TECH_TOKEN`** : `ConfigurationService.registerRemoteApiTokens()` enregistre encore cette valeur comme Bearer des
-modules distants (`api_url_<id>` en `https://`) — conservé car TradeKong en dépend, mais c'est un identifiant serveur à
-serveur exposé dans le bundle public ; le garde de build (`vx-env-guard`, voir le README du template) le signale.
+**`VITE_TECH_TOKEN` — retiré le 2026-10-18** : `ConfigurationService.registerRemoteApiTokens()` (qui enregistrait cette
+valeur comme Bearer des modules distants) est **supprimé** ; TradeKong, dernier utilisateur, lit désormais ses modules
+distants via le relais de son back (`getReadApiUrl`, ci-dessous). `HttpService.registerApiToken` reste, `@deprecated`
+(des `configApis.ts` inutilisés l'appellent encore). Le garde de build (`vx-env-guard`) fait désormais **échouer** le
+build si une telle valeur atteint le bundle.
 
 ## Modules distants — `isRemoteModule()` et `isAvailable()` (2026-09-23)
 
 `configurationService.isRemoteModule(moduleId)` : vrai quand `getApiUrl(moduleId)` pointe vers une API distante (valeur absolue de `api_url_<moduleId>`), pas vers le backend de l'app. Sert à passer un module en lecture seule quand ses écritures et son admin vivent dans l'app qui l'exécute (ex. `wallet-intelligence` servi par ChainTradingDataAPI).
+
+`configurationService.getReadApiUrl(moduleId)` (2026-10-18) : base des **lectures** du navigateur. Module local ⇒ `getApiUrl(moduleId)` ; module distant ⇒ `<VITE_API_URL>/relay` (`REMOTE_READ_RELAY_PATH`), le relais du back de l'app, qui reprend les chemins locaux du module (`/relay/trading-platforms`, `/relay/market-intelligence/pulse`…) et appelle l'API distante côté serveur avec sa propre clé (`REMOTE_API_KEY`) : aucun identifiant distant dans le bundle. Écritures et admin d'un module distant : non relayés (écrans masqués par `isAvailable()`).
 
 `AdminPage` / `AdminDashboard` : un fichier `Admin*.tsx` ou `Dashboard*.tsx` peut, en plus de son `default`, exporter `isAvailable(): boolean` — évalué au rendu ; `false` masque l'onglet. Ex. `market-intelligence/components/ui/AdminConfig.tsx` : `export const isAvailable = () => !configurationService.isRemoteModule('market-intelligence')`. Sans export, l'onglet est toujours affiché (comportement inchangé pour les autres apps).
 

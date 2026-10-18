@@ -59,6 +59,12 @@ export interface ViteConfigOptions {
    * preprod build as production.
    */
   mode?: string
+  /**
+   * `VITE_*` names that look like credentials (see `SECRET_ENV_NAME_RE`) but are PUBLIC by design and may reach the
+   * bundle, e.g. a publishable key. Anything else matching the pattern fails the production build.
+   * @example allowPublicEnv: ['VITE_OPENFORT_PUBLISHABLE_KEY']
+   */
+  allowPublicEnv?: string[]
 }
 
 /**
@@ -79,22 +85,22 @@ export function rewriteEnvGuards(code: string): string {
 }
 
 /** VITE_* names that look like credentials: their value must never reach the public bundle. */
-const SECRET_ENV_NAME_RE = /TOKEN|SECRET|PASSWORD|PRIVATE/i
+export const SECRET_ENV_NAME_RE = /TOKEN|SECRET|PASSWORD|PRIVATE|API_KEY/i
 
-/** Names of secret-looking VITE_* variables whose value appears in `content`. */
-export function findLeakedEnvSecrets(env: Record<string, unknown>, content: string): string[] {
+/** Names of secret-looking VITE_* variables (minus the `allowed` public ones) whose value appears in `content`. */
+export function findLeakedEnvSecrets(env: Record<string, unknown>, content: string, allowed: readonly string[] = []): string[] {
   return Object.entries(env)
-    .filter(([name, value]) => name.startsWith('VITE_') && SECRET_ENV_NAME_RE.test(name)
+    .filter(([name, value]) => name.startsWith('VITE_') && SECRET_ENV_NAME_RE.test(name) && !allowed.includes(name)
       && typeof value === 'string' && value.length >= 8 && content.includes(value))
     .map(([name]) => name)
 }
 
 /**
- * (a) rewrites the env-object guards above; (b) at bundle time, WARNS (never fails: some apps
- * ship legitimately public keys) when the value of a secret-looking VITE_* variable is emitted.
+ * (a) rewrites the env-object guards above; (b) at bundle time, FAILS the build when the value of a
+ * secret-looking VITE_* variable is emitted, unless its name is in `allowPublicEnv` (a key that is public by design).
  * The value itself is never printed.
  */
-export function envGuardPlugin(): Plugin {
+export function envGuardPlugin(allowPublicEnv: readonly string[] = []): Plugin {
   let env: Record<string, unknown> = {}
   return {
     name: 'vx-env-guard',
@@ -112,8 +118,9 @@ export function envGuardPlugin(): Plugin {
     generateBundle(_options, bundle) {
       for (const [fileName, output] of Object.entries(bundle)) {
         const content = output.type === 'chunk' ? output.code : typeof output.source === 'string' ? output.source : ''
-        for (const name of findLeakedEnvSecrets(env, content)) {
-          this.warn(`${name} is inlined into the public bundle (${fileName}). VITE_* values are readable by every visitor: move this secret to the back.`)
+        const leaked = findLeakedEnvSecrets(env, content, allowPublicEnv)
+        if (leaked.length > 0) {
+          this.error(`${leaked.join(', ')} inlined into the public bundle (${fileName}). VITE_* values are readable by every visitor: move the secret to the back, or list a genuinely public key in createViteConfig({ allowPublicEnv }).`)
         }
       }
     },
@@ -172,7 +179,7 @@ export function createViteConfig(opts: ViteConfigOptions = {}): UserConfig {
     preview: {
       port,
     },
-    plugins: [envGuardPlugin(), react(), ...(opts.extraPlugins ?? [])],
+    plugins: [envGuardPlugin(opts.allowPublicEnv), react(), ...(opts.extraPlugins ?? [])],
     build: {
       minify: 'esbuild',
       // Vendor chunks like the web3 stack are legitimately large; lift the warn
