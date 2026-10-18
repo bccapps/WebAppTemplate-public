@@ -10,7 +10,7 @@
 // End-to-end tests of run.sh / deploy-full.sh / lib/deploy-versions.sh against STUB executables (docker, ssh, scp, rsync,
 // git, npm...) put first on PATH: nothing ever reaches a real host. Every stub appends its argv to $STUB_LOG; image tags are
 // files in $STUB_STATE (content = fake image id) so retag/swap logic can be checked; env vars drive the outcomes
-// (STUB_BACK_HEALTH=bad, STUB_ROLLBACK_UNHEALTHY=1, STUB_FRONT_FAIL=1, STUB_RUN_FAIL=1...).
+// (STUB_BACK_HEALTH=bad, STUB_ROLLBACK_UNHEALTHY=1, STUB_FRONT_FAIL=1, STUB_RUN_FAIL=1, STUB_WORKER_FAIL=new...).
 //
 // Run: node --test scripts/deploy-versions.test.mjs   (needs bash and python3)
 
@@ -60,13 +60,19 @@ case "$cmd" in
       esac
     done
     sub="$1"; shift
+    echo "COMPOSE_ENV[$sub]: BACK_NODE_ROLE=\${BACK_NODE_ROLE:-}" >> "$STUB_LOG"
     case "$sub" in
       build)
         case "$*" in *back*) echo new > "$(img "\${PROJECT_NAME}_back:latest")" ;; esac
         case "$*" in *front*) echo new > "$(img "$proj-front:latest")" ;; esac ;;
       up)
         if [ -f "$dir/back/.env" ]; then sed 's/^/ENV_SNAPSHOT: /' "$dir/back/.env" >> "$STUB_LOG"; fi
-        if [ -n "\${STUB_UP_FAIL:-}" ]; then exit 1; fi ;;
+        if [ -n "\${STUB_UP_FAIL:-}" ]; then exit 1; fi
+        case "$*" in *back-worker*)
+          # STUB_WORKER_FAIL=new: back-worker only fails to start with the NEW image (the rollback one starts)
+          if [ "\${STUB_WORKER_FAIL:-}" = 1 ]; then exit 1; fi
+          if [ "\${STUB_WORKER_FAIL:-}" = new ] && [ "$(cat "$(img "\${PROJECT_NAME}_back:latest")" 2>/dev/null)" = new ]; then exit 1; fi ;;
+        esac ;;
       ps)
         last="\${!#}"
         if [ "$last" = front ]; then
@@ -341,7 +347,7 @@ test('deploy: unhealthy back -> automatic rollback (retag, env, SQLite restore, 
     assert.equal(p.image('testapp_back:latest'), 'v1');
     assert.ok(indexOfLine(lines, /^ssh .*cp -p \.env\.previous \.env/, rb) >= 0, 'env restored');
     assert.ok(indexOfLine(lines, /^docker .* run --rm .*RESTORE_OK/, rb) >= 0, 'SQLite backup restored (new back never served)');
-    assert.ok(indexOfLine(lines, /^docker .*compose .* up -d --no-build back back-worker back-lb/, rb) >= 0, 'up without build');
+    assert.ok(indexOfLine(lines, /^docker .*compose .* up -d --no-build back back-lb$/, rb) >= 0, 'up without build');
     assert.ok(indexOfLine(lines, /rm -f \/etc\/nginx\/maintenance\.flag/, rb) >= 0, 'maintenance off');
   } finally { p.cleanup(); }
 });
@@ -388,7 +394,7 @@ test('deploy: a failing database backup aborts and rolls back', () => {
     assert.match(r.out, /SQLite backup failed/);
     // the new back must never have been started
     const lines = p.logLines();
-    assert.equal(indexOfLine(lines, /^docker .*compose .* up -d back back-worker back-lb$/), -1);
+    assert.equal(indexOfLine(lines, /^docker .*compose .* up -d back back-lb$/), -1);
   } finally { p.cleanup(); }
 });
 
@@ -440,7 +446,7 @@ test('deploy: colocated Redis and self-hosted Postgres keep the internal-hostnam
     assert.ok(lines.includes('ENV_SNAPSHOT: DB_PORT=5432'));
     assert.ok(lines.includes('ENV_SNAPSHOT: SERVER_IP=10.0.0.1'));
     assert.ok(indexOfLine(lines, /compose .* rm -sf back back-worker db redis$/) >= 0, 'stop list includes db and redis');
-    assert.ok(indexOfLine(lines, /compose .* up -d back back-worker back-lb db redis$/) >= 0, 'up list includes db and redis');
+    assert.ok(indexOfLine(lines, /compose .* up -d back back-lb db redis$/) >= 0, 'up list includes db and redis');
   } finally { p.cleanup(); }
 });
 
@@ -534,6 +540,163 @@ test('manual rollback of the front swaps its images', () => {
     assert.equal(p.image(`${FRONT_PROJECT}-front:latest`), 'f1');
     assert.equal(p.image(`${FRONT_PROJECT}-front:previous`), 'f2');
   } finally { p.cleanup(); }
+});
+
+// ---------------------------------------------------------------------------
+// back-worker sequencing (only `back` manages the schema) and BACK_WORKER=on|off
+// ---------------------------------------------------------------------------
+const WORKER_START = /^docker .*compose .* up -d --no-build --no-deps back-worker$/;
+const HEALTH_WAIT = /compose .* ps --format \{\{\.Health\}\} back$/;
+const MAINT_OFF = /rm -f \/etc\/nginx\/maintenance\.flag/;
+
+test('deploy BACK_WORKER on (default): up without back-worker, health wait, then back-worker, then maintenance off', () => {
+  const p = deployedProject();
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back']);
+    assert.equal(r.status, 0, r.out);
+    const out = strip(r.stdout);
+    assert.match(out, /^==> \[BACK:10\.0\.0\.1\] Starting back-worker \(after back is healthy\)$/m);
+    assert.doesNotMatch(out, /back-worker disabled/);
+    const lines = p.logLines();
+    const build = indexOfLine(lines, /^docker .*compose .* build back back-worker$/);
+    const up = indexOfLine(lines, /^docker .*compose .* up -d back back-lb$/);
+    const health = indexOfLine(lines, HEALTH_WAIT, up);
+    const worker = indexOfLine(lines, WORKER_START);
+    const maintOff = indexOfLine(lines, MAINT_OFF);
+    assert.ok(build >= 0, 'both services built');
+    assert.ok(up >= 0 && health > up, 'up (no worker) then health wait');
+    assert.ok(worker > health, 'back-worker started after back is healthy');
+    assert.ok(maintOff > worker, 'maintenance lifted after the worker start');
+    assert.equal(indexOfLine(lines, /^COMPOSE_ENV\[(up|build)\]: BACK_NODE_ROLE=.+$/), -1, 'BACK_NODE_ROLE unset');
+    // the worker is started while the host-patched back/.env is still staged (same env as back)
+    assert.ok(indexOfLine(lines, /^ENV_SNAPSHOT: SERVER_IP=10\.0\.0\.1$/, worker) > worker);
+    assert.equal(readdirSync(p.root).filter((f) => f.includes('.bak')).length, 0);
+  } finally { p.cleanup(); }
+});
+
+test('deploy BACK_WORKER=off: only back built, back-worker removed not started, back runs with NODE_ROLE=all', () => {
+  for (const value of ['off', 'OFF', 'false', '0']) {
+    const p = deployedProject({ extraBackEnv: `BACK_WORKER=${value}` });
+    try {
+      const r = p.run(['prod', '--no-update-common', '--target=back']);
+      assert.equal(r.status, 0, `${value}: ${r.out}`);
+      assert.match(strip(r.stdout), /^==> \[BACK:10\.0\.0\.1\] back-worker disabled \(BACK_WORKER=off\): removed if present$/m);
+      assert.doesNotMatch(strip(r.stdout), /Starting back-worker/);
+      const lines = p.logLines();
+      assert.ok(indexOfLine(lines, /^docker .*compose .* build back$/) >= 0, 'only back built');
+      assert.equal(indexOfLine(lines, /compose .* build .*back-worker/), -1);
+      assert.ok(indexOfLine(lines, /compose .* rm -sf back back-worker$/) >= 0, 'existing worker removed by the switch');
+      assert.equal(indexOfLine(lines, /compose .* up .*back-worker/), -1, 'back-worker never started');
+      assert.ok(indexOfLine(lines, /compose .* up -d back back-lb$/) >= 0);
+      assert.ok(lines.includes('COMPOSE_ENV[up]: BACK_NODE_ROLE=all'), 'BACK_NODE_ROLE=all reaches compose');
+      assert.ok(lines.includes('COMPOSE_ENV[build]: BACK_NODE_ROLE=all'));
+    } finally { p.cleanup(); }
+  }
+});
+
+test('deploy BACK_WORKER accepts on/true/1 (worker started)', () => {
+  for (const value of ['on', 'TRUE', '1']) {
+    const p = deployedProject({ extraBackEnv: `BACK_WORKER=${value}` });
+    try {
+      const r = p.run(['prod', '--no-update-common', '--target=back']);
+      assert.equal(r.status, 0, `${value}: ${r.out}`);
+      assert.ok(indexOfLine(p.logLines(), WORKER_START) >= 0, value);
+    } finally { p.cleanup(); }
+  }
+});
+
+test('deploy: an invalid BACK_WORKER value exits 1 before any host is touched', () => {
+  const p = deployedProject({ extraBackEnv: 'BACK_WORKER=maybe' });
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back']);
+    assert.equal(r.status, 1, r.out);
+    assert.match(strip(r.out), /BACK_WORKER='maybe' is not valid/);
+    const lines = p.logLines();
+    assert.equal(indexOfLine(lines, /^(ssh|scp|rsync|docker) /), -1, 'no remote call');
+  } finally { p.cleanup(); }
+});
+
+test('deploy: back-worker failing to start after the switch -> automatic rollback, exit 3', () => {
+  const p = deployedProject();
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_WORKER_FAIL: 'new' });
+    assert.equal(r.status, 3, r.out);
+    const out = strip(r.stdout);
+    assert.match(out, /^==> \[BACK:10\.0\.0\.1\] Rolling back to previous version$/m);
+    assert.match(out, /^==> \[BACK:10\.0\.0\.1\] Rolled back to previous version$/m);
+    assert.match(out, /^==> Deployment failed, previous version restored$/m);
+    assert.match(strip(r.out), /back-worker did not start/);
+    assert.equal(p.image('testapp_back:latest'), 'v1');
+    const lines = p.logLines();
+    const failedWorker = indexOfLine(lines, WORKER_START);
+    const rb = indexOfLine(lines, /^docker .* tag testapp_back:previous testapp_back:latest$/);
+    assert.ok(failedWorker >= 0 && rb > failedWorker, 'rollback after the failed worker start');
+    assert.ok(indexOfLine(lines, MAINT_OFF) > rb, 'maintenance never lifted before the rollback');
+    assert.ok(indexOfLine(lines, /^docker .* run --rm .*RESTORE_OK/, rb) >= 0, 'SQLite backup restored (back never served)');
+    assert.ok(indexOfLine(lines, WORKER_START, rb) >= 0, 'previous worker started again by the rollback');
+  } finally { p.cleanup(); }
+});
+
+test('deploy: back-worker failing to start in the rollback too -> Rollback failed, exit 4', () => {
+  const p = deployedProject();
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_WORKER_FAIL: '1' });
+    assert.equal(r.status, 4, r.out);
+    assert.match(strip(r.stdout), /^==> Deployment failed, rollback failed$/m);
+  } finally { p.cleanup(); }
+});
+
+test('deploy rollback path, worker on: up without back-worker, health, then back-worker, then maintenance off', () => {
+  const p = deployedProject();
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_BACK_HEALTH: 'bad' });
+    assert.equal(r.status, 3, r.out);
+    const lines = p.logLines();
+    const rb = indexOfLine(lines, /^docker .* tag testapp_back:previous testapp_back:latest$/);
+    const up = indexOfLine(lines, /^docker .*compose .* up -d --no-build back back-lb$/, rb);
+    const health = indexOfLine(lines, HEALTH_WAIT, up);
+    const worker = indexOfLine(lines, WORKER_START, rb);
+    const maintOff = indexOfLine(lines, MAINT_OFF, rb);
+    assert.ok(rb >= 0 && up > rb && health > up && worker > health && maintOff > worker, `${rb} ${up} ${health} ${worker} ${maintOff}`);
+    assert.equal(indexOfLine(lines, WORKER_START), worker, 'no worker start for the unhealthy new version');
+  } finally { p.cleanup(); }
+});
+
+test('deploy rollback path, worker off: back-worker removed, never started, NODE_ROLE=all', () => {
+  const p = deployedProject({ extraBackEnv: 'BACK_WORKER=off' });
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_BACK_HEALTH: 'bad' });
+    assert.equal(r.status, 3, r.out);
+    const lines = p.logLines();
+    const rb = indexOfLine(lines, /^docker .* tag testapp_back:previous testapp_back:latest$/);
+    assert.ok(rb >= 0);
+    assert.equal(lines.filter((l) => /compose .* rm -sf back back-worker$/.test(l)).length, 2, 'worker removed by the switch AND by the rollback');
+    assert.ok(indexOfLine(lines, /^docker .*compose .* up -d --no-build back back-lb$/, rb) >= 0);
+    assert.equal(indexOfLine(lines, /compose .* up .*back-worker/), -1);
+    assert.ok(lines.slice(rb).includes('COMPOSE_ENV[up]: BACK_NODE_ROLE=all'));
+    assert.match(strip(r.stdout), /back-worker disabled \(BACK_WORKER=off\): removed if present/);
+  } finally { p.cleanup(); }
+});
+
+test('manual rollback follows BACK_WORKER (on: worker after health; off: NODE_ROLE=all, no worker)', () => {
+  for (const off of [false, true]) {
+    const p = makeProject({ extraBackEnv: off ? 'BACK_WORKER=off' : '' });
+    p.seedImage('testapp_back:latest', 'v2');
+    p.seedImage('testapp_back:previous', 'v1');
+    try {
+      const r = p.run(['rollback', 'prod', '--target=back']);
+      assert.equal(r.status, 0, r.out);
+      const lines = p.logLines();
+      if (off) {
+        assert.equal(indexOfLine(lines, /compose .* up .*back-worker/), -1);
+        assert.ok(lines.includes('COMPOSE_ENV[up]: BACK_NODE_ROLE=all'));
+      } else {
+        const health = indexOfLine(lines, HEALTH_WAIT);
+        assert.ok(health >= 0 && indexOfLine(lines, WORKER_START) > health);
+        assert.equal(indexOfLine(lines, /^COMPOSE_ENV\[up\]: BACK_NODE_ROLE=.+$/), -1);
+      }
+    } finally { p.cleanup(); }
+  }
 });
 
 test('portable sed: no BSD-only `sed -i \'\'` left, in-place helpers work and leave no backup file', () => {

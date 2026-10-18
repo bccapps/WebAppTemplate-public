@@ -24,7 +24,8 @@ services:
     # SQLite only (DB_ENGINE=sqlite): the database file lives on the sqlite_data volume, whatever DB_PATH says in
     # back/.env (a relative path would sit in the container's writable layer and vanish at each deploy). Unused otherwise.
     environment:
-      NODE_ROLE: api
+      # BACK_WORKER=off (deploy-full.sh exports BACK_NODE_ROLE=all): single process, API + background work.
+      NODE_ROLE: ${BACK_NODE_ROLE:-api}
       DB_PATH: /data/${PROJECT_NAME}.db
     volumes:
       - sqlite_data:/data
@@ -51,9 +52,17 @@ services:
     user: "1000:1000"
     env_file:
       - ../back/.env
+    # Only `back` manages the schema (DB_SCHEMA_MODE from back/.env, e.g. sync): two processes running the schema sync
+    # at once on the same database lock each other (SQLite: "database is locked") or see a half-applied schema. The worker
+    # therefore never synchronizes/migrates and starts after back is healthy (deploy-full.sh also starts it that way).
+    # A per-connection <PREFIX>SCHEMA_MODE of another connection is NOT overridden here.
     environment:
       NODE_ROLE: worker
+      DB_SCHEMA_MODE: manual
       DB_PATH: /data/${PROJECT_NAME}.db
+    depends_on:
+      back:
+        condition: service_healthy
     volumes:
       - sqlite_data:/data
     expose:

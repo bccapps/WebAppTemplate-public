@@ -11,8 +11,8 @@
 #
 # Versioning, database backup and rollback helpers of deploy-full.sh. SOURCED by it (bash 3.2 compatible), after the
 # logging helpers (warn/err/info) and BEFORE the host functions: everything it needs from deploy-full.sh
-# (enable_back_maintenance, disable_back_maintenance, wait_for_back_healthy, patch_back_env_for_host,
-# compute_back_services, BUILD_CONTEXT_DIR, PROJECT_NAME, IS_SQLITE_DB, IS_SELF_HOSTED_DB...) is resolved at call time.
+# (enable_back_maintenance, disable_back_maintenance, wait_for_back_healthy, start_back_worker, patch_back_env_for_host,
+# compute_back_services, BACK_WORKER_ENABLED, BUILD_CONTEXT_DIR, PROJECT_NAME, IS_SQLITE_DB, IS_SELF_HOSTED_DB...) is resolved at call time.
 #
 # Image tags kept on each host: `<image>:latest` (running version) and `<image>:previous` (the one before). Remote files
 # next to the remote `.env`: `.env.previous`, `.deploy/current.json`, `.deploy/previous.json`.
@@ -21,6 +21,7 @@
 #   ==> [<t>] Tagging current images as previous      ==> [BACK:<host>] Backing up database
 #   ==> [<t>] Rolling back to previous version        ==> [<t>] Rolled back to previous version
 #   ==> [<t>] Rollback failed
+#   ==> [BACK:<host>] Starting back-worker (after back is healthy)   ==> [BACK:<host>] back-worker disabled (BACK_WORKER=off): removed if present
 #   ==> Deployment failed, previous version restored  (exit 3)    ==> Deployment failed, rollback failed  (exit 4)
 #   ==> Rollback completed                            (manual `rollback` command)
 # Exit codes 3 and 4 are produced ONLY by dv_abort_with_rollback.
@@ -370,8 +371,10 @@ dv_rollback_back() {
     dv_stage_env_from_remote "${BUILD_CONTEXT_DIR}/back/.env" "${BACK_ENV_FILE}" &&
     patch_back_env_for_host "${BUILD_CONTEXT_DIR}/back/.env" "${DV_HOST}" &&
     compute_back_services "${DV_HOST}" &&
+    { [[ "${BACK_WORKER_ENABLED:-1}" -eq 1 ]] || echo "==> [BACK:${DV_HOST}] back-worker disabled (BACK_WORKER=off): removed if present"; } &&
     VMAGENT_CONFIG_PATH="${DV_REMOTE_DIR}/vmagent.yml" dv_compose up -d --no-build "${BACK_SERVICES_UP[@]}" &&
-    wait_for_back_healthy "${DV_CONTEXT}" "${DV_DOCKER_SSH}" "${DV_PROJECT}" "${DV_HOST}"
+    wait_for_back_healthy "${DV_CONTEXT}" "${DV_DOCKER_SSH}" "${DV_PROJECT}" "${DV_HOST}" &&
+    start_back_worker "${DV_CONTEXT}" "${DV_DOCKER_SSH}" "${DV_PROJECT}" "${DV_HOST}" "${DV_REMOTE_DIR}/vmagent.yml"
   } || {
     err "[BACK:${DV_HOST}] Could not bring the previous version back up"
     echo "==> [BACK:${DV_HOST}] Rollback failed"

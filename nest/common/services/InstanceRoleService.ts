@@ -9,7 +9,7 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 
-export type InstanceRole = 'worker' | 'api';
+export type InstanceRole = 'worker' | 'api' | 'all';
 
 /**
  * Resolves the role of the current backend process from the `NODE_ROLE` env var.
@@ -21,6 +21,10 @@ export type InstanceRole = 'worker' | 'api';
  * - `api`: serves HTTP only. Skips all WORKER-ONLY scheduled/bootstrap work, never becomes a
  *   run owner (no heartbeat), but stays a fully-functional RPC client to the worker and keeps
  *   per-process concerns that the API needs (config cache warmup, in-memory market cache).
+ *
+ * - `all`: explicit single-process role (API + background work in the same process, e.g. `BACK_WORKER=off`
+ *   in deploy-full.sh). `isWorker()` is true (every worker-gated job runs here), `isApi()` is false (no
+ *   app-specific "HTTP only" restriction applies).
  *
  * The default is `worker` so that a single-instance deployment (local/dev) keeps doing
  * everything exactly as before, and a misconfigured prod (NODE_ROLE unset) degrades to the
@@ -37,11 +41,11 @@ export class InstanceRoleService {
 
   constructor() {
     const raw = (process.env.NODE_ROLE || '').trim().toLowerCase();
-    this._role = raw === 'api' ? 'api' : 'worker';
-    if (raw && raw !== 'api' && raw !== 'worker') {
+    this._role = raw === 'api' ? 'api' : raw === 'all' ? 'all' : 'worker';
+    if (raw && raw !== 'api' && raw !== 'worker' && raw !== 'all') {
       this.logger.warn(`NODE_ROLE="${raw}" not recognised — defaulting to "worker".`);
     }
-    this.logger.log(`Instance role: ${this._role}`);
+    this.logger.log(this._role === 'all' ? 'Instance role: all (single process: API + background work)' : `Instance role: ${this._role}`);
   }
 
   get role(): InstanceRole {
@@ -49,7 +53,7 @@ export class InstanceRoleService {
   }
 
   isWorker(): boolean {
-    return this._role === 'worker';
+    return this._role === 'worker' || this._role === 'all';
   }
 
   isApi(): boolean {

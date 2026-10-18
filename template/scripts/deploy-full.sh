@@ -135,6 +135,26 @@ source "${BACK_ENV_FILE}"
 set +a
 COMPOSE_PROJECT_NAME="${PROJECT_NAME:?PROJECT_NAME is required}"
 
+# ── back-worker on/off (BACK_WORKER in back/.env: on (default) | off) ────────
+# off = no back-worker container: `back` runs as a single process with NODE_ROLE=all (API + background work). The
+# compose files read it through `NODE_ROLE: ${BACK_NODE_ROLE:-api}`; BACK_NODE_ROLE is exported here, so it reaches every
+# `docker compose` call of this script (and of lib/deploy-versions.sh, rollbacks included) through the process env.
+# Validated here, before any host is touched.
+BACK_WORKER_ENABLED=1
+case "$(printf '%s' "${BACK_WORKER:-on}" | tr '[:upper:]' '[:lower:]')" in
+  on|true|1|"") BACK_WORKER_ENABLED=1 ;;
+  off|false|0) BACK_WORKER_ENABLED=0 ;;
+  *)
+    err "BACK_WORKER='${BACK_WORKER}' is not valid (expected on|off, also true|false|1|0)."
+    exit 1
+    ;;
+esac
+if [[ "${BACK_WORKER_ENABLED}" -eq 0 ]]; then
+  export BACK_NODE_ROLE=all
+else
+  unset BACK_NODE_ROLE
+fi
+
 # ── Destinations de supervision (vmagent) ────────────────────────────────────
 # PROMETHEUS_REMOTE_WRITE_URLS accepte une LISTE séparée par des virgules : un
 # même back pousse ses métriques vers plusieurs serveurs Prometheus, vmagent
@@ -1325,12 +1345,27 @@ wait_for_back_healthy() {
   done
 }
 
+# Starts back-worker once back is healthy (BACK_WORKER=on). `--no-deps`: back is already up and must not be recreated
+# (it would be if the staged env differs); a no-op with BACK_WORKER=off. Returns the exit status of `up`.
+start_back_worker() {
+  local context_name="$1" docker_ssh_command="$2" project_name="$3" target_host="$4" vmagent_config="${5:-}"
+  if [[ "${BACK_WORKER_ENABLED}" -ne 1 ]]; then return 0; fi
+  echo "==> [BACK:${target_host}] Starting back-worker (after back is healthy)"
+  VMAGENT_CONFIG_PATH="${vmagent_config}" \
+  DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
+    --project-directory "${BUILD_CONTEXT_DIR}" \
+    --project-name "${project_name}" \
+    up -d --no-build --no-deps back-worker
+}
+
 # Fills BACK_SERVICES_STOP (stopped before a switch) and BACK_SERVICES_UP (started by `up -d`) for a back host.
 # Redis is part of both when it is colocated on this host, so the stop/`up` of the other services never orphans it.
 compute_back_services() {
   local target_host="$1"
+  # back-worker is always stopped/removed by a switch (also when BACK_WORKER=off, to drop an existing container), but
+  # never part of BACK_SERVICES_UP: start_back_worker starts it once back is healthy (only `back` manages the schema).
   BACK_SERVICES_STOP=("back" "back-worker")
-  BACK_SERVICES_UP=("back" "back-worker" "back-lb")
+  BACK_SERVICES_UP=("back" "back-lb")
   if [[ "${IS_SELF_HOSTED_DB}" -eq 1 ]]; then
     BACK_SERVICES_STOP+=("db")
     BACK_SERVICES_UP+=("db")
@@ -1451,11 +1486,15 @@ deploy_back_host() {
   # Keep the running version as `previous` BEFORE the build overwrites `latest` (rollback target).
   dv_tag_previous "$(dv_back_image)"
 
+  # back-worker shares the back image (no build section of its own): nothing to build for it when it is off.
+  local -a BACK_BUILD_SERVICES=("back")
+  if [[ "${BACK_WORKER_ENABLED}" -eq 1 ]]; then BACK_BUILD_SERVICES+=("back-worker"); fi
+
   echo "==> [BACK:${target_host}] Building service"
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
     --project-directory "${BUILD_CONTEXT_DIR}" \
     --project-name "${project_name}" \
-    build ${NO_CACHE_FLAG} back back-worker
+    build ${NO_CACHE_FLAG} "${BACK_BUILD_SERVICES[@]}"
 
   # From here on the host is "switched": any failure rolls every switched host back (see lib/deploy-versions.sh).
   DV_SCOPE="all"
@@ -1476,6 +1515,9 @@ deploy_back_host() {
     --project-name "${project_name}" \
     --profile metrics \
     rm -sf "${BACK_SERVICES_STOP[@]}" 2>/dev/null || true
+  if [[ "${BACK_WORKER_ENABLED}" -ne 1 ]]; then
+    echo "==> [BACK:${target_host}] back-worker disabled (BACK_WORKER=off): removed if present"
+  fi
 
   # Remove containers with fixed container_name that may belong to a previous project name.
   # back_lb is deliberately NOT in this list — see enable_back_maintenance above. Neither is
@@ -1532,11 +1574,25 @@ deploy_back_host() {
     --project-name "${project_name}" \
     up -d "${BACK_SERVICES_UP[@]}"
 
+  # back (the only service managing the schema) is up: wait for it, THEN start back-worker (see start_back_worker).
+  # The patched back/.env stays in place until then, so back-worker gets the same per-host env as back.
+  local serving=0
+  if wait_for_back_healthy "${context_name}" "${docker_ssh_command}" "${project_name}" "${target_host}"; then
+    if start_back_worker "${context_name}" "${docker_ssh_command}" "${project_name}" "${target_host}" "${remote_dir}/vmagent.yml"; then
+      serving=1
+    else
+      err "[BACK:${target_host}] back-worker did not start."
+    fi
+  else
+    err "[BACK:${target_host}] New back service did not become healthy in time."
+    err "[BACK:${target_host}] Check 'docker --context ${context_name} compose --project-name ${project_name} logs back' once the deploy is over."
+  fi
+
   # Restore original back/.env so subsequent host deployments (non-colocated) get the public values.
   # The root .env was never touched, so nothing to restore there.
   mv "${BUILD_CONTEXT_DIR}/back/.env.bak" "${BUILD_CONTEXT_DIR}/back/.env"
 
-  if wait_for_back_healthy "${context_name}" "${docker_ssh_command}" "${project_name}" "${target_host}"; then
+  if [[ "${serving}" -eq 1 ]]; then
     disable_back_maintenance "${context_name}" "${docker_ssh_command}" "${target_host}"
     DV_SW_SERVED[DV_IDX]=1
     # nginx resolves upstream hostnames once at (re)load: after a back recreate the
@@ -1555,8 +1611,6 @@ deploy_back_host() {
     fi
     dv_disarm
   else
-    err "[BACK:${target_host}] New back service did not become healthy in time."
-    err "[BACK:${target_host}] Check 'docker --context ${context_name} compose --project-name ${project_name} logs back' once the deploy is over."
     dv_abort_with_rollback
   fi
 
