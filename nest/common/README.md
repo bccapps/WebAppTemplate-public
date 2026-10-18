@@ -144,12 +144,14 @@ Sans contributeur, la route répond `{ status: 'ok', checks: {} }` : un projet p
 ### Email (`EmailController`)
 | Méthode | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
-| `POST` | `/api/v1/admin/email/test` | Admin | Envoie un email de test à l'adresse fournie (`{ to: string }`). Retourne `{ success, messageId?, error? }`. |
+| `POST` | `/api/v1/admin/email/test` | Admin | Envoie un email de test à l'adresse fournie (`TestEmailDto { to }`). Retourne `{ success, messageId?, error? }`. |
 
 ### Cookie consent (`CookieConsentController`)
 | Méthode | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
-| `POST` | `/api/v1/cookie-consent` | Public | Journalise un choix de consentement (`{ categories: { necessary: true, audienceMeasurement: boolean } }`) — preuve de consentement CNIL, anonyme (pas de résolution d'utilisateur, `userId` toujours `null` aujourd'hui — voir `CookieConsentController`). Appelé en fire-and-forget par `CookieConsentBanner`/`CookieConsentSettingsModal` (front), erreurs ignorées côté client. |
+| `POST` | `/api/v1/cookie-consent` | Public | Journalise un choix de consentement (`CookieConsentLogDto { categories: { necessary: true, audienceMeasurement: boolean } }`, validé) — preuve de consentement CNIL, anonyme (pas de résolution d'utilisateur, `userId` toujours `null` aujourd'hui — voir `CookieConsentController`). Appelé en fire-and-forget par `CookieConsentBanner`/`CookieConsentSettingsModal` (front), erreurs ignorées côté client. |
+
+DTO des corps (2026-10-18, `dtos/`) : `CookieConsentLogDto`, `BugReportDto` (`POST /api/v1/common/bug-report` : sujet ≤ 300, description ≤ 20 000 ; l'id du rapporteur vient de `req.user`, les champs sont échappés dans l'email HTML), `ThemeCreateDto` / `ThemeCssUpdateDto` (thèmes admin, CSS ≤ 1 000 000), `TestEmailDto`, `DecryptPayloadDto` (`admin/decrypt`). `PUT /configurations` (tableau) et `PUT /admin/module-configs/:moduleId` (map dynamique validée par le schéma du module) restent sans DTO de classe.
 
 ## Configuration requise
 - Variables d'environnement Prowl : `PROWL_API_KEY`, `PROWL_API_URL` (optionnel), `PROWL_APPLICATION_NAME`.
@@ -460,7 +462,7 @@ Limites ajustables par option (`jsonLimit`, `rawBodyLimit`).
 | `extraCorsHeaders` | aucun | En-têtes de requête ajoutés à `allowedHeaders` du CORS (ex. `['x-company-id']`), en plus de `Content-Type`, `Authorization`, `x-crypt-session`, `x-crypt-accept-encoding`. Une app n'a plus besoin de réécrire `enableCors`. |
 | `publicCorsPaths` | aucun | Préfixes de chemin (ex. `['/api/v1/inline-image/']`) servis à toute origine : CORS ouvert **sans credentials** (l'origine opaque `null` d'une iframe `sandbox` incluse, reflétée telle quelle) et `Cross-Origin-Resource-Policy: cross-origin` (helmet pose `same-origin`, qui empêche un `<img>` d'une autre origine). Pour des routes publiques sans identifiants (images, pixels de suivi) ; les autres routes gardent la liste `CLIENT_ORIGINS`, y compris pour `Origin: null`. Correspondance par préfixe sur le chemin sans query string. |
 | `corsOriginPolicy` | aucun | `(origin, { path, method }) => boolean \| { credentials: boolean } \| undefined`, appelée pour une origine **hors** `CLIENT_ORIGINS` (jamais sans en-tête `Origin`). `undefined` ou `false` : refus (`CORS_FORBIDDEN`, comportement par défaut) ; `true` : autorisée **avec** cookies ; `{ credentials }` : autorisée, cookies selon la valeur. Pour un préflight, `method` est la méthode demandée (`Access-Control-Request-Method`) et `path` le chemin sans query string. Les origines de `CLIENT_ORIGINS` gardent toutes les routes sans appel à la politique ; `publicCorsPaths` l'emporte. Exemple : une origine `chrome-extension://<id>` autorisée avec cookies sur les seules routes de l'extension. |
-| `validation` | `{ whitelist: true, transform: true }` | Options du `ValidationPipe` global (`whitelist`, `transform`, `forbidNonWhitelisted`) ; les champs donnés remplacent les défauts. `false` : aucun pipe global (une app sans `ValidationPipe` à migrer, dont les DTO sans décorateurs perdraient leurs champs sous `whitelist`). |
+| `validation` | `{ whitelist: true, transform: true }` | Options du `ValidationPipe` global (`whitelist`, `transform`, `forbidNonWhitelisted`) ; les champs donnés remplacent les défauts. `{ validateOnly: true }` : `ValidateOnlyPipe` (`bootstrap/ValidateOnlyPipe.ts`) — les DTO class-validator sont vérifiés (400), mais le handler reçoit la valeur de la requête **inchangée** (ni whitelist, ni transformation : les `uid`/`user` posés par les intercepteurs restent, les chaînes de query ne sont pas converties) ; pour une app dont tous les DTO ne sont pas décorés. Les pipes déclarés sur une route s'appliquent ensuite normalement. `false` : aucun pipe global (une app sans `ValidationPipe` à migrer, dont les DTO sans décorateurs perdraient leurs champs sous `whitelist` — une classe **sans aucun décorateur** est entièrement vidée par `whitelist`). |
 
 Tests : `bootstrap/configureHttpApp.spec.ts`, `throttle/CommonThrottlerGuard.spec.ts` (suivi par utilisateur, throttlers nommés), `auth/GlobalAuthInterceptor.spec.ts`.
 

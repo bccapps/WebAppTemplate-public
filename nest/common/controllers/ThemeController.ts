@@ -19,6 +19,8 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { ThemeCreateDto } from '../dtos/ThemeCreateDto';
+import { ThemeCssUpdateDto } from '../dtos/ThemeCssUpdateDto';
 import { Response } from 'express';
 import { Public } from '../decorators/Public';
 import { AdminOnlyInterceptor } from '../interceptors/AdminOnlyInterceptor';
@@ -58,7 +60,7 @@ export class ThemeController {
 
   @Post('/api/v1/admin/themes')
   @UseInterceptors(AdminOnlyInterceptor)
-  async create(@Body() body: { name: string; description: string }) {
+  async create(@Body() body: ThemeCreateDto) {
     // Read the static CSS files to provide context to the LLM
     const colorsCss = this.readStaticCss('colors.css');
     const themeCss = this.readStaticCss('theme_default.css');
@@ -75,7 +77,7 @@ export class ThemeController {
 
   @Put('/api/v1/admin/themes/:id/css')
   @UseInterceptors(AdminOnlyInterceptor)
-  async updateCss(@Param('id') id: string, @Body() body: { css: string }) {
+  async updateCss(@Param('id') id: string, @Body() body: ThemeCssUpdateDto) {
     return await this.themeService.updateCss(Number(id), body.css);
   }
 

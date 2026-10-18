@@ -8,6 +8,7 @@
  */
 
 export * from './configureHttpApp';
+export * from './ValidateOnlyPipe';
 export * from './serveFrontend';
 export * from './swaggerEnabled';
 export * from './compressionMiddleware';

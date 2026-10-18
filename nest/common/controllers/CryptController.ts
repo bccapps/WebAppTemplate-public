@@ -8,6 +8,7 @@
  */
 
 import { BadRequestException, Body, Controller, Get, Post, UseInterceptors } from '@nestjs/common';
+import { DecryptPayloadDto } from '../dtos/DecryptPayloadDto';
 import { ApiTags } from '@nestjs/swagger';
 import { CryptSessionService } from '../services/CryptSessionService';
 import { CryptService } from '../services/CryptService';
@@ -46,7 +47,7 @@ export class CryptController {
 
   @Post('admin/decrypt')
   @UseInterceptors(AdminOnlyInterceptor)
-  decrypt(@Body() body: { payload: string; namespace?: string }) {
+  decrypt(@Body() body: DecryptPayloadDto) {
     if (!body?.payload || typeof body.payload !== 'string') {
       throw new BadRequestException('payload is required');
     }

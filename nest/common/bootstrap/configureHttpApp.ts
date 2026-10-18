@@ -12,6 +12,7 @@ import type { CorsOptions, CorsOptionsDelegate } from '@nestjs/common/interfaces
 import * as bodyParser from 'body-parser';
 import helmet from 'helmet';
 import { AppException } from '../exceptions/AppException';
+import { ValidateOnlyPipe } from './ValidateOnlyPipe';
 
 /** Options of {@link configureHttpApp}. Every field falls back to the environment, then to a safe default. */
 export interface HttpAppOptions {
@@ -67,6 +68,12 @@ export interface ValidationOptions {
   whitelist?: boolean;
   transform?: boolean;
   forbidNonWhitelisted?: boolean;
+  /**
+   * Validate only (`ValidateOnlyPipe`): class-validator DTOs are checked (400), the handler receives the request value
+   * unchanged; `whitelist`/`transform`/`forbidNonWhitelisted` are then ignored. For an app whose interceptors write
+   * `uid`/`user` into the body and whose DTOs are not all decorated. Default `false` (stock `ValidationPipe`).
+   */
+  validateOnly?: boolean;
 }
 
 export type HttpAppEnv = Record<string, string | undefined>;
@@ -226,6 +233,13 @@ function rawBodyMiddleware(paths: string[], limit: string) {
   };
 }
 
+/** The global pipe for resolved validation options: `ValidateOnlyPipe` in `validateOnly` mode, else the stock pipe. */
+export function createGlobalValidationPipe(options: ValidationOptions): ValidationPipe {
+  if (options.validateOnly) return new ValidateOnlyPipe();
+  const { validateOnly: _validateOnly, ...pipeOptions } = options;
+  return new ValidationPipe(pipeOptions);
+}
+
 /**
  * Applies the shared HTTP hardening to a Nest application: proxy trust, security headers, CORS,
  * body limits with raw-body capture, and the global validation pipe (`validation: false` skips it).
@@ -254,6 +268,6 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions 
   app.use(rawBodyMiddleware(resolved.rawBodyPaths, resolved.rawBodyLimit));
   app.use(bodyParser.json({ limit: resolved.jsonLimit }));
   app.use(bodyParser.urlencoded({ limit: resolved.jsonLimit, extended: true }));
-  if (resolved.validation) app.useGlobalPipes(new ValidationPipe(resolved.validation));
+  if (resolved.validation) app.useGlobalPipes(createGlobalValidationPipe(resolved.validation));
   return resolved;
 }

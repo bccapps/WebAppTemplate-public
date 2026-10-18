@@ -8,6 +8,7 @@
  */
 
 import { Body, Controller, Post, UseInterceptors } from '@nestjs/common';
+import { TestEmailDto } from '../dtos/TestEmailDto';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { EmailService, SendEmailResult } from '../services/EmailService';
 import { AdminOnlyInterceptor } from '../interceptors/AdminOnlyInterceptor';
@@ -20,7 +21,7 @@ export class EmailController {
 
   @ApiOkResponse({ description: 'Send a test email to verify configuration' })
   @Post('/api/v1/admin/email/test')
-  async sendTestEmail(@Body() body: { to: string }): Promise<SendEmailResult> {
+  async sendTestEmail(@Body() body: TestEmailDto): Promise<SendEmailResult> {
     return this.emailService.sendTestEmail(body.to);
   }
 }

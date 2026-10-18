@@ -7,11 +7,18 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { BugReportDto } from '../dtos/BugReportDto';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { EmailService } from '../services/EmailService';
 import { ModuleConfigService } from '../services/ModuleConfigService';
 import { FunctionalException } from '../exceptions/FunctionalException';
+
+/** The report fields are user input embedded in an HTML email: escaped so they cannot inject markup or links. */
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 @ApiTags('bug-report')
 @Controller()
@@ -24,8 +31,10 @@ export class BugReportController {
   @ApiOkResponse({ description: 'Send a bug report email' })
   @Post('/api/v1/common/bug-report')
   async sendBugReport(
-    @Body() body: { subject: string; description: string; email: string; uid?: number },
+    @Body() body: BugReportDto,
+    @Req() request: Request,
   ): Promise<{ success: boolean }> {
+    const uid = (request as Request & { user?: { id?: number } }).user?.id;
     const recipientEmail = String(
       this.moduleConfigService.getDecryptedValue('common_bugReport_recipientEmail') ?? '',
     );
@@ -41,19 +50,19 @@ export class BugReportController {
         <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
           <tr>
             <td style="padding: 6px 12px; font-weight: bold; vertical-align: top; width: 120px;">From</td>
-            <td style="padding: 6px 12px;">${body.email}</td>
+            <td style="padding: 6px 12px;">${escapeHtml(body.email)}</td>
           </tr>
           <tr>
             <td style="padding: 6px 12px; font-weight: bold; vertical-align: top;">User ID</td>
-            <td style="padding: 6px 12px;">${body.uid ?? 'N/A'}</td>
+            <td style="padding: 6px 12px;">${uid ?? 'N/A'}</td>
           </tr>
           <tr>
             <td style="padding: 6px 12px; font-weight: bold; vertical-align: top;">Subject</td>
-            <td style="padding: 6px 12px;">${body.subject}</td>
+            <td style="padding: 6px 12px;">${escapeHtml(body.subject)}</td>
           </tr>
         </table>
         <div style="background: #f5f5f5; border-radius: 8px; padding: 16px; margin-top: 12px;">
-          <p style="margin: 0; white-space: pre-wrap;">${body.description}</p>
+          <p style="margin: 0; white-space: pre-wrap;">${escapeHtml(body.description)}</p>
         </div>
       </div>
     `;

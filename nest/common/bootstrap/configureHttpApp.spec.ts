@@ -158,6 +158,15 @@ describe('configureHttpApp', () => {
     await app.close();
   });
 
+  it('validateOnly: rejects an invalid body but hands the handler the request body untouched', async () => {
+    const app = await createApp({ clientOrigins: 'https://a.io', validation: { validateOnly: true } });
+    const ok = await request(app.getHttpServer()).post('/plain').send({ name: 'x', extra: 1 });
+    expect(ok.body.body).toEqual({ name: 'x', extra: 1 });
+    const bad = await request(app.getHttpServer()).post('/plain').send({ name: 5 });
+    expect(bad.status).toBe(400);
+    await app.close();
+  });
+
   it('merges partial validation options over the defaults', async () => {
     const app = await createApp({ clientOrigins: 'https://a.io', validation: { forbidNonWhitelisted: true } });
     const res = await request(app.getHttpServer()).post('/plain').send({ name: 'x', extra: 1 });

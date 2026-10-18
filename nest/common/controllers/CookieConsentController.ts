@@ -8,11 +8,11 @@
  */
 
 import { Body, Controller, Post, Req } from '@nestjs/common';
+import { CookieConsentLogDto } from '../dtos/CookieConsentLogDto';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { Public } from '../decorators/Public';
 import { CookieConsentService } from '../services/CookieConsentService';
-import { CookieConsentCategories } from '../entities/CookieConsentEntity';
 
 @ApiTags('cookie-consent')
 @Controller()
@@ -27,12 +27,12 @@ export class CookieConsentController {
   @ApiOkResponse({ description: 'Log a cookie-consent choice (anonymous, proof-of-consent record)' })
   @Public()
   @Post('/api/v1/cookie-consent')
-  async log(@Body() body: { categories: CookieConsentCategories }, @Req() request: Request): Promise<{ success: true }> {
+  async log(@Body() body: CookieConsentLogDto, @Req() request: Request): Promise<{ success: true }> {
     const ip = request.ip || request.headers['x-forwarded-for']?.toString().split(',')[0] || null;
     await this.cookieConsentService.log({
       ip,
       userAgent: request.headers['user-agent']?.toString() ?? null,
-      categories: body.categories,
+      categories: { necessary: true, audienceMeasurement: body.categories.audienceMeasurement },
     });
     return { success: true };
   }
