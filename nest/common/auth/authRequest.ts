@@ -7,10 +7,10 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { FunctionalException } from '../exceptions/FunctionalException';
 import { SecurityException } from '../exceptions/SecurityException';
 import type { AuthPort } from './AuthPort';
 import type { AuthPrincipal } from './AuthPrincipal';
+import { applyUserIdentity, identityTargets } from './requestIdentity';
 
 /** Minimal shape of the HTTP request touched by the auth interceptors. */
 export interface AuthRequest {
@@ -36,24 +36,21 @@ export function unrecognizedTokenError(token: string): SecurityException {
   );
 }
 
-/** Ensures body/params/query exist so the principal can be mirrored into them. */
+/**
+ * Ensures body/params/query exist (and that `query` is an own, mutable object — Express 5
+ * re-parses it on every access, see `requestIdentity.ownQuery`) so the principal can be mirrored
+ * into them.
+ */
 export function ensureRequestMembers(req: AuthRequest): void {
-  if (!req.body && !req.params && !req.query) {
-    throw new FunctionalException('AUT', 'All request members are undefined');
-  }
-  if (req.query == null) req.query = {};
-  if (req.params == null) req.params = {};
-  if (req.body == null) req.body = {};
+  identityTargets(req);
 }
 
-/** Sets `req.user` and mirrors it as `uid`/`user` in body, params and query. */
+/**
+ * Sets `req.user` and mirrors it as `uid`/`user` in body, params and query. Client-supplied
+ * `uid`/`user` are overwritten in every member, including the Express 5 `query` getter.
+ */
 export function applyPrincipal(req: AuthRequest, principal: AuthPrincipal): void {
-  ensureRequestMembers(req);
-  for (const target of [req.body, req.params, req.query]) {
-    (target as Record<string, unknown>)['uid'] = principal.id;
-    (target as Record<string, unknown>)['user'] = principal;
-  }
-  req.user = principal;
+  applyUserIdentity(req, principal);
 }
 
 /** Outcome of resolving a token: the principal, or the error the port threw. Never both. */

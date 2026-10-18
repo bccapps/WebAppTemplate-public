@@ -27,6 +27,7 @@ import {
   unrecognizedTokenError,
   type AuthRequest,
 } from './authRequest';
+import { resetRequestIdentity } from './requestIdentity';
 import type { LocalTrustRequest } from './localTrust';
 
 /**
@@ -45,13 +46,18 @@ export class GlobalAuthInterceptor implements NestInterceptor {
     context: ExecutionContext,
     handler: CallHandler,
   ): Promise<Observable<unknown>> {
+    const req = context.switchToHttp().getRequest<AuthRequest>();
+    // First, before any early return: a client-supplied `user`/`uid` (body, query, params) never
+    // survives — public controllers read `body.user` for entitlements, and Express 5's `query`
+    // getter used to keep the client's `uid` whatever the interceptor wrote.
+    resetRequestIdentity(req);
+
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
     if (isPublic) return handler.handle();
 
-    const req = context.switchToHttp().getRequest<AuthRequest>();
     if (req.user) return handler.handle();
 
     const token = extractBearerToken(req);
