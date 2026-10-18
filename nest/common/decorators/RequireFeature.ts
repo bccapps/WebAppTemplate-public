@@ -14,5 +14,7 @@ export const REQUIRE_FEATURE_KEY = 'requireFeature'
 /**
  * Marks a controller or route as requiring a Feature Access Control gate
  * (see CLAUDE.md §4b). Must be combined with `@UseInterceptors(FeatureGuard)`.
+ * A list means ANY of these features (e.g. a page the front opens with
+ * `hasFeature('a') || hasFeature('b')`).
  */
-export const RequireFeature = (featureName: string) => SetMetadata(REQUIRE_FEATURE_KEY, featureName)
+export const RequireFeature = (featureName: string | readonly string[]) => SetMetadata(REQUIRE_FEATURE_KEY, featureName)

@@ -9,6 +9,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { RedisService } from '../services/RedisService';
 import { EventFeedPage, FeedEvent } from './eventFeed';
+import { remoteApiAuthHeaders } from '../utils/remoteApiAuth';
 
 const PAGE_SIZE = 200;
 const MAX_PAGES_PER_POLL = 5;
@@ -25,7 +26,7 @@ export interface EventFeedPollOptions<P> {
 
 /**
  * Consumer side of a pull-based event feed (see eventFeed.ts): reads the events after its cursor,
- * authenticated with the server-side TECH_TOKEN, and hands them over in order. A new consumer (no
+ * authenticated server-side with `remoteApiAuthHeaders()` (scoped `REMOTE_API_KEY`, legacy `TECH_TOKEN` fallback), and hands them over in order. A new consumer (no
  * cursor) starts at the feed's latest id — no replay of the history. The cursor lives in Redis so
  * it is shared by instances and survives restarts; without Redis it is kept in memory. Callers are
  * expected to run it from a single instance (worker + lock). Never throws.
@@ -66,9 +67,8 @@ export class RemoteEventFeedPollerService {
 
   private async fetchPage<P>(url: string, afterId: number | null): Promise<EventFeedPage<P>> {
     const query = afterId === null ? '' : `?afterId=${afterId}&limit=${PAGE_SIZE}`;
-    const token = process.env.TECH_TOKEN;
     const response = await fetch(url + query, {
-      headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { Accept: 'application/json', ...remoteApiAuthHeaders() },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status} on ${url}`);
