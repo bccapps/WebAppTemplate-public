@@ -12,14 +12,7 @@
  * Add one entry per remote module listed in shared-modules.json once it needs
  * to be redirected to a different backend. Fallback when a key is missing is
  * DEFAULT_API_URL.
- *
- * Bearer tokens are optional per API — sourced from VITE_* env vars.
- * If not set, no Authorization header is added for that API.
- * Tokens are automatically registered with HttpService so that requests
- * to remote APIs use the correct bearer token instead of the user JWT.
  */
-
-import { httpService } from '@/modules_shared/common/core/http/HttpService';
 
 const DEFAULT_API_URL = import.meta.env.VITE_API_URL || '/api/v1';
 
@@ -27,15 +20,9 @@ const apiUrlMap: Record<string, string> = {
   default: DEFAULT_API_URL,
 };
 
-// Register API-specific tokens with HttpService
-const techToken = import.meta.env.VITE_TECH_TOKEN;
-if (techToken) {
-  for (const [apiName, url] of Object.entries(apiUrlMap)) {
-    if (apiName !== 'default' && url !== DEFAULT_API_URL) {
-      httpService.registerApiToken(url, techToken);
-    }
-  }
-}
+// No credential here: every VITE_* value is inlined into the PUBLIC bundle. A remote API that
+// needs a server-to-server token (TECH_TOKEN) is called through this app's back, never from
+// the browser.
 
 export const getApiBaseUrl = (apiName?: string): string => {
   const key = apiName ?? 'default';

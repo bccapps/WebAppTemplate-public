@@ -212,6 +212,18 @@ blocks of the template examples are kept only for the linked modules; `# @module
 `back/src/config/defaultConfig.ts`. Inconsistent answers are refused with a message (private module without private access,
 selling without accounts, a module that does not support the chosen database, unknown module...).
 
+### Front build — public env guard (`viteConfig.ts`)
+
+Every `VITE_*` value is inlined into the public bundle: never put a secret there (Prowl keys and `TECH_TOKEN` belong to
+`back/.env`; the template no longer ships `VITE_PROWL_API_KEY` / `VITE_TECH_TOKEN` nor registers a tech token in
+`front/src/config/configApis.ts`). `createViteConfig()` adds `envGuardPlugin()` (`vx-env-guard`, first plugin):
+- it rewrites `import.meta.env ? import.meta.env.X : void 0|undefined` (and `import.meta.env && import.meta.env.X`) to
+  `import.meta.env.X` — the guard of zustand's devtools middleware (pulled in by wagmi / Reown) made Vite inline the
+  WHOLE env object, every `VITE_*` value included, into the `vanilla-*.js` chunk;
+- at `generateBundle`, it **warns** (never fails: some apps ship legitimately public keys) when the value of a `VITE_*`
+  variable whose name matches `/TOKEN|SECRET|PASSWORD|PRIVATE/i` (8 characters or more) is found in an emitted file,
+  without printing the value.
+
 ### Front public files and PWA
 
 Every project gets `front/public/` (copied once, then project-owned): `robots.txt` (allow all), `_redirects` (SPA fallback

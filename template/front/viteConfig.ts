@@ -30,7 +30,7 @@
  *   VITE_REOWN_PROJECT_ID injected into import.meta.env
  */
 
-import { defineConfig, loadEnv, type PluginOption, type UserConfig } from 'vite'
+import { defineConfig, loadEnv, type Plugin, type PluginOption, type UserConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 import { libRoots } from './libRoots'
@@ -59,6 +59,65 @@ export interface ViteConfigOptions {
    * preprod build as production.
    */
   mode?: string
+}
+
+/**
+ * `import.meta.env ? import.meta.env.X : void 0` (zustand's devtools middleware, pulled in by
+ * wagmi/reown) — and the `&&` variant — make Vite inline the WHOLE env object (every VITE_*
+ * value, secrets included) into the chunk. Rewritten to `import.meta.env.X`, which Vite replaces
+ * by that single value.
+ */
+// The ternary must end the expression (next token `)` `;` `,` `}` `]` or EOL), so that
+// `c ? a : void 0 !== x` (= `c ? a : (void 0 !== x)`) is never rewritten.
+const ENV_GUARD_RE = /import\.meta\.env\s*\?\s*import\.meta\.env\.([A-Za-z_$][\w$]*)\s*:\s*(?:void 0|undefined)(?=\s*(?:[),;}\]]|$))/gm
+const ENV_AND_RE = /import\.meta\.env\s*&&\s*import\.meta\.env\.([A-Za-z_$][\w$]*)/g
+
+export function rewriteEnvGuards(code: string): string {
+  return code
+    .replace(ENV_GUARD_RE, (_m, key: string) => `(import.meta.env.${key})`)
+    .replace(ENV_AND_RE, (_m, key: string) => `import.meta.env.${key}`)
+}
+
+/** VITE_* names that look like credentials: their value must never reach the public bundle. */
+const SECRET_ENV_NAME_RE = /TOKEN|SECRET|PASSWORD|PRIVATE/i
+
+/** Names of secret-looking VITE_* variables whose value appears in `content`. */
+export function findLeakedEnvSecrets(env: Record<string, unknown>, content: string): string[] {
+  return Object.entries(env)
+    .filter(([name, value]) => name.startsWith('VITE_') && SECRET_ENV_NAME_RE.test(name)
+      && typeof value === 'string' && value.length >= 8 && content.includes(value))
+    .map(([name]) => name)
+}
+
+/**
+ * (a) rewrites the env-object guards above; (b) at bundle time, WARNS (never fails: some apps
+ * ship legitimately public keys) when the value of a secret-looking VITE_* variable is emitted.
+ * The value itself is never printed.
+ */
+export function envGuardPlugin(): Plugin {
+  let env: Record<string, unknown> = {}
+  return {
+    name: 'vx-env-guard',
+    enforce: 'pre',
+    configResolved(config) {
+      env = config.env ?? {}
+    },
+    transform(code) {
+      if (!code.includes('import.meta.env')) return null
+      if (!ENV_GUARD_RE.test(code) && !ENV_AND_RE.test(code)) return null
+      ENV_GUARD_RE.lastIndex = 0
+      ENV_AND_RE.lastIndex = 0
+      return { code: rewriteEnvGuards(code), map: null }
+    },
+    generateBundle(_options, bundle) {
+      for (const [fileName, output] of Object.entries(bundle)) {
+        const content = output.type === 'chunk' ? output.code : typeof output.source === 'string' ? output.source : ''
+        for (const name of findLeakedEnvSecrets(env, content)) {
+          this.warn(`${name} is inlined into the public bundle (${fileName}). VITE_* values are readable by every visitor: move this secret to the back.`)
+        }
+      }
+    },
+  }
 }
 
 export function createViteConfig(opts: ViteConfigOptions = {}): UserConfig {
@@ -113,7 +172,7 @@ export function createViteConfig(opts: ViteConfigOptions = {}): UserConfig {
     preview: {
       port,
     },
-    plugins: [react(), ...(opts.extraPlugins ?? [])],
+    plugins: [envGuardPlugin(), react(), ...(opts.extraPlugins ?? [])],
     build: {
       minify: 'esbuild',
       // Vendor chunks like the web3 stack are legitimately large; lift the warn

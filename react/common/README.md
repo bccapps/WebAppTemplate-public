@@ -282,11 +282,37 @@ ne les contient pas, par construction : pour vérifier une clé de module front,
 
 ---
 
+## `ProwlService` (navigateur) — clé fournie par l'appelant (2026-10-18)
+
+`prowlService.notify(event, description, { apiKey, application? })` : la clé n'est plus lue dans `VITE_PROWL_API_KEY`
+(toute variable `VITE_*` est inlinée dans le bundle public, donc lisible par tout visiteur). L'appelant fournit la clé —
+typiquement la clé Prowl personnelle de l'utilisateur connecté (`prowlid` de son profil). Les notifications de l'application
+elle-même passent par le back (`nest/common` `ProwlService`, clé dans `back/.env`). Aucun consommateur front recensé à cette date.
+
+**`VITE_TECH_TOKEN`** : `ConfigurationService.registerRemoteApiTokens()` enregistre encore cette valeur comme Bearer des
+modules distants (`api_url_<id>` en `https://`) — conservé car TradeKong en dépend, mais c'est un identifiant serveur à
+serveur exposé dans le bundle public ; le garde de build (`vx-env-guard`, voir le README du template) le signale.
+
 ## Modules distants — `isRemoteModule()` et `isAvailable()` (2026-09-23)
 
 `configurationService.isRemoteModule(moduleId)` : vrai quand `getApiUrl(moduleId)` pointe vers une API distante (valeur absolue de `api_url_<moduleId>`), pas vers le backend de l'app. Sert à passer un module en lecture seule quand ses écritures et son admin vivent dans l'app qui l'exécute (ex. `wallet-intelligence` servi par ChainTradingDataAPI).
 
 `AdminPage` / `AdminDashboard` : un fichier `Admin*.tsx` ou `Dashboard*.tsx` peut, en plus de son `default`, exporter `isAvailable(): boolean` — évalué au rendu ; `false` masque l'onglet. Ex. `market-intelligence/components/ui/AdminConfig.tsx` : `export const isAvailable = () => !configurationService.isRemoteModule('market-intelligence')`. Sans export, l'onglet est toujours affiché (comportement inchangé pour les autres apps).
+
+## Session applicative — `core/session/` (`appSession`)
+
+`appSession` (instance de `Session`) garde des valeurs par clé (`set`/`get`/`has`/`force`), les
+recopie dans `localStorage` (`session:<clé>`) et émet un événement par clé (`addEventListener(clé, cb)`,
+écouté par `useSessionKeys`).
+
+- `set(clé, valeur, { force? })` **n'émet pas** quand la valeur se sérialise exactement comme la
+  dernière écrite par `set()` pour cette clé (même profil ré-appliqué après un rafraîchissement, même
+  configuration…) : chaque abonné re-rendait/relançait pour rien. La comparaison porte sur le JSON
+  capturé au `set()` précédent, donc un objet modifié en place puis re-`set()` notifie toujours. Une
+  valeur que JSON ne décrit pas (instance de classe, `Map`, `Set`…) notifie toujours ; la première
+  écriture d'une clé aussi (y compris quand la valeur venait de `localStorage`).
+- Pour forcer la notification : `set(clé, valeur, { force: true })` ou `force(clé)`.
+- `adminTokenAuth`/`registerSessionAuth` émettent directement (`dispatchEvent`), non concernés.
 
 ## Authentification de session — `sessionAuth`, `AdminTokenGate`, `AppPlugin`
 
