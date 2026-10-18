@@ -796,16 +796,25 @@ endroits — décision de déploiement, hors périmètre de ce README.
 `NODE_ROLE` sépare les process en deux rôles (voir `ARCHITECTURE.md` §3 de l'app) :
 
 - **`worker`** (défaut) : exécute tout le travail de fond (schedulers, moteurs, workers de run, feeds).
-- **`api`** : sert l'HTTP uniquement ; `main.ts` supprime tous les jobs du `SchedulerRegistry` au
-  démarrage, et le travail de fond non-décorateur est gaté par `isWorker()`.
+- **`api`** : sert l'HTTP uniquement, à condition que l'application coupe son travail de fond sur ce rôle.
+  **Ni `startApp` ni `common` ne suppriment les jobs `@Cron` / `@Interval` / `@Timeout`** : une application
+  qui veut un `api` sans travail de fond le fait elle-même, soit en vidant le `SchedulerRegistry` dans
+  son `main.ts` (TradeKong le fait), soit par une garde dans chaque handler. Sans l'une des deux, les
+  jobs tournent dans les deux processus.
+
+`isWorker()` vaut aussi `true` quand `NODE_ROLE` n'est pas posé (processus unique : dev, bureau) : pour
+distinguer « worker d'un déploiement scindé » de « processus unique », lire `NODE_ROLE` explicitement.
 
 **Convention pour un nouveau travail de fond :**
 
-1. Travail piloté par `@Cron`/`@Interval`/`@Timeout` → rien à faire pour le gating API (les jobs
-   sont supprimés sur le rôle `api`). Le worker l'exécute.
+1. Travail piloté par `@Cron`/`@Interval`/`@Timeout` → gating explicite : soit `main.ts` vide le
+   `SchedulerRegistry` sur le rôle `api`, soit le handler commence par `if (this.instanceRole.isApi()) return;`.
 2. Travail dans `onModuleInit`/`onApplicationBootstrap`/`setInterval` brut (feeds, boucles) →
    injecter `InstanceRoleService` et `if (this.instanceRole.isApi()) return;`.
-3. **Tâche singleton (non idempotente)** → l'envelopper dans `CronLockService` même avec un seul
+3. Exception : quand des clients persistants (WebSocket) ne joignent que le processus `api` derrière le
+   répartiteur (AgentHub et ses runners), le travail qui dépend d'eux tourne au contraire dans `api` et le
+   worker reste inerte pour ce module (`NODE_ROLE=worker` explicite).
+4. **Tâche singleton (non idempotente)** → l'envelopper dans `CronLockService` même avec un seul
    worker : un rolling deploy fait coexister brièvement deux workers. Choix de la primitive :
    - poller réseau / `@Interval` → `runIfDue(key, intervalMs, fn)` (pas de transaction tenue) ;
    - job DB court → `runExclusive(key, fn)` ;
