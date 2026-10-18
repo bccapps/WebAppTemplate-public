@@ -9,7 +9,16 @@
 
 import { Injectable } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, createSecretKey, hkdfSync, randomBytes } from 'crypto';
-import { deflateSync, inflateSync } from 'zlib';
+import { promisify } from 'util';
+import { constants as zlibConstants, deflate, deflateSync, inflateSync } from 'zlib';
+
+const deflateAsync = promisify(deflate);
+/**
+ * zlib level for transport payloads. Level 1 (BEST_SPEED) costs ~9 ms instead of ~51 ms (level 6) on a
+ * 1.4 MB series payload for an output only ~5 % larger: the payload is encrypted right after, so the CPU
+ * spent on a denser stream is pure event-loop time. Any level decodes with the same inflate.
+ */
+const TRANSPORT_DEFLATE_OPTIONS = { level: zlibConstants.Z_BEST_SPEED };
 import {
   STORAGE_PAYLOAD_VERSION,
   TRANSPORT_PAYLOAD_VERSION,
@@ -126,21 +135,37 @@ export class CryptService {
     return (parsed?.v ?? null) as T;
   }
 
+  /**
+   * Synchronous variant, kept for callers that cannot await. Prefer {@link encryptForTransportAsync} on a
+   * request path: the deflate step then runs on the libuv thread pool instead of blocking the event loop.
+   */
   encryptForTransport<T>(value: T, sessionKey: Buffer, options?: EncryptForTransportOptions): string {
     this.ensureSessionKey(sessionKey);
     const json = Buffer.from(JSON.stringify({ v: value }), 'utf8');
-    const legacy = options?.legacy === true;
+    const compress = this.shouldDeflate(json, options);
+    // zlib format (RFC1950) — matches the browser's DecompressionStream('deflate'),
+    // NOT the raw RFC1951 stream ('deflate-raw'). See CryptService.spec.ts for the
+    // round-trip test that pins this down (a mismatch here breaks decryption silently).
+    const plaintext = compress ? deflateSync(json, TRANSPORT_DEFLATE_OPTIONS) : json;
+    return this.sealTransport(plaintext, compress, sessionKey, options?.legacy === true);
+  }
 
-    let plaintext = json;
-    let flag = TRANSPORT_PAYLOAD_FLAG_NONE;
-    if (!legacy && options?.deflate && json.byteLength >= (options.thresholdBytes ?? 0)) {
-      // zlib format (RFC1950) — matches the browser's DecompressionStream('deflate'),
-      // NOT the raw RFC1951 stream ('deflate-raw'). See CryptService.spec.ts for the
-      // round-trip test that pins this down (a mismatch here breaks decryption silently).
-      plaintext = deflateSync(json);
-      flag = TRANSPORT_PAYLOAD_FLAG_DEFLATE;
-    }
+  /** Same wire format as {@link encryptForTransport}; the deflate runs off the event loop (zlib thread pool). */
+  async encryptForTransportAsync<T>(value: T, sessionKey: Buffer, options?: EncryptForTransportOptions): Promise<string> {
+    this.ensureSessionKey(sessionKey);
+    const json = Buffer.from(JSON.stringify({ v: value }), 'utf8');
+    const compress = this.shouldDeflate(json, options);
+    const plaintext = compress ? await deflateAsync(json, TRANSPORT_DEFLATE_OPTIONS) : json;
+    return this.sealTransport(plaintext, compress, sessionKey, options?.legacy === true);
+  }
 
+  private shouldDeflate(json: Buffer, options?: EncryptForTransportOptions): boolean {
+    return options?.legacy !== true && options?.deflate === true && json.byteLength >= (options.thresholdBytes ?? 0);
+  }
+
+  /** AES-256-GCM + v1/v2 serialisation shared by both transport encrypt variants. */
+  private sealTransport(plaintext: Buffer, compressed: boolean, sessionKey: Buffer, legacy: boolean): string {
+    const flag = compressed ? TRANSPORT_PAYLOAD_FLAG_DEFLATE : TRANSPORT_PAYLOAD_FLAG_NONE;
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', this.toKeyObject(sessionKey), this.toBinaryLike(iv));
     const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);

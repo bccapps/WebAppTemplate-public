@@ -87,6 +87,7 @@ imports: [
 |----------|-----------|-------------|
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | main | Connexion par défaut (inchangé) |
 | `DB_SSLMODE` / `DB_SSLROOTCERT` / `DB_POOLSIZE` | main | SSL + pool |
+| `DB_STATEMENT_TIMEOUT_MS` / `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` | main (`DB__<NAME>__…` pour une nommée) | Postgres (tous moteurs) : `statement_timeout` (défaut **30 000**) et `idle_in_transaction_session_timeout` (défaut **60 000**), `0` = réglage serveur. Voir « Garde-fous de session » |
 | `DB_ENGINE` (`postgres`/`cloud`/`neon`/`supabase`/`sqlite`) | main (`DB__<NAME>__ENGINE` pour une nommée) | Moteur (défaut `postgres`) |
 | `DB_SCHEMA_MODE` (`sync` / `migrations` / `manual`) | main (`DB__<NAME>__SCHEMA_MODE` pour une nommée) | **Gestion du schéma** (voir « Schema management » ci-dessous) ; vide = défauts ci-dessous. `DB_SYNC` / `TYPEORM_SYNC` n'existent plus : les poser arrête le démarrage |
 | `DB_PATH` | main | SQLite : fichier de base (absolu, `:memory:`, ou relatif à `APP_DATA_DIR` si défini, sinon au dossier `back/`) |
@@ -209,6 +210,27 @@ semble à peine sollicité. Garder `DB_POOLSIZE` bas côté dev (2-3 : un seul d
 laisser la marge à l'environnement qui sert du vrai trafic. Le boot log `[DB] "<name>" pool:
 max=...` (émis pour tout moteur cloud) permet de vérifier la valeur effective sans requêter
 `pg_stat_activity`.
+
+### Garde-fous de session (`statement_timeout`, `idle_in_transaction_session_timeout`)
+
+Chaque connexion Postgres du pool (`postgres`, `cloud`, `neon`, `supabase`) part avec le
+paramètre de démarrage libpq `options=-c statement_timeout=… -c idle_in_transaction_session_timeout=…`
+(`postgresSessionOptions`, `databases.ts`) : une requête emballée est annulée au bout de 30 s, une
+session laissée *idle in transaction* (slot du pool tenu, `xmin` de VACUUM bloqué) est coupée au bout
+de 60 s. Jamais posé pour le CLI TypeORM (migrations : DDL longs légitimes). Points d'attention :
+
+- **Synchronisation au boot** (`DB_SCHEMA_MODE=sync`) : elle passe par le pool, donc sous ces
+  limites. Un index ajouté sur une grosse table doit être créé à la main avant le déploiement
+  (`CREATE INDEX CONCURRENTLY <même nom>`, voir « Gestion du schéma ») — sinon le boot échoue sur
+  le timeout.
+- **Jobs longs** : une requête unique de plus de 30 s (purge massive, agrégat analytique) doit être
+  découpée en lots, ou la connexion concernée réglée plus haut (`DB_STATEMENT_TIMEOUT_MS`). Une
+  transaction qui attend une E/S externe (HTTP, LLM) plus de 60 s est coupée : ne jamais attendre
+  le réseau dans une transaction. `CronLockService.runExclusive` ne tient plus de transaction.
+- **Poolers** : le paramètre `options` est transmis tel quel au démarrage de session ; vérifier
+  après déploiement (`SHOW statement_timeout`) qu'un pooler (Supavisor, PgBouncer) le relaie — un
+  PgBouncer qui le refuse (`unsupported startup parameter`) impose `0` et un réglage par rôle
+  (`ALTER ROLE … SET statement_timeout`).
 
 ## Gestion du schéma (Schema management)
 

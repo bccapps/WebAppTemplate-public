@@ -105,3 +105,34 @@ describe('CryptService — transport (compress-then-encrypt, PERFORMANCE_PLAN.md
     expect(JSON.parse(inflated.toString('utf8'))).toEqual({ v: bigValue });
   });
 });
+
+describe('CryptService — async transport encryption', () => {
+  let service: CryptService;
+  let sessionKey: Buffer;
+  const bigValue = { series: Array.from({ length: 2000 }, (_, i) => ({ t: 1_700_000_000 + i * 86_400, v: Math.sin(i) })) };
+
+  beforeEach(() => {
+    process.env.CRYPT_DB_MASTER_KEY = randomBytes(32).toString('base64');
+    delete process.env.CRYPT_DB_DERIVATION_SALT;
+    service = new CryptService();
+    sessionKey = randomBytes(32);
+  });
+
+  it('emits the same v2 wire format as the sync variant, decodable by decryptFromTransport', async () => {
+    const payload = await service.encryptForTransportAsync(bigValue, sessionKey, { deflate: true, thresholdBytes: 0 });
+    const segments = payload.split(TRANSPORT_PAYLOAD_SEPARATOR);
+    expect(segments).toHaveLength(5);
+    expect(segments[0]).toBe(TRANSPORT_PAYLOAD_VERSION);
+    expect(segments[1]).toBe(TRANSPORT_PAYLOAD_FLAG_DEFLATE);
+    expect(service.decryptFromTransport(payload, sessionKey)).toEqual(bigValue);
+  });
+
+  it('honours legacy and the threshold like the sync variant', async () => {
+    const legacy = await service.encryptForTransportAsync(bigValue, sessionKey, { legacy: true, deflate: true });
+    expect(legacy.split(TRANSPORT_PAYLOAD_SEPARATOR)).toHaveLength(4);
+    expect(legacy.split(TRANSPORT_PAYLOAD_SEPARATOR)[0]).toBe(TRANSPORT_PAYLOAD_VERSION_LEGACY);
+    const small = await service.encryptForTransportAsync({ ok: true }, sessionKey, { deflate: true, thresholdBytes: 1024 });
+    expect(small.split(TRANSPORT_PAYLOAD_SEPARATOR)[1]).toBe(TRANSPORT_PAYLOAD_FLAG_NONE);
+    expect(service.decryptFromTransport(legacy, sessionKey)).toEqual(bigValue);
+  });
+});

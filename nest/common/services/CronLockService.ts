@@ -7,9 +7,26 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import { randomUUID } from 'node:crypto';
+import { hostname } from 'node:os';
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { isSqliteDataSource, portableQuery } from '../utils/dbEngine';
+
+/**
+ * Default lifetime of a `runExclusive` lease (env `CRON_LEASE_TTL_MS`). The lease is renewed every
+ * third of it while the callback runs, so a job may last longer than this; the value only bounds
+ * how long a job stays blocked after the process holding it died without releasing it.
+ */
+const DEFAULT_LEASE_TTL_MS = 10 * 60_000;
+/** Floor of a lease TTL (and of the renewal period derived from it). */
+const MIN_LEASE_TTL_MS = 3_000;
+
+/** Options of {@link CronLockService.runExclusive}. */
+export interface RunExclusiveOptions {
+  /** Lease lifetime for this job (ms); default `CRON_LEASE_TTL_MS` or 10 min. Renewed while the job runs. */
+  leaseTtlMs?: number;
+}
 
 /**
  * A cron fires at a fixed wall-clock time but `last_run_at` is stamped when the previous run was claimed, a few
@@ -28,18 +45,24 @@ function toDate(value: Date | string): Date {
 }
 
 /**
- * Distributed cron lock using Postgres advisory locks.
+ * Distributed cron lock.
+ *
+ * `runExclusive` takes a LEASE row in `cron_lease` (`lease_key`, `holder`, `expires_at`) with two short
+ * autocommitted statements, runs the callback WITHOUT holding any connection, renews the lease every third of
+ * its TTL while the callback runs, and deletes it at the end. (It used to hold a pooled connection idle in a
+ * transaction for the whole job, around `pg_try_advisory_xact_lock`: one pool slot per running job, and an open
+ * transaction pinning VACUUM's xmin.) A process that dies mid-job leaves its lease until `expires_at`: the job
+ * is then skipped by the other instances for at most one TTL.
+ * `runIfDue` keeps a transaction-scoped advisory lock, but only around its claim (milliseconds), never around
+ * the callback.
  *
  * On SQLite (desktop / single-instance deployments, see `database/README.md`) there is no other backend to
- * exclude: the advisory lock is replaced by a non-blocking in-process lock (a set of held keys), and the
+ * exclude: the lease is replaced by a non-blocking in-process lock (a set of held keys), and the
  * `polling_lock` table keeps persisting the cooldowns across restarts. SQLite must therefore never be shared
  * by several application instances.
  *
  * When multiple backends share the same database, only ONE instance
  * will execute a given cron job per cycle. Others skip silently.
- *
- * Uses pg_try_advisory_xact_lock (transaction-scoped) so the lock
- * is automatically released even if the callback throws.
  *
  * Usage in a cron service:
  *   constructor(private readonly cronLock: CronLockService) {}
@@ -57,8 +80,11 @@ export class CronLockService implements OnApplicationBootstrap {
 
   constructor(private readonly dataSource: DataSource) {}
 
-  /** Keys currently held by this process (SQLite only; Postgres uses advisory locks). */
+  /** Keys currently held by this process: the whole lock on SQLite, the same-process guard on Postgres. */
   private readonly heldKeys = new Set<string>();
+  /** Identifies this process as a lease holder (unique per process start). */
+  private readonly holderId = `${hostname()}:${process.pid}:${randomUUID()}`.slice(0, 255);
+  private leaseTableReady: Promise<void> | null = null;
 
   private get sqlite(): boolean {
     return isSqliteDataSource(this.dataSource);
@@ -80,6 +106,32 @@ export class CronLockService implements OnApplicationBootstrap {
         last_run_at TIMESTAMPTZ  NOT NULL DEFAULT TO_TIMESTAMP(0)
       )
     `);
+    await this.ensureLeaseTable();
+  }
+
+  /** Created like `polling_lock` (raw DDL, whatever `DB_SCHEMA_MODE`), once per process, also lazily. */
+  private ensureLeaseTable(): Promise<void> {
+    if (!this.leaseTableReady) {
+      this.leaseTableReady = this.dataSource
+        .query(`
+          CREATE TABLE IF NOT EXISTS cron_lease (
+            lease_key  VARCHAR(255) PRIMARY KEY,
+            holder     VARCHAR(255) NOT NULL,
+            expires_at TIMESTAMPTZ  NOT NULL
+          )
+        `)
+        .then(() => undefined)
+        .catch((error: unknown) => {
+          this.leaseTableReady = null;
+          throw error;
+        });
+    }
+    return this.leaseTableReady;
+  }
+
+  private defaultLeaseTtlMs(): number {
+    const raw = Number(process.env.CRON_LEASE_TTL_MS);
+    return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_LEASE_TTL_MS;
   }
 
   /**
@@ -94,34 +146,90 @@ export class CronLockService implements OnApplicationBootstrap {
   }
 
   /**
-   * Try to acquire an advisory lock and run the callback exclusively.
-   * Returns true if the lock was acquired and the callback ran, false if skipped.
+   * Try to take the `key` lease and run the callback exclusively (across instances AND within this process).
+   * Returns true if the lease was acquired and the callback ran, false if skipped (or if the callback threw —
+   * the error is logged, never rethrown). No database connection is held while the callback runs.
    */
-  async runExclusive(key: string, callback: () => Promise<void>): Promise<boolean> {
+  async runExclusive(key: string, callback: () => Promise<void>, options: RunExclusiveOptions = {}): Promise<boolean> {
     if (this.sqlite) return this.runExclusiveInProcess(key, callback);
-    const lockId = this.hashKey(key);
-    const runner = this.dataSource.createQueryRunner();
-    await runner.connect();
-    await runner.startTransaction();
+    if (this.heldKeys.has(key)) return false;
+    const ttlMs = Math.max(MIN_LEASE_TTL_MS, options.leaseTtlMs ?? this.defaultLeaseTtlMs());
+    this.heldKeys.add(key);
     try {
-      const [{ locked }] = await runner.query(
-        'SELECT pg_try_advisory_xact_lock($1) AS locked',
-        [lockId],
-      );
-      if (!locked) {
-        await runner.commitTransaction();
+      let acquired: boolean;
+      try {
+        acquired = await this.acquireLease(key, ttlMs);
+      } catch (error) {
+        this.logger.error(`CronLock.runExclusive "${key}": lease acquisition failed: ${(error as Error).message}`);
         return false;
       }
+      if (!acquired) return false;
+      return await this.runUnderLease(key, ttlMs, callback);
+    } finally {
+      this.heldKeys.delete(key);
+    }
+  }
+
+  /** Runs the callback while renewing the lease, then releases it whatever happened. */
+  private async runUnderLease(key: string, ttlMs: number, callback: () => Promise<void>): Promise<boolean> {
+    const heartbeat = setInterval(() => {
+      this.renewLease(key, ttlMs).catch((error: unknown) =>
+        this.logger.warn(`CronLock lease "${key}" renewal failed: ${(error as Error).message}`));
+    }, Math.max(MIN_LEASE_TTL_MS / 3, Math.floor(ttlMs / 3)));
+    heartbeat.unref?.();
+    try {
       await callback();
-      await runner.commitTransaction();
       return true;
     } catch (error) {
-      await runner.rollbackTransaction();
       this.logger.error(`Cron job "${key}" failed: ${(error as Error).message}`, (error as Error).stack);
       return false;
     } finally {
-      await runner.release();
+      clearInterval(heartbeat);
+      await this.releaseLease(key).catch((error: unknown) =>
+        this.logger.warn(`CronLock lease "${key}" release failed (expires on its own): ${(error as Error).message}`));
     }
+  }
+
+  /**
+   * Insert-if-absent, then a conditional UPDATE that only succeeds when the lease is free (expired) or already
+   * ours. Both statements are atomic on their own; two instances racing on an expired lease are serialised by
+   * the row lock of the UPDATE, and the loser re-evaluates the WHERE against the winner's row.
+   */
+  private async acquireLease(key: string, ttlMs: number): Promise<boolean> {
+    await this.ensureLeaseTable();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + ttlMs);
+    await this.dataSource.query(
+      `INSERT INTO cron_lease (lease_key, holder, expires_at) VALUES ($1, $2, $3)
+       ON CONFLICT (lease_key) DO NOTHING`,
+      [key, this.holderId, expiresAt],
+    );
+    // CTE read by a SELECT: a bare `UPDATE … RETURNING` makes TypeORM return `[rows, affectedCount]` (see claimWithAdvisoryLock).
+    const rows: { lease_key: string }[] = await this.dataSource.query(
+      `WITH claimed AS (
+         UPDATE cron_lease SET holder = $2, expires_at = $3
+          WHERE lease_key = $1 AND (expires_at < $4 OR holder = $2)
+          RETURNING lease_key
+       )
+       SELECT lease_key FROM claimed`,
+      [key, this.holderId, expiresAt, now],
+    );
+    return rows.length > 0;
+  }
+
+  private async renewLease(key: string, ttlMs: number): Promise<void> {
+    const rows: { lease_key: string }[] = await this.dataSource.query(
+      `WITH renewed AS (
+         UPDATE cron_lease SET expires_at = $3 WHERE lease_key = $1 AND holder = $2 RETURNING lease_key
+       )
+       SELECT lease_key FROM renewed`,
+      [key, this.holderId, new Date(Date.now() + ttlMs)],
+    );
+    if (rows.length === 0) this.logger.warn(`CronLock lease "${key}" was lost (expired and taken over) while the job was running.`);
+  }
+
+  private async releaseLease(key: string): Promise<void> {
+    await this.dataSource.query('DELETE FROM cron_lease WHERE lease_key = $1 AND holder = $2', [key, this.holderId]);
   }
 
   /** SQLite flavour of `runExclusive`: non-blocking in-process lock, no transaction around the callback. */

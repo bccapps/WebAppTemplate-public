@@ -164,6 +164,34 @@ function buildSqliteOptions(
   } as DataSourceOptions;
 }
 
+/** Server-side guard rails applied to every pooled Postgres session (ms; `0` = leave the server default). */
+const DEFAULT_STATEMENT_TIMEOUT_MS = 30_000;
+const DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MS = 60_000;
+
+function timeoutMs(get: EnvGetter, key: string, fallback: number): number {
+  const raw = get(key)?.trim();
+  if (raw === undefined || raw === '') return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+/**
+ * libpq `options` startup parameter carrying `statement_timeout` (`DB_STATEMENT_TIMEOUT_MS`, default 30 s)
+ * and `idle_in_transaction_session_timeout` (`DB_IDLE_IN_TRANSACTION_TIMEOUT_MS`, default 60 s): a runaway
+ * query is cancelled, and a session left idle inside an open transaction (it holds a pool slot and pins
+ * VACUUM's xmin) is terminated. `0` omits the setting. Never applied to the TypeORM CLI (migrations may
+ * legitimately run long DDL). `undefined` when nothing is set.
+ */
+export function postgresSessionOptions(get: EnvGetter, cli: boolean): string | undefined {
+  if (cli) return undefined;
+  const parts: string[] = [];
+  const statement = timeoutMs(get, 'STATEMENT_TIMEOUT_MS', DEFAULT_STATEMENT_TIMEOUT_MS);
+  const idleInTx = timeoutMs(get, 'IDLE_IN_TRANSACTION_TIMEOUT_MS', DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MS);
+  if (statement > 0) parts.push(`-c statement_timeout=${statement}`);
+  if (idleInTx > 0) parts.push(`-c idle_in_transaction_session_timeout=${idleInTx}`);
+  return parts.length ? parts.join(' ') : undefined;
+}
+
 /** Postgres options (selfhosted and cloud/neon/supabase variants). */
 function buildPostgresOptions(
   name: string,
@@ -237,13 +265,16 @@ function buildPostgresOptions(
       // instead of the pool detecting and replacing the dead client first.
       keepAlive: true,
       keepAliveInitialDelayMillis: 10_000,
-      options: engine === 'neon' ? '-c statement_timeout=30000' : undefined,
     };
     // Printed at boot so a pooler's "max clients reached" error (session mode: the limit is
     // on the pooler's TOTAL client budget, not just this instance) can be diagnosed from
     // deploy logs alone, without falling back to a live pg_stat_activity query.
     console.log(`[DB] "${name}" pool: max=${extra.max} (${engine}, ${port === 5432 ? 'session mode — counts against the project-wide pool_size' : 'transaction mode — no total-client cap'})`);
   }
+
+  // Every Postgres engine (self-hosted included): see `postgresSessionOptions`.
+  const sessionOptions = postgresSessionOptions(get, cli);
+  if (sessionOptions) extra = { ...extra, options: sessionOptions };
 
   const schema = resolveSchema(name, 'postgres', get, cli);
 

@@ -23,7 +23,10 @@ const ENV_KEYS = [
   'DB_SSLMODE', 'DB_POOLSIZE', 'DB_PATH', 'DB_SYNC', 'TYPEORM_SYNC', 'DB_MIGRATIONS_RUN',
   'DB_CONNECTIONS', 'DB_MODULE_ROUTING', 'DB__ARCHIVE__ENGINE', 'DB__ARCHIVE__PATH',
   'DB__ARCHIVE__HOST', 'NODE_ENV', 'APP_DATA_DIR', 'DB_SQLITE_MIGRATIONS', 'DB_BUSY_TIMEOUT_MS',
+  'DB_STATEMENT_TIMEOUT_MS', 'DB_IDLE_IN_TRANSACTION_TIMEOUT_MS', 'TYPEORM_CLI',
 ];
+
+const SESSION_OPTIONS = '-c statement_timeout=30000 -c idle_in_transaction_session_timeout=60000';
 
 describe('database options', () => {
   let saved: Record<string, string | undefined>;
@@ -69,7 +72,20 @@ describe('database options', () => {
         migrations: [join(backDir, 'src/migrations/*.{js,ts}')],
         synchronize: true,
         logging: ['error'],
+        extra: { options: SESSION_OPTIONS },
       });
+    });
+
+    it('applies statement/idle-in-transaction timeouts from the env, 0 disabling each, never for the CLI', () => {
+      process.env.DB_STATEMENT_TIMEOUT_MS = '120000';
+      process.env.DB_IDLE_IN_TRANSACTION_TIMEOUT_MS = '0';
+      const o = buildMainDataSourceOptions(ctx()) as unknown as { extra: Record<string, unknown> };
+      expect(o.extra.options).toBe('-c statement_timeout=120000');
+      process.env.DB_STATEMENT_TIMEOUT_MS = '0';
+      expect(buildMainDataSourceOptions(ctx())).not.toHaveProperty('extra');
+      delete process.env.DB_STATEMENT_TIMEOUT_MS;
+      delete process.env.DB_IDLE_IN_TRANSACTION_TIMEOUT_MS;
+      expect(buildMainDataSourceOptions(ctx(), { cli: true })).not.toHaveProperty('extra');
     });
 
     it('applies host, pool and SSL settings, without migrationsRun', () => {
@@ -82,7 +98,7 @@ describe('database options', () => {
         type: 'postgres', host: 'db', port: 5433, username: 'u', password: 'p',
         database: 'n', poolSize: 4,
         ssl: { rejectUnauthorized: true },
-        extra: { ssl: { rejectUnauthorized: true }, sslmode: 'require' },
+        extra: { ssl: { rejectUnauthorized: true }, sslmode: 'require', options: SESSION_OPTIONS },
       });
       expect(o).not.toHaveProperty('migrationsRun');
     });
@@ -90,7 +106,13 @@ describe('database options', () => {
     it('keeps the cloud pool tuning', () => {
       process.env.DB_ENGINE = 'neon';
       const o = buildMainDataSourceOptions(ctx()) as unknown as { extra: Record<string, unknown> };
-      expect(o.extra).toMatchObject({ max: 10, keepAlive: true, options: '-c statement_timeout=30000' });
+      expect(o.extra).toMatchObject({ max: 10, keepAlive: true, options: SESSION_OPTIONS });
+    });
+
+    it('applies the session timeouts to supabase too', () => {
+      process.env.DB_ENGINE = 'supabase';
+      const o = buildMainDataSourceOptions(ctx()) as unknown as { extra: Record<string, unknown> };
+      expect(o.extra).toMatchObject({ options: SESSION_OPTIONS });
     });
 
     it('honours DB_MIGRATIONS_RUN for postgres too', () => {

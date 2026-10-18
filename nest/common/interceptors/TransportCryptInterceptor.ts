@@ -16,7 +16,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { Request, Response } from 'express';
 import { from, Observable, of } from 'rxjs';
-import { map, switchMap } from 'rxjs/operators';
+import { concatMap, switchMap } from 'rxjs/operators';
 import {
   DEFAULT_TRANSPORT_DEFLATE_THRESHOLD_BYTES,
   TRANSPORT_ACCEPT_ENCODING_HEADER,
@@ -85,7 +85,8 @@ export class TransportCryptInterceptor implements NestInterceptor {
           return next.handle();
         }
         return next.handle().pipe(
-          map((body) => {
+          // concatMap (not mergeMap): one HTTP response = one emitted body, kept in order.
+          concatMap(async (body) => {
             if (response.writableEnded || response.headersSent) {
               return body;
             }
@@ -93,7 +94,8 @@ export class TransportCryptInterceptor implements NestInterceptor {
               this.configurationService.get('common_transport_deflate_threshold')
                 ?? DEFAULT_TRANSPORT_DEFLATE_THRESHOLD_BYTES,
             );
-            const encryptedPayload = this.cryptService.encryptForTransport(body, session.key, {
+            // Async: the deflate of a large series payload runs on the zlib thread pool, not the event loop.
+            const encryptedPayload = await this.cryptService.encryptForTransportAsync(body, session.key, {
               legacy: !supportsV2,
               deflate: acceptsDeflate,
               thresholdBytes,

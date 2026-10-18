@@ -76,7 +76,7 @@ describe('TransportCryptInterceptor — deflate negotiation (PERFORMANCE_PLAN.md
   beforeEach(() => {
     delete process.env.DISABLE_TRANSPORT_CRYPTO;
     cryptService = {
-      encryptForTransport: jest.fn<(...args: unknown[]) => unknown>().mockReturnValue('encrypted-payload'),
+      encryptForTransportAsync: jest.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue('encrypted-payload'),
     };
     cryptSessionService = {
       peekSession: jest
@@ -96,7 +96,7 @@ describe('TransportCryptInterceptor — deflate negotiation (PERFORMANCE_PLAN.md
     const { context, response } = buildContext({ [TRANSPORT_SESSION_HEADER]: 'sess-1' });
     await lastValueFrom(interceptor.intercept(context, handler));
 
-    expect(cryptService.encryptForTransport).toHaveBeenCalledWith(
+    expect(cryptService.encryptForTransportAsync).toHaveBeenCalledWith(
       body,
       sessionKey,
       expect.objectContaining({ legacy: true, deflate: false }),
@@ -111,7 +111,7 @@ describe('TransportCryptInterceptor — deflate negotiation (PERFORMANCE_PLAN.md
     });
     await lastValueFrom(interceptor.intercept(context, handler));
 
-    expect(cryptService.encryptForTransport).toHaveBeenCalledWith(
+    expect(cryptService.encryptForTransportAsync).toHaveBeenCalledWith(
       body,
       sessionKey,
       expect.objectContaining({ legacy: false, deflate: false }),
@@ -127,7 +127,7 @@ describe('TransportCryptInterceptor — deflate negotiation (PERFORMANCE_PLAN.md
     await lastValueFrom(interceptor.intercept(context, handler));
 
     expect(configurationService.get).toHaveBeenCalledWith('common_transport_deflate_threshold');
-    expect(cryptService.encryptForTransport).toHaveBeenCalledWith(
+    expect(cryptService.encryptForTransportAsync).toHaveBeenCalledWith(
       body,
       sessionKey,
       expect.objectContaining({ legacy: false, deflate: true, thresholdBytes: 2048 }),
@@ -142,7 +142,7 @@ describe('TransportCryptInterceptor — deflate negotiation (PERFORMANCE_PLAN.md
     });
     await lastValueFrom(interceptor.intercept(context, handler));
 
-    expect(cryptService.encryptForTransport).toHaveBeenCalledWith(
+    expect(cryptService.encryptForTransportAsync).toHaveBeenCalledWith(
       body,
       sessionKey,
       expect.objectContaining({ thresholdBytes: 1024 }),
@@ -153,7 +153,7 @@ describe('TransportCryptInterceptor — deflate negotiation (PERFORMANCE_PLAN.md
     const { context } = buildContext({});
     const result = await lastValueFrom(interceptor.intercept(context, handler));
     expect(result).toBe(body);
-    expect(cryptService.encryptForTransport).not.toHaveBeenCalled();
+    expect(cryptService.encryptForTransportAsync).not.toHaveBeenCalled();
   });
 
   describe('@NoTransportCrypt() exemption (PERFORMANCE_PLAN.md §2.0 — decision C)', () => {
@@ -166,7 +166,7 @@ describe('TransportCryptInterceptor — deflate negotiation (PERFORMANCE_PLAN.md
       const result = await lastValueFrom(interceptor.intercept(context, handler));
 
       expect(result).toBe(body);
-      expect(cryptService.encryptForTransport).not.toHaveBeenCalled();
+      expect(cryptService.encryptForTransportAsync).not.toHaveBeenCalled();
       expect(response.setHeader).not.toHaveBeenCalledWith(TRANSPORT_ENCRYPTED_HEADER, '1');
       // The exemption short-circuits before the session lookup — no Redis round-trip
       // for these routes (see interceptor comment on the `isExempt` branch).
@@ -182,7 +182,7 @@ describe('TransportCryptInterceptor — deflate negotiation (PERFORMANCE_PLAN.md
       const result = await lastValueFrom(interceptor.intercept(context, handler));
 
       expect(result).toEqual({ payload: 'encrypted-payload' });
-      expect(cryptService.encryptForTransport).toHaveBeenCalled();
+      expect(cryptService.encryptForTransportAsync).toHaveBeenCalled();
       expect(response.setHeader).toHaveBeenCalledWith(TRANSPORT_ENCRYPTED_HEADER, '1');
       expect(cryptSessionService.peekSession).toHaveBeenCalledWith('sess-1');
     });
