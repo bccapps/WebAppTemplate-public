@@ -26,7 +26,17 @@ const hasSqliteDriver = ((): boolean => {
 const describeWithSqlite = hasSqliteDriver ? describe : describe.skip;
 
 describe('dialect (Postgres)', () => {
-  const pg = dialect('main');
+  // Built per call with DB_ENGINE unset: `dialect('main')` follows the environment (DB_ENGINE=sqlite in a SQLite sandbox).
+  const postgresDialect = (): ReturnType<typeof dialect> => {
+    const previous = process.env.DB_ENGINE;
+    delete process.env.DB_ENGINE;
+    try {
+      return dialect('main');
+    } finally {
+      if (previous !== undefined) process.env.DB_ENGINE = previous;
+    }
+  };
+  const pg = postgresDialect();
   it('is Postgres by default and produces Postgres SQL', () => {
     const previous = process.env.DB_ENGINE;
     delete process.env.DB_ENGINE;

@@ -1624,12 +1624,11 @@ deploy_redis_host() {
   ensure_docker_context "${context_name}" "${ssh_target}" "${ssh_port}"
 
   # Remove any leftover container with a fixed container_name from a previous project name
-  for cname in "${COMPOSE_PROJECT_NAME}_redis"; do
-    if DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" inspect "${cname}" >/dev/null 2>&1; then
-      echo "==> [REDIS:${target_host}] Removing leftover container: ${cname}"
-      DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" rm -f "${cname}" 2>/dev/null || true
-    fi
-  done
+  cname="${COMPOSE_PROJECT_NAME}_redis"
+  if DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" inspect "${cname}" >/dev/null 2>&1; then
+    echo "==> [REDIS:${target_host}] Removing leftover container: ${cname}"
+    DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" rm -f "${cname}" 2>/dev/null || true
+  fi
 
   echo "==> [REDIS:${target_host}] Deploying Redis service"
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
@@ -1748,12 +1747,11 @@ deploy_front_host() {
   fi
 
   # Also remove any leftover containers with fixed container_name (from previous deployments with different project names)
-  for cname in "${COMPOSE_PROJECT_NAME}_front"; do
-    if DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" inspect "${cname}" >/dev/null 2>&1; then
-      echo "==> [FRONT:${target_host}] Removing leftover container: ${cname}"
-      DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" rm -f "${cname}" 2>/dev/null || true
-    fi
-  done
+  cname="${COMPOSE_PROJECT_NAME}_front"
+  if DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" inspect "${cname}" >/dev/null 2>&1; then
+    echo "==> [FRONT:${target_host}] Removing leftover container: ${cname}"
+    DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" rm -f "${cname}" 2>/dev/null || true
+  fi
 
   echo "==> [FRONT:${target_host}] Deploying service"
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
