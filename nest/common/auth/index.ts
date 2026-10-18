@@ -18,3 +18,4 @@ export * from './RequireUserInterceptor';
 export * from './RequireAuthInterceptor';
 export * from './AdminSessionController';
 export * from './AuthCoreModule';
+export * from './ServiceKeyAuth';

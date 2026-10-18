@@ -15,6 +15,8 @@ import type { AuthPort } from './AuthPort';
 import type { AuthPrincipal } from './AuthPrincipal';
 import { resolveTokenOnce } from './authRequest';
 import { GlobalAuthInterceptor } from './GlobalAuthInterceptor';
+import { API_SCOPE_KEY } from '../decorators/ApiScope';
+import type { ServiceKeyAuthenticator, ServicePrincipal } from './ServiceKeyAuth';
 
 type Req = Record<string, any>;
 
@@ -133,6 +135,58 @@ describe('GlobalAuthInterceptor', () => {
       await resolveTokenOnce(port, req, 'tok');
       await expect(interceptor.intercept(ctx(req), handler)).rejects.toBe(failure);
       expect(port.resolveToken).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('service keys on @ApiScope routes', () => {
+    const service: ServicePrincipal = { kind: 'service', scope: 'tradingplatform:read', tenantId: 3, keyId: 9 };
+
+    function buildScoped(scope: string | undefined, outcome: ServicePrincipal | null | Error, withProvider = true) {
+      const port: AuthPort = { mode: 'users', resolveToken: jest.fn<AuthPort['resolveToken']>().mockResolvedValue(user) };
+      const reflector = { getAllAndOverride: jest.fn((key: string) => (key === API_SCOPE_KEY ? scope : false)) } as unknown as Reflector;
+      const authenticate = jest.fn<ServiceKeyAuthenticator['authenticate']>();
+      if (outcome instanceof Error) authenticate.mockRejectedValue(outcome);
+      else authenticate.mockResolvedValue(outcome);
+      const keys: ServiceKeyAuthenticator = { authenticate };
+      return { port, authenticate, interceptor: new GlobalAuthInterceptor(port, reflector, withProvider ? keys : undefined) };
+    }
+    const keyed = (): Req => ({ headers: { 'x-api-key': 'ctd_key' }, body: { user: { id: 1 } }, params: {}, query: {} });
+
+    it('admits a key with the route scope: service principal, no user, client identity scrubbed', async () => {
+      const { port, authenticate, interceptor } = buildScoped('tradingplatform:read', service);
+      const req = keyed();
+      await expect(interceptor.intercept(ctx(req), handler)).resolves.toBe('next');
+      expect(authenticate).toHaveBeenCalledWith(req, 'tradingplatform:read');
+      expect(req.servicePrincipal).toBe(service);
+      expect(req.user).toBeUndefined();
+      expect(req.body.user).toBeUndefined();
+      expect(port.resolveToken).not.toHaveBeenCalled();
+    });
+
+    it('propagates a refusal of the provider (bad key, missing scope)', async () => {
+      const refusal = new SecurityException('API_KEY', 'Invalid API key');
+      const { interceptor } = buildScoped('tradingplatform:read', refusal);
+      await expect(interceptor.intercept(ctx(keyed()), handler)).rejects.toBe(refusal);
+    });
+
+    it('falls back to the user token when the request carries no key', async () => {
+      const { port, interceptor } = buildScoped('tradingplatform:read', null);
+      const req = bearer('tok');
+      await interceptor.intercept(ctx(req), handler);
+      expect(port.resolveToken).toHaveBeenCalledWith('tok');
+      expect(req.user).toBe(user);
+      expect(req.servicePrincipal).toBeUndefined();
+    });
+
+    it('never consults the provider on a route without @ApiScope', async () => {
+      const { authenticate, interceptor } = buildScoped(undefined, service);
+      await expect(interceptor.intercept(ctx(keyed()), handler)).rejects.toThrow(new SecurityException('AUT', 'Unauthorized'));
+      expect(authenticate).not.toHaveBeenCalled();
+    });
+
+    it('keeps the user-only behaviour when no provider is linked', async () => {
+      const { interceptor } = buildScoped('tradingplatform:read', service, false);
+      await expect(interceptor.intercept(ctx(keyed()), handler)).rejects.toThrow(new SecurityException('AUT', 'Unauthorized'));
     });
   });
 });

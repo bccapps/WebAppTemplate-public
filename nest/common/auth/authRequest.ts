@@ -10,6 +10,7 @@
 import { SecurityException } from '../exceptions/SecurityException';
 import type { AuthPort } from './AuthPort';
 import type { AuthPrincipal } from './AuthPrincipal';
+import type { ServicePrincipal } from './ServiceKeyAuth';
 import { applyUserIdentity, identityTargets } from './requestIdentity';
 
 /** Minimal shape of the HTTP request touched by the auth interceptors. */
@@ -19,6 +20,8 @@ export interface AuthRequest {
   params?: Record<string, unknown> | null;
   query?: Record<string, unknown> | null;
   user?: AuthPrincipal;
+  /** Set by `GlobalAuthInterceptor` when a service key was admitted on an `@ApiScope` route (never with `user`). */
+  servicePrincipal?: ServicePrincipal;
 }
 
 /** Extracts the token from `Authorization: Bearer <token>`; null when absent. */
