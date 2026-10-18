@@ -27,6 +27,8 @@ export interface HealthResponse {
   timestamp: string;
   uptime: number;
   version: string;
+  /** Deployed revision (`DEPLOY_REVISION`, set by scripts/deploy-full.sh); null when the back was not deployed by it. */
+  revision: string | null;
   checks: Record<string, HealthContribution>;
 }
 
@@ -54,6 +56,7 @@ export class HealthController {
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       version: process.env.APP_VERSION ?? process.env.npm_package_version ?? 'unknown',
+      revision: process.env.DEPLOY_REVISION ?? null,
       checks,
     };
   }

@@ -32,8 +32,29 @@ describe('HealthController', () => {
     expect(res.body).toMatchObject({ status: 'ok', checks: {} });
     expect(typeof res.body.uptime).toBe('number');
     expect(typeof res.body.version).toBe('string');
+    expect(res.body).toHaveProperty('revision');
     expect(new Date(res.body.timestamp).getTime()).not.toBeNaN();
     await app.close();
+  });
+
+  it('reports DEPLOY_REVISION, or null when it is not set', async () => {
+    const saved = process.env.DEPLOY_REVISION;
+    try {
+      process.env.DEPLOY_REVISION = 'abc1234-dirty';
+      let app = await createApp();
+      let res = await request(app.getHttpServer()).get('/api/v1/health');
+      expect(res.body.revision).toBe('abc1234-dirty');
+      await app.close();
+
+      delete process.env.DEPLOY_REVISION;
+      app = await createApp();
+      res = await request(app.getHttpServer()).get('/api/v1/health');
+      expect(res.body.revision).toBeNull();
+      await app.close();
+    } finally {
+      if (saved === undefined) delete process.env.DEPLOY_REVISION;
+      else process.env.DEPLOY_REVISION = saved;
+    }
   });
 
   it('aggregates a single contributor under its key', async () => {

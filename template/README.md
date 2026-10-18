@@ -23,15 +23,38 @@ dev-only: never put dev-only secrets in `back/.env`, which is shipped to product
 
 ### Preprod
 ```bash
-./scripts/run.sh preprod          # Build & start containerised preprod
+./scripts/run.sh preprod          # Deploys through deploy-full.sh (back/.env.preprod + front/.env.preprod)
 ```
 Requires `back/.env.preprod`.
 
 ### Prod
 ```bash
-./scripts/run.sh prod             # Runs deploy-remote.sh
+./scripts/run.sh prod             # Deploys through deploy-full.sh (back/.env + front/.env)
 ```
 Requires `back/.env` (production).
+
+### Deploy options, versions and rollback
+
+`preprod` and `prod` run `update_common.sh` (library commit + push) first, then `deploy-full.sh`. Flags:
+
+| Flag | Effect |
+|---|---|
+| `--no-update-common` (or `SKIP_UPDATE_COMMON=1`) | Skip the library sync (used by Agent Hub's deploy button; never forwarded to `deploy-full.sh`) |
+| `--target=all\|back\|front` | What to deploy |
+| `--migrate` | Run DB migrations first (Postgres; refused for SQLite) |
+| `--no-auto-rollback` | On failure keep the failed state (exit 1, maintenance stays ON) instead of rolling back |
+
+Every deploy keeps the previous version on each host, so it can be undone:
+
+- **Revision**: `DEPLOY_REVISION` (env var, else `git rev-parse --short HEAD`, plus `-dirty` when the work tree has changes) is injected into the back env and returned as `revision` by `GET /api/v1/health` (`null` when the back was not deployed by the script).
+- **Images**: before building, `<image>:latest` is tagged `:previous` (back image `${PROJECT_NAME}_back`, front image `<compose project>-front`); the remote `.env` is copied to `.env.previous`; after a successful switch `REMOTE_APP_DIR/.deploy/current.json` (`revision`, `environment`, `date`, `dbBackup`) replaces `previous.json`.
+- **Database backup**, taken once the old back is stopped and before `up` (no writer): **SQLite** → a copy of the file in the volume, `/data/backups/<project>-pre-<revision>-<UTC time>.db` (last 5 kept); **self-hosted Postgres** → `./backups/<project>_pre-<revision>_<time>.sql.gz`, only with `--migrate` or `DB_SCHEMA_MODE=sync` (the dump is taken by the deploy, i.e. after `run.sh`'s migration step: use `./scripts/backup-db.sh` first for a pre-migration copy; no automatic restore, the restore command is printed); **cloud DB** (supabase, neon...) → warning only. A failed backup aborts the deploy (and rolls back).
+- **Automatic rollback** (default): when the new back is not healthy within 180 s, or any command fails after maintenance mode was enabled, every host switched in this run goes back (`previous` → `latest`, `.env.previous`, `up -d` without build, wait healthy, maintenance off). The SQLite backup of this run is restored too (the new back never served traffic). A front container that does not stay up rolls back the front hosts only (the healthy new back is kept, no data restore). Without a previous image (first deploy) there is nothing to roll back to.
+- **Manual rollback**: `./scripts/run.sh rollback <preprod|prod> [--restore-db] [--target=all|back|front]` swaps `latest` ↔ `previous`, `.env` ↔ `.env.previous` and `current.json` ↔ `previous.json` (running it twice rolls forward again), with maintenance on/off around the restart. It never syncs libraries, builds or updates submodules, and refuses (exit 1, nothing changed) when a host has no `:previous` image. `--restore-db` (SQLite only) first restores the backup recorded in the current `current.json` (writes made since that deploy are lost); with Postgres/cloud it only warns. The front on Cloudflare Pages is not handled (use the Cloudflare dashboard).
+
+Exit codes of a deploy: `0` ok · `3` failed, previous version restored · `4` failed, rollback failed or impossible (maintenance may still be ON) · `1` any other failure (before the switch, or `--no-auto-rollback`). `rollback`: `0` done, `1` refused/failed.
+
+Progress markers (`==> ` lines parsed by Agent Hub): `[BACK:<host>] Tagging current images as previous`, `[BACK:<host>] Backing up database`, `[BACK|FRONT:<host>] Rolling back to previous version` / `Rolled back to previous version` / `Rollback failed`, then `Deployment failed, previous version restored` (3), `Deployment failed, rollback failed` (4) or `Rollback completed`. The logic lives in `scripts/lib/deploy-versions.sh`; tests: `node --test scripts/deploy-versions.test.mjs` (stub executables, no host is contacted).
 
 ### Stop & Status
 ```bash

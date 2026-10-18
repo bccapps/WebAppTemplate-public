@@ -22,7 +22,19 @@ set -euo pipefail
 #   ./scripts/deploy-full.sh                Deploy back + front
 #   ./scripts/deploy-full.sh --target=back   Deploy back only
 #   ./scripts/deploy-full.sh --target=front  Deploy front only
+#   ./scripts/deploy-full.sh --no-auto-rollback   Do not roll back automatically when the new back is not healthy
+#                                            (default: roll back, exit 3 = restored, exit 4 = rollback failed)
+#   ./scripts/deploy-full.sh --migrate       Tell the script migrations ran (self-hosted Postgres: dump before `up`)
+#   ./scripts/deploy-full.sh --rollback [--restore-db] [--target=...]
+#                                            Swap back to the previous version (no build, no submodule update);
+#                                            normally launched through `./scripts/run.sh rollback <preprod|prod>`
 #   ./scripts/deploy-full.sh --help          Show this help
+#
+# Versioning (lib/deploy-versions.sh): each host keeps `<image>:previous` next to `:latest`, the remote
+# .env as .env.previous and .deploy/current.json|previous.json; DEPLOY_REVISION (env var, else git short sha
+# + -dirty) is injected into the back env and exposed by GET /api/v1/health. The database is backed up before
+# `up` (SQLite: /data/backups on the volume; self-hosted Postgres: ./backups dump, only with --migrate or
+# DB_SCHEMA_MODE=sync). Exit codes: 0 ok, 3 failed + previous version restored, 4 failed + rollback failed.
 #
 # Required env vars (in back/.env):
 #   PROJECT_NAME, REMOTE_USER, REMOTE_SSH_PORT, SSH_KEY_FILE,
@@ -50,10 +62,18 @@ fi
 # Parse --target flag
 DEPLOY_TARGET="${DEPLOY_TARGET:-all}"
 RUNNER_ROTATE_CLI=0
+ROLLBACK_MODE=0
+RESTORE_DB=0
+DV_MIGRATE=0
+DEPLOY_AUTO_ROLLBACK="${DEPLOY_AUTO_ROLLBACK:-1}"
 for arg in "$@"; do
   case "${arg}" in
     --target=*) DEPLOY_TARGET="${arg#*=}" ;;
     --rotate-runner) RUNNER_ROTATE_CLI=1 ;;
+    --rollback) ROLLBACK_MODE=1 ;;
+    --restore-db) RESTORE_DB=1 ;;
+    --no-auto-rollback) DEPLOY_AUTO_ROLLBACK=0 ;;
+    --migrate) DV_MIGRATE=1 ;;
   esac
 done
 if [[ "${DEPLOY_TARGET}" != "all" && "${DEPLOY_TARGET}" != "back" && "${DEPLOY_TARGET}" != "front" ]]; then
@@ -97,6 +117,9 @@ info()    { printf "${CYAN}==> %s${NC}\n" "$*"; }
 warn()    { printf "${YELLOW}==> %s${NC}\n" "$*"; }
 err()     { printf "${RED}==> %s${NC}\n" "$*" >&2; }
 success() { printf "${GREEN}==> %s${NC}\n" "$*"; }
+
+# Versioning, database backup and rollback (tag previous, state files, automatic/manual rollback).
+source "${SCRIPT_DIR}/lib/deploy-versions.sh"
 
 # ======================
 # CONFIGURATION
@@ -159,6 +182,14 @@ COMPOSE_FILE_PATH="${COMPOSE_FILE_NAME:-${DEFAULT_COMPOSE_FILE}}"
 COMPOSE_FILE_PATH="${COMPOSE_FILE_PATH#./}"
 assert_compose_matches_db_engine "${COMPOSE_FILE_PATH}"
 KEEP_BUILD_CONTEXT="${KEEP_BUILD_CONTEXT:-0}"
+
+# Revision of this deploy (DEPLOY_REVISION, else git short sha + -dirty): injected into the back env below and shown
+# by GET /api/v1/health, so a deploy can be verified (and a rollback recognised) from the outside.
+if [[ "${ROLLBACK_MODE}" != "1" ]]; then
+  DEPLOY_REVISION="$(dv_compute_revision)"
+  export DEPLOY_REVISION
+  echo "==> [LOCAL] Deploy revision: ${DEPLOY_REVISION}"
+fi
 
 # Base image for the back builder stage (NestJS CLI pre-installed).
 # Must match the FROM line in back/Dockerfile.selfhosted and back/Dockerfile.
@@ -667,9 +698,11 @@ if [[ "${DEPLOY_TARGET}" != "front" || "${IS_CLOUD_FRONT}" -eq 0 ]]; then
   require_cmd ssh
   require_cmd scp
 fi
-require_cmd rsync
 require_cmd python3
-require_cmd git
+if [[ "${ROLLBACK_MODE}" != "1" ]]; then
+  require_cmd rsync
+  require_cmd git
+fi
 
 # ======================
 # SHARED LIB SUBMODULES
@@ -683,6 +716,7 @@ require_cmd git
 
 __seen_submodule_tops=""
 for __side in back front; do
+  [[ "${ROLLBACK_MODE}" != "1" ]] || continue   # rollback never touches the working tree
   [[ -d "./${__side}" ]] || continue
   __top="$(git -C "./${__side}" rev-parse --show-toplevel 2>/dev/null)" || continue
   [[ -f "${__top}/.gitmodules" ]] || continue
@@ -1084,6 +1118,8 @@ DOCKEREOF
   return 0
 }
 
+# Rollback mode (--rollback) builds nothing: it stages its own minimal context (see run_manual_rollback).
+if [[ "${ROLLBACK_MODE}" != "1" ]]; then
 FRONT_PREBUILT=0
 BACK_PREBUILT=0
 echo "==> [LOCAL] Preparing build context"
@@ -1157,6 +1193,9 @@ done
 if [[ "${DEPLOY_TARGET}" != "front" ]]; then
   sync_file_into_context "${BACK_ENV_FILE}" "${BUILD_CONTEXT_DIR}/back/.env"
   stage_back_env_preprod "${BUILD_CONTEXT_DIR}/back/.env"
+  dv_env_set "${BUILD_CONTEXT_DIR}/back/.env" "DEPLOY_REVISION" "${DEPLOY_REVISION}"
+  # What is uploaded as the remote .env (and swapped by rollbacks): the staged env, before the per-host patches.
+  cp "${BUILD_CONTEXT_DIR}/back/.env" "${BUILD_CONTEXT_DIR}/.env.remote"
 fi
 if [[ "${DEPLOY_TARGET}" != "back" ]]; then
   sync_file_into_context "${FRONT_ENV_FILE}" "${BUILD_CONTEXT_DIR}/front/.env"
@@ -1189,6 +1228,7 @@ fi
 # but in the flat build context they sit next to docker-compose.yml as ./back and ./front
 sed -i.bak -e 's|\.\./back|./back|g' -e 's|\.\./front|./front|g' "${BUILD_CONTEXT_DIR}/docker-compose.yml"
 rm -f "${BUILD_CONTEXT_DIR}/docker-compose.yml.bak"
+fi  # end of the build/staging section (skipped by --rollback)
 
 NODE_PORT_DEFAULT=9741
 VITE_PORT_DEFAULT=3900
@@ -1285,6 +1325,84 @@ wait_for_back_healthy() {
   done
 }
 
+# Fills BACK_SERVICES_STOP (stopped before a switch) and BACK_SERVICES_UP (started by `up -d`) for a back host.
+# Redis is part of both when it is colocated on this host, so the stop/`up` of the other services never orphans it.
+compute_back_services() {
+  local target_host="$1"
+  BACK_SERVICES_STOP=("back" "back-worker")
+  BACK_SERVICES_UP=("back" "back-worker" "back-lb")
+  if [[ "${IS_SELF_HOSTED_DB}" -eq 1 ]]; then
+    BACK_SERVICES_STOP+=("db")
+    BACK_SERVICES_UP+=("db")
+  fi
+  if [[ -n "${REDIS_HOST_VALUE:-}" ]]; then
+    local redis_service_host
+    read -r _ redis_service_host <<<"$(parse_host_entry "${REDIS_HOST_VALUE}" "${BACK_REMOTE_USER}")"
+    if [[ "${target_host}" == "${redis_service_host}" ]]; then
+      BACK_SERVICES_STOP+=("redis")
+      BACK_SERVICES_UP+=("redis")
+    fi
+  fi
+  if [[ -n "${PROMETHEUS_REMOTE_WRITE_URLS:-}" ]]; then
+    BACK_SERVICES_STOP+=("vmagent")
+    BACK_SERVICES_UP+=("vmagent")
+  fi
+}
+
+# In-place `sed` that works with BSD (macOS) and GNU sed (the empty-suffix form of -i is BSD-only, the bare form GNU-only). The backup suffix
+# is distinct from `.env.bak`, which deploy_back_host keeps to restore the public env between hosts.
+portable_sed_inplace() {
+  local file="$1"; shift
+  sed -i.sedtmp "$@" "${file}" && rm -f "${file}.sedtmp"
+}
+
+# Patch a staged back env to use Docker-internal service names instead of public hostnames.
+# From inside Docker containers on Linux, connecting to the host's own public hostname
+# does not work reliably (hairpin NAT). We rewrite REDIS_URL / DB_HOST / DATABASE_URL
+# in back/.env (loaded into the back container via env_file) to use the compose service
+# names, which resolve via Docker's internal DNS, and always inject SERVER_IP so the backend can
+# identify its server for per-server run limits. The root .env (used for compose YAML
+# interpolation) is never touched: it must keep the public DB_PORT so the `'${DB_PORT}:5432'`
+# port mapping stays correct. Shared by deploys and rollbacks.
+patch_back_env_for_host() {
+  local env_file="$1" target_host="$2"
+
+  if [[ -n "${REDIS_HOST_VALUE:-}" ]]; then
+    local redis_clean_host
+    read -r _ redis_clean_host <<<"$(parse_host_entry "${REDIS_HOST_VALUE}" "${BACK_REMOTE_USER}")"
+    if [[ "${target_host}" == "${redis_clean_host}" ]]; then
+      # The password must be URL-encoded so ioredis parses the URL correctly.
+      local encoded_pw
+      encoded_pw=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "${REDIS_PASSWORD:-}")
+      local internal_redis_url="redis://:${encoded_pw}@redis:6379"
+      portable_sed_inplace "${env_file}" "s|^REDIS_URL=.*|REDIS_URL=${internal_redis_url}|"
+      echo "==> [BACK:${target_host}] Redis colocated — REDIS_URL patched to internal Docker hostname"
+    fi
+  fi
+
+  if [[ "${IS_SELF_HOSTED_DB}" -eq 1 ]]; then
+    local db_user_value db_name_value db_pass_value
+    db_user_value="$(extract_env_value "${BACK_ENV_FILE}" "DB_USER" || true)"
+    db_name_value="$(extract_env_value "${BACK_ENV_FILE}" "DB_NAME" || true)"
+    db_pass_value="$(extract_env_value "${BACK_ENV_FILE}" "DB_PASSWORD" || true)"
+    local encoded_db_pw
+    encoded_db_pw=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "${db_pass_value}")
+    local internal_db_url="postgresql://${db_user_value}:${encoded_db_pw}@db:5432/${db_name_value}"
+    portable_sed_inplace "${env_file}" \
+      -e "s|^DB_HOST=.*|DB_HOST=db|" \
+      -e "s|^DB_PORT=.*|DB_PORT=5432|" \
+      -e "s|^DATABASE_URL=.*|DATABASE_URL=\"${internal_db_url}\"|"
+    echo "==> [BACK:${target_host}] Self-hosted DB — DB_HOST/DB_PORT/DATABASE_URL patched to internal Docker hostname"
+  fi
+
+  if grep -q "^SERVER_IP=" "${env_file}"; then
+    portable_sed_inplace "${env_file}" "s|^SERVER_IP=.*|SERVER_IP=${target_host}|"
+  else
+    printf '\nSERVER_IP=%s' "${target_host}" >> "${env_file}"
+  fi
+  echo "==> [BACK:${target_host}] SERVER_IP set to ${target_host}"
+}
+
 deploy_back_host() {
   local entry="$1"
   read -r target_user target_host <<<"$(parse_host_entry "${entry}" "${BACK_REMOTE_USER}")"
@@ -1315,8 +1433,11 @@ deploy_back_host() {
   echo "==> [BACK:${target_host}] Preparing remote directory (${remote_dir})"
   ssh "${ssh_opts[@]}" "${ssh_target}" "mkdir -p '${remote_dir}'"
 
+  dv_use_host BACK "${target_host}" "${ssh_target}" "${ssh_port}" "${key_path}" "${context_name}" "${project_name}" "${remote_dir}"
+  dv_save_env_previous
+
   echo "==> [BACK:${target_host}] Uploading env file"
-  scp "${scp_opts[@]}" "${BACK_ENV_FILE}" "${ssh_target}:${remote_env_path}"
+  scp "${scp_opts[@]}" "${BUILD_CONTEXT_DIR}/.env.remote" "${ssh_target}:${remote_env_path}"
   ssh "${ssh_opts[@]}" "${ssh_target}" "chmod 600 '${remote_env_path}'" || true
 
   if [[ -f "scripts/vmagent.yml" ]]; then
@@ -1327,11 +1448,19 @@ deploy_back_host() {
   ensure_docker_context "${context_name}" "${ssh_target}" "${ssh_port}"
   ensure_back_base_image "${context_name}" "${docker_ssh_command}" "${target_host}"
 
+  # Keep the running version as `previous` BEFORE the build overwrites `latest` (rollback target).
+  dv_tag_previous "$(dv_back_image)"
+
   echo "==> [BACK:${target_host}] Building service"
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
     --project-directory "${BUILD_CONTEXT_DIR}" \
     --project-name "${project_name}" \
     build ${NO_CACHE_FLAG} back back-worker
+
+  # From here on the host is "switched": any failure rolls every switched host back (see lib/deploy-versions.sh).
+  DV_SCOPE="all"
+  dv_register_switched
+  dv_arm
 
   enable_back_maintenance "${context_name}" "${docker_ssh_command}" "${target_host}"
 
@@ -1339,23 +1468,14 @@ deploy_back_host() {
   # whole point of enable_back_maintenance above is that back-lb stays up throughout). Mirrors
   # the same self-hosted-DB / colocated-Redis / metrics conditions as the `back_services` list
   # built below, just without the side-effecting env patches (not needed to decide what to stop).
-  local -a stop_services=("back" "back-worker")
-  if [[ "${IS_SELF_HOSTED_DB}" -eq 1 ]]; then
-    stop_services+=("db")
-  fi
-  if [[ -n "${REDIS_HOST_VALUE:-}" ]]; then
-    local stop_redis_host
-    read -r _ stop_redis_host <<<"$(parse_host_entry "${REDIS_HOST_VALUE}" "${BACK_REMOTE_USER}")"
-    [[ "${target_host}" == "${stop_redis_host}" ]] && stop_services+=("redis")
-  fi
-  [[ -n "${PROMETHEUS_REMOTE_WRITE_URLS:-}" ]] && stop_services+=("vmagent")
+  compute_back_services "${target_host}"
 
   echo "==> [BACK:${target_host}] Stopping existing services (back-lb kept alive for maintenance mode)"
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
     --project-directory "${BUILD_CONTEXT_DIR}" \
     --project-name "${project_name}" \
     --profile metrics \
-    rm -sf "${stop_services[@]}" 2>/dev/null || true
+    rm -sf "${BACK_SERVICES_STOP[@]}" 2>/dev/null || true
 
   # Remove containers with fixed container_name that may belong to a previous project name.
   # back_lb is deliberately NOT in this list — see enable_back_maintenance above. Neither is
@@ -1388,87 +1508,37 @@ deploy_back_host() {
     fi
   done < <(DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" ps -aq 2>/dev/null || true)
 
-  # Build the list of services to start.
-  # Include redis if it is colocated on this back host, so the --remove-orphans
-  # step above does not kill the redis container.
-  local -a back_services=("back" "back-worker" "back-lb")
-  if [[ "${IS_SELF_HOSTED_DB}" -eq 1 ]]; then
-    back_services+=("db")
+  # Database backup: the old back is stopped and nothing writes yet (maintenance + no new back), so the copy is consistent.
+  # A failed backup aborts (and rolls back): going on without the safety net the deploy promised is not acceptable.
+  if ! dv_backup_db "${DEPLOY_REVISION}"; then
+    err "[BACK:${target_host}] Database backup failed — aborting"
+    dv_abort_with_rollback
   fi
+  DV_SW_BACKUP[DV_IDX]="${DV_DB_BACKUP}"
+
   if [[ -n "${PROMETHEUS_REMOTE_WRITE_URLS:-}" ]]; then
-    back_services+=("vmagent")
     echo "==> [BACK:${target_host}] vmagent will push to: ${PROMETHEUS_REMOTE_WRITE_URLS}"
   fi
 
-  # Patch back/.env to use Docker-internal service names instead of public hostnames.
-  # From inside Docker containers on Linux, connecting to the host's own public hostname
-  # does not work reliably (hairpin NAT). We rewrite REDIS_URL / DB_HOST / DATABASE_URL
-  # in back/.env (loaded into the back container via env_file) to use the compose service
-  # names, which resolve via Docker's internal DNS.
-  #
-  # We do NOT touch the root .env (used for compose YAML interpolation) — it must keep
-  # the public DB_PORT so the `'${DB_PORT}:5432'` port mapping stays correct.
-  local env_patched=0
-
-  if [[ -n "${REDIS_HOST_VALUE:-}" ]]; then
-    local redis_clean_host
-    read -r _ redis_clean_host <<<"$(parse_host_entry "${REDIS_HOST_VALUE}" "${BACK_REMOTE_USER}")"
-    if [[ "${target_host}" == "${redis_clean_host}" ]]; then
-      back_services+=("redis")
-      # The password must be URL-encoded so ioredis parses the URL correctly.
-      local encoded_pw
-      encoded_pw=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "${REDIS_PASSWORD:-}")
-      local internal_redis_url="redis://:${encoded_pw}@redis:6379"
-      cp "${BUILD_CONTEXT_DIR}/back/.env" "${BUILD_CONTEXT_DIR}/back/.env.bak"
-      sed -i '' "s|^REDIS_URL=.*|REDIS_URL=${internal_redis_url}|" "${BUILD_CONTEXT_DIR}/back/.env"
-      echo "==> [BACK:${target_host}] Redis colocated — REDIS_URL patched to internal Docker hostname"
-      env_patched=1
-    fi
-  fi
-
-  if [[ "${IS_SELF_HOSTED_DB}" -eq 1 ]]; then
-    local db_user_value db_name_value db_pass_value
-    db_user_value="$(extract_env_value "${BACK_ENV_FILE}" "DB_USER" || true)"
-    db_name_value="$(extract_env_value "${BACK_ENV_FILE}" "DB_NAME" || true)"
-    db_pass_value="$(extract_env_value "${BACK_ENV_FILE}" "DB_PASSWORD" || true)"
-    local encoded_db_pw
-    encoded_db_pw=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "${db_pass_value}")
-    local internal_db_url="postgresql://${db_user_value}:${encoded_db_pw}@db:5432/${db_name_value}"
-    [[ ${env_patched} -eq 0 ]] && cp "${BUILD_CONTEXT_DIR}/back/.env" "${BUILD_CONTEXT_DIR}/back/.env.bak"
-    sed -i '' \
-      -e "s|^DB_HOST=.*|DB_HOST=db|" \
-      -e "s|^DB_PORT=.*|DB_PORT=5432|" \
-      -e "s|^DATABASE_URL=.*|DATABASE_URL=\"${internal_db_url}\"|" \
-      "${BUILD_CONTEXT_DIR}/back/.env"
-    echo "==> [BACK:${target_host}] Self-hosted DB — DB_HOST/DB_PORT/DATABASE_URL patched to internal Docker hostname"
-    env_patched=1
-  fi
-
-  # Always inject SERVER_IP so the backend can identify its server for per-server run limits.
-  [[ ${env_patched} -eq 0 ]] && cp "${BUILD_CONTEXT_DIR}/back/.env" "${BUILD_CONTEXT_DIR}/back/.env.bak"
-  if grep -q "^SERVER_IP=" "${BUILD_CONTEXT_DIR}/back/.env"; then
-    sed -i '' "s|^SERVER_IP=.*|SERVER_IP=${target_host}|" "${BUILD_CONTEXT_DIR}/back/.env"
-  else
-    printf '\nSERVER_IP=%s' "${target_host}" >> "${BUILD_CONTEXT_DIR}/back/.env"
-  fi
-  env_patched=1
-  echo "==> [BACK:${target_host}] SERVER_IP set to ${target_host}"
+  # Per-host env patches (internal service names, SERVER_IP) on the staged back/.env; the public env is restored after `up`
+  # so subsequent hosts start from it.
+  cp "${BUILD_CONTEXT_DIR}/back/.env" "${BUILD_CONTEXT_DIR}/back/.env.bak"
+  patch_back_env_for_host "${BUILD_CONTEXT_DIR}/back/.env" "${target_host}"
 
   echo "==> [BACK:${target_host}] Deploying service"
   VMAGENT_CONFIG_PATH="${remote_dir}/vmagent.yml" \
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
     --project-directory "${BUILD_CONTEXT_DIR}" \
     --project-name "${project_name}" \
-    up -d "${back_services[@]}"
+    up -d "${BACK_SERVICES_UP[@]}"
 
   # Restore original back/.env so subsequent host deployments (non-colocated) get the public values.
   # The root .env was never touched, so nothing to restore there.
-  if [[ "${env_patched}" -eq 1 ]]; then
-    mv "${BUILD_CONTEXT_DIR}/back/.env.bak" "${BUILD_CONTEXT_DIR}/back/.env"
-  fi
+  mv "${BUILD_CONTEXT_DIR}/back/.env.bak" "${BUILD_CONTEXT_DIR}/back/.env"
 
   if wait_for_back_healthy "${context_name}" "${docker_ssh_command}" "${project_name}" "${target_host}"; then
     disable_back_maintenance "${context_name}" "${docker_ssh_command}" "${target_host}"
+    DV_SW_SERVED[DV_IDX]=1
     # nginx resolves upstream hostnames once at (re)load: after a back recreate the
     # back-lb keeps proxying the OLD container IP → 502 until reloaded (observed
     # 2026-10-06: lb 7 days old, back 8 minutes, every request 502). Warn-only: a
@@ -1479,10 +1549,15 @@ deploy_back_host() {
       exec -T back-lb nginx -s reload 2>/dev/null \
       && echo "==> [BACK:${target_host}] back-lb reloaded (fresh back upstream)" \
       || warn "[BACK:${target_host}] back-lb reload skipped/failed — reload it manually if the public URL 502s"
+    # Remote state: current.json -> previous.json, then the new current.json (revision, environment, date, dbBackup).
+    if dv_write_state "${DEPLOY_REVISION}" "${DV_DB_BACKUP}"; then
+      DV_SW_STATE[DV_IDX]=1
+    fi
+    dv_disarm
   else
-    err "[BACK:${target_host}] New back service did not become healthy in time — leaving maintenance mode ON, aborting deploy."
-    err "[BACK:${target_host}] Check 'docker --context ${context_name} compose --project-name ${project_name} logs back', fix the issue, then re-run the deploy to clear maintenance mode."
-    exit 1
+    err "[BACK:${target_host}] New back service did not become healthy in time."
+    err "[BACK:${target_host}] Check 'docker --context ${context_name} compose --project-name ${project_name} logs back' once the deploy is over."
+    dv_abort_with_rollback
   fi
 
   echo "==> [BACK:${target_host}] Status"
@@ -1568,6 +1643,19 @@ deploy_redis_host() {
     --project-name "${project_name}" ps redis
 }
 
+# Sets DV_FRONT_OWN_ENV: 1 when this front host has its own remote dir, 0 when it shares it with the back on the same
+# host (both upload a `.env` there, so .env.previous cannot be trusted for the front: rollbacks use the local front env).
+front_env_ownership() {
+  local remote_home="$1" remote_dir="$2" back_dir
+  DV_FRONT_OWN_ENV=1
+  if is_back_host_name "${DV_HOST}"; then
+    back_dir="${BACK_REMOTE_APP_DIR/#\~/${remote_home}}"
+    if [[ "${back_dir%/}" == "${remote_dir%/}" ]]; then
+      DV_FRONT_OWN_ENV=0
+    fi
+  fi
+}
+
 deploy_front_host() {
   local entry="$1"
   read -r target_user target_host <<<"$(parse_host_entry "${entry}" "${FRONT_REMOTE_USER}")"
@@ -1603,11 +1691,20 @@ deploy_front_host() {
   echo "==> [FRONT:${target_host}] Preparing remote directory (${remote_dir})"
   ssh "${ssh_opts[@]}" "${ssh_target}" "mkdir -p '${remote_dir}'"
 
+  dv_use_host FRONT "${target_host}" "${ssh_target}" "${ssh_port}" "${key_path}" "${context_name}" "${project_name}" "${remote_dir}"
+  front_env_ownership "${remote_home}" "${remote_dir}"
+  if [[ "${DV_FRONT_OWN_ENV}" == "1" ]]; then
+    dv_save_env_previous
+  fi
+
   echo "==> [FRONT:${target_host}] Uploading env file"
   scp "${scp_opts[@]}" "${FRONT_ENV_FILE}" "${ssh_target}:${remote_env_path}"
   ssh "${ssh_opts[@]}" "${ssh_target}" "chmod 600 '${remote_env_path}'" || true
 
   ensure_docker_context "${context_name}" "${ssh_target}" "${ssh_port}"
+
+  # Keep the running front as `previous` BEFORE the build overwrites `latest` (rollback target).
+  dv_tag_previous "$(dv_front_image)"
 
   echo "==> [FRONT:${target_host}] Building service"
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
@@ -1618,6 +1715,10 @@ deploy_front_host() {
   # Set to --no-deps in the colocated branch below (see the note there): the front must
   # never reconcile the back service it shares its host with.
   local front_dep_flags=""
+  # From here the front host is "switched": a front that does not start is rolled back (front hosts only).
+  DV_SCOPE="front"
+  dv_register_switched
+  dv_arm
   if is_back_host_name "${target_host}"; then
     # Front is colocated with back — only stop the front service to avoid killing back + back-lb.
     #
@@ -1660,11 +1761,138 @@ deploy_front_host() {
     --project-name "${project_name}" \
     up -d ${front_dep_flags} front
 
+  if ! dv_wait_front_running; then
+    err "[FRONT:${target_host}] The new front container did not stay up"
+    dv_abort_with_rollback
+  fi
+  dv_disarm
+
   echo "==> [FRONT:${target_host}] Status"
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
     --project-directory "${BUILD_CONTEXT_DIR}" \
     --project-name "${project_name}" ps front
 }
+
+# ======================
+# MANUAL ROLLBACK (--rollback, via ./scripts/run.sh rollback <env>)
+# ======================
+# Positions DV_* on a host for a rollback: same context/project naming as the deploy functions.
+rollback_init_host() {
+  local role="$1" entry="$2" user_default ssh_port key_path ctx_base app_dir ssh_user host ctx project ssh_target remote_home
+  if [[ "${role}" == "BACK" ]]; then
+    user_default="${BACK_REMOTE_USER}"; ssh_port="${BACK_SSH_PORT}"; key_path="${BACK_KEY_PATH}"
+    ctx_base="${BACK_CONTEXT_NAME}"; app_dir="${BACK_REMOTE_APP_DIR}"
+  else
+    user_default="${FRONT_REMOTE_USER}"; ssh_port="${FRONT_SSH_PORT}"; key_path="${FRONT_KEY_PATH}"
+    ctx_base="${FRONT_CONTEXT_NAME}"; app_dir="${FRONT_REMOTE_APP_DIR}"
+  fi
+  read -r ssh_user host <<<"$(parse_host_entry "${entry}" "${user_default}")"
+  ssh_target="${ssh_user}@${host}"
+  if [[ "${role}" == "FRONT" ]] && ! is_back_host_name "${host}"; then
+    ctx="$(build_context_name "${ctx_base}" "${host}")"
+    project="$(build_project_name "front" "${host}")"
+  elif [[ "${role}" == "FRONT" ]]; then
+    ctx="$(build_context_name "${BACK_CONTEXT_NAME}" "${host}")"
+    project="$(build_project_name "back" "${host}")"
+  else
+    ctx="$(build_context_name "${ctx_base}" "${host}")"
+    project="$(build_project_name "back" "${host}")"
+  fi
+  dv_use_host "${role}" "${host}" "${ssh_target}" "${ssh_port}" "${key_path}" "${ctx}" "${project}" ""
+  echo "==> [${role}:${host}] Testing SSH connectivity"
+  ssh "${DV_SSH_OPTS[@]}" -o BatchMode=yes -o ConnectTimeout=10 "${ssh_target}" "echo SSH_OK" >/dev/null
+  remote_home=$(ssh "${DV_SSH_OPTS[@]}" "${ssh_target}" 'printf %s "$HOME"')
+  DV_REMOTE_DIR="${app_dir/#\~/${remote_home}}"
+  if [[ "${role}" == "FRONT" ]]; then front_env_ownership "${remote_home}" "${DV_REMOTE_DIR}"; fi
+  ensure_docker_context "${ctx}" "${ssh_target}" "${ssh_port}"
+}
+
+# Minimal compose context: the compose file, the (empty) back/front dirs it references and placeholder env files
+# (the real ones are fetched from the hosts); nothing is built.
+stage_rollback_context() {
+  mkdir -p "${BUILD_CONTEXT_DIR}/back" "${BUILD_CONTEXT_DIR}/front"
+  cp "${COMPOSE_FILE_ABS}" "${BUILD_CONTEXT_DIR}/docker-compose.yml"
+  portable_sed_inplace "${BUILD_CONTEXT_DIR}/docker-compose.yml" -e 's|\.\./back|./back|g' -e 's|\.\./front|./front|g'
+  cp "${BACK_ENV_FILE}" "${BUILD_CONTEXT_DIR}/.env"
+  : > "${BUILD_CONTEXT_DIR}/back/.env"
+  cp "${FRONT_ENV_FILE}" "${BUILD_CONTEXT_DIR}/front/.env"
+  if [[ -f "scripts/vmagent.yml" ]]; then
+    cp "scripts/vmagent.yml" "${BUILD_CONTEXT_DIR}/vmagent.yml"
+  fi
+}
+
+# Swaps latest <-> previous (images, remote .env, state files) on every selected host; --restore-db also restores the
+# SQLite backup recorded in the CURRENT state. A second rollback therefore rolls forward again.
+run_manual_rollback() {
+  local do_back=1 do_front=1 entry restore_ref image
+  [[ "${DEPLOY_TARGET}" == "front" ]] && do_back=0
+  [[ "${DEPLOY_TARGET}" == "back" ]] && do_front=0
+  if [[ "${IS_CLOUD_FRONT}" -eq 1 ]]; then
+    if [[ "${do_back}" -eq 0 ]]; then
+      err "The front is deployed to Cloudflare Pages: roll it back from the Cloudflare dashboard (Deployments > Rollback)."
+      exit 1
+    fi
+    do_front=0
+  fi
+  stage_rollback_context
+  if [[ "${RESTORE_DB}" -eq 1 && "${IS_SQLITE_DB}" -ne 1 && "${do_back}" -eq 1 ]]; then
+    warn "--restore-db only applies to SQLite (DB_ENGINE=${DB_ENGINE_VALUE}): the database is NOT restored (Postgres: restore the dump named in .deploy/current.json by hand)."
+  fi
+
+  # Pass 1: refuse before touching anything when a host has nothing to go back to.
+  local refused=0
+  if [[ "${do_back}" -eq 1 ]]; then
+    for entry in "${BACK_HOSTS[@]}"; do
+      rollback_init_host BACK "${entry}"
+      image="$(dv_back_image)"
+      if ! dv_image_exists "${image}:previous"; then
+        err "[BACK:${DV_HOST}] Cannot roll back: no ${image}:previous image on this host (first deploy, or no deploy since versioning was introduced)."
+        refused=1
+      elif [[ "${RESTORE_DB}" -eq 1 && "${IS_SQLITE_DB}" -eq 1 && -z "$(dv_current_db_backup || true)" ]]; then
+        err "[BACK:${DV_HOST}] --restore-db: .deploy/current.json records no database backup on this host."
+        refused=1
+      fi
+    done
+  fi
+  if [[ "${do_front}" -eq 1 ]]; then
+    for entry in "${FRONT_HOSTS[@]}"; do
+      rollback_init_host FRONT "${entry}"
+      image="$(dv_front_image)"
+      if ! dv_image_exists "${image}:previous"; then
+        err "[FRONT:${DV_HOST}] Cannot roll back: no ${image}:previous image on this host (first deploy, or no deploy since versioning was introduced)."
+        refused=1
+      fi
+    done
+  fi
+  if [[ "${refused}" -eq 1 ]]; then
+    err "Nothing was changed."
+    exit 1
+  fi
+
+  # Pass 2: swap.
+  if [[ "${do_back}" -eq 1 ]]; then
+    for entry in "${BACK_HOSTS[@]}"; do
+      rollback_init_host BACK "${entry}"
+      restore_ref=""
+      if [[ "${RESTORE_DB}" -eq 1 && "${IS_SQLITE_DB}" -eq 1 ]]; then
+        restore_ref="$(dv_current_db_backup || true)"
+      fi
+      dv_rollback_back manual "${restore_ref}" || { err "Rollback failed on back host ${DV_HOST}"; exit 1; }
+    done
+  fi
+  if [[ "${do_front}" -eq 1 ]]; then
+    for entry in "${FRONT_HOSTS[@]}"; do
+      rollback_init_host FRONT "${entry}"
+      dv_rollback_front manual || { err "Rollback failed on front host ${DV_HOST}"; exit 1; }
+    done
+  fi
+  echo "==> Rollback completed"
+}
+
+if [[ "${ROLLBACK_MODE}" == "1" ]]; then
+  run_manual_rollback
+  exit 0
+fi
 
 if [[ "${DEPLOY_TARGET}" != "front" && -n "${REDIS_HOST_VALUE}" ]]; then
   echo "==> Deploying Redis on ${REDIS_HOST_VALUE}"

@@ -27,8 +27,19 @@ set -euo pipefail
 #                                     present and executable — DEV_SERVICES_HOOK, opt-in)
 #   ./scripts/run.sh preprod          Deploy to preprod (uses .env.preprod)
 #   ./scripts/run.sh preprod --migrate   Also run DB migrations before deploying
-#   ./scripts/run.sh prod             Run deploy-remote.sh
+#   ./scripts/run.sh prod             Deploy to prod (uses back/.env + front/.env) through deploy-full.sh
 #   ./scripts/run.sh prod --migrate   Also run DB migrations before deploying
+#   ./scripts/run.sh preprod|prod --no-update-common
+#                                     Skip the shared-library sync (update_common.sh: commit + push of the libs);
+#                                     also SKIP_UPDATE_COMMON=1. Used by Agent Hub's deploy button.
+#   ./scripts/run.sh rollback <preprod|prod> [--restore-db] [--target=all|back|front]
+#                                     Swap back to the previous version kept by the last deploy (no build, no library
+#                                     sync, no submodule update). --restore-db also restores the SQLite backup taken
+#                                     before the current version started. Running it twice rolls forward again.
+#
+# A deploy keeps the previous images/env on each host and rolls back by itself when the new back is not healthy
+# (exit 3 = failed, previous version restored; exit 4 = failed, rollback failed; --no-auto-rollback disables).
+# Details: deploy-full.sh --help and the template README (Deploy section).
 #   ./scripts/run.sh stop [dev|preprod|all]
 #   ./scripts/run.sh status
 #
@@ -502,12 +513,38 @@ migrations_enabled_for_target() {
   esac
 }
 
+# Splits `--no-update-common` out of the arguments forwarded to deploy-full.sh / migrations.
+# Sets SKIP_UPDATE_COMMON (1 when the flag or the env var asks to skip) and DEPLOY_ARGS (the remaining arguments).
+split_deploy_args() {
+  DEPLOY_ARGS=()
+  SKIP_UPDATE_COMMON="${SKIP_UPDATE_COMMON:-0}"
+  local a
+  for a in "$@"; do
+    if [[ "${a}" == "--no-update-common" ]]; then
+      SKIP_UPDATE_COMMON=1
+    else
+      DEPLOY_ARGS+=("${a}")
+    fi
+  done
+}
+
+# Syncs the shared libraries (commit + push) unless --no-update-common / SKIP_UPDATE_COMMON=1.
+maybe_update_common() {
+  if [[ "${SKIP_UPDATE_COMMON}" == "1" ]]; then
+    info "Skipping shared library sync (--no-update-common)"
+    return 0
+  fi
+  info "Syncing shared libraries..."
+  "${SCRIPT_DIR}/update_common.sh" || warn "Common library sync had issues — continuing anyway"
+}
+
 # ============================================================
 # PREPROD MODE
 # ============================================================
 cmd_preprod() {
-  info "Syncing shared libraries..."
-  "${SCRIPT_DIR}/update_common.sh" || warn "Common library sync had issues — continuing anyway"
+  split_deploy_args "$@"
+  set -- ${DEPLOY_ARGS[@]+"${DEPLOY_ARGS[@]}"}
+  maybe_update_common
 
   if [[ ! -f "${SCRIPT_DIR}/deploy-full.sh" ]]; then
     err "deploy-full.sh not found in scripts/"
@@ -542,8 +579,9 @@ cmd_preprod() {
 # PROD MODE
 # ============================================================
 cmd_prod() {
-  info "Syncing shared libraries..."
-  "${SCRIPT_DIR}/update_common.sh" || warn "Common library sync had issues — continuing anyway"
+  split_deploy_args "$@"
+  set -- ${DEPLOY_ARGS[@]+"${DEPLOY_ARGS[@]}"}
+  maybe_update_common
 
   if [[ ! -f "${SCRIPT_DIR}/deploy-full.sh" ]]; then
     err "deploy-full.sh not found in scripts/"
@@ -562,6 +600,49 @@ cmd_prod() {
 
   info "Launching production deployment..."
   exec "${SCRIPT_DIR}/deploy-full.sh" "$@"
+}
+
+# ============================================================
+# ROLLBACK
+# ============================================================
+# rollback <preprod|prod> [--restore-db] [--target=all|back|front]
+# Same env files as the matching deploy; deploy-full.sh --rollback does the work. Never syncs libraries, builds or
+# updates submodules.
+cmd_rollback() {
+  local env_name="${1:-}"
+  [[ $# -gt 0 ]] && shift
+  local back_env front_env
+  case "${env_name}" in
+    preprod)
+      back_env="./back/.env.preprod"
+      if [[ -f "./front/.env.preprod" ]]; then front_env="./front/.env.preprod"; else front_env="./front/.env"; fi
+      ;;
+    prod)
+      back_env="./back/.env"
+      front_env="./front/.env"
+      ;;
+    *)
+      err "Usage: ./scripts/run.sh rollback <preprod|prod> [--restore-db] [--target=all|back|front]"
+      exit 1
+      ;;
+  esac
+
+  local a
+  for a in "$@"; do
+    case "${a}" in
+      --restore-db|--target=all|--target=back|--target=front) ;;
+      *) err "Unknown rollback option: ${a}"; exit 1 ;;
+    esac
+  done
+
+  if [[ ! -f "${SCRIPT_DIR}/deploy-full.sh" ]]; then
+    err "deploy-full.sh not found in scripts/"
+    exit 1
+  fi
+
+  info "Rolling back ${env_name} to the previous version (back: ${back_env}, front: ${front_env})..."
+  BACK_ENV_FILE="${back_env}" FRONT_ENV_FILE="${front_env}" \
+    exec "${SCRIPT_DIR}/deploy-full.sh" --rollback "$@"
 }
 
 # ============================================================
@@ -672,8 +753,14 @@ usage() {
   echo "Commands:"
   echo "  dev [--infra-only]       Start dev environment"
   echo "  --trace-deprecation      Global flag: back under node --trace-deprecation (alone = dev)"
-  echo "  preprod [--target=...]   Deploy to preprod (uses back/.env.preprod + front/.env.preprod)"
-  echo "  prod                     Run deploy-remote.sh"
+  echo "  preprod [--target=...] [--migrate] [--no-update-common] [--no-auto-rollback]"
+  echo "                           Deploy to preprod via deploy-full.sh (back/.env.preprod + front/.env.preprod)"
+  echo "  prod [--target=...] [--migrate] [--no-update-common] [--no-auto-rollback]"
+  echo "                           Deploy to prod via deploy-full.sh (back/.env + front/.env)"
+  echo "                           --no-update-common (or SKIP_UPDATE_COMMON=1) skips the shared library sync"
+  echo "  rollback <preprod|prod> [--restore-db] [--target=all|back|front]"
+  echo "                           Swap back to the previous deployed version (no build, no library sync);"
+  echo "                           --restore-db restores the SQLite backup taken before the current version"
   echo "  stop [dev|preprod|all]   Stop environment(s)"
   echo "  status                   Show running services"
   echo ""
@@ -707,6 +794,7 @@ case "${COMMAND}" in
   dev)     cmd_dev "$@" ;;
   preprod) cmd_preprod "$@" ;;
   prod)    cmd_prod "$@" ;;
+  rollback) cmd_rollback "$@" ;;
   stop)    cmd_stop "$@" ;;
   status)  cmd_status "$@" ;;
   -h|--help|help)
