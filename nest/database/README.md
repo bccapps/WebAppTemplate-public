@@ -178,7 +178,9 @@ comme sous Postgres (défaut désactivé en production). Pragmas : WAL, `synchro
 **Garde-fou** — `npm run db:check` (`scripts/db-portability-check.mjs`, sans base) : (1) scan statique de `src/**` (hors tests, migrations
 et modules partagés liés) pour le SQL propre à Postgres, exemptable ligne par ligne par `// pg-only: <raison>` ; (2) base SQLite en
 mémoire construite depuis les entités de l'appli (modules dont `module.json` n'a pas `sqlite` dans `databases` ignorés) puis
-synchronisée. Options : `--json`, `--static-only`, `--schema-only`, `--include-postgres-only`, `--include-shared`. Code de sortie 0 / 1 / 2.
+synchronisée — **seulement si le projet tourne sur SQLite** (`DB_ENGINE=sqlite` dans l'environnement ou un `.env*` du back, ou shell
+desktop `desktop/desktop.config.json`) : un projet Postgres saute cette étape et n'a pas besoin de `better-sqlite3` ; `--schema-only` la
+force. Options : `--json`, `--static-only`, `--schema-only`, `--include-postgres-only`, `--include-shared`. Code de sortie 0 / 1 / 2.
 Gabarit de suite Jest SQLite : `template/back/sqlite-harness/`.
 
 ### Taille du pool (`DB_POOLSIZE`)

@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { moduleDatabases, scanText, scanTree, summarize } from './lib/db-portability.mjs';
-import { main, parseArgs } from './db-portability-check.mjs';
+import { declaredEngines, main, parseArgs, sqliteSchemaScope } from './db-portability-check.mjs';
 
 const rules = (text, options) => scanText(text, options).findings.map((finding) => `${finding.rule}:${finding.severity}`);
 
@@ -120,6 +120,65 @@ test('main --static-only exits 1 on a finding, 0 once exempted (--json output)',
     await assert.rejects(main(['--root', path.join(root, 'missing'), '--static-only']), /No src\/ directory/);
   } finally {
     console.log = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('declaredEngines reads DB_ENGINE from the environment and the back .env* files, never from *.example', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'vx-dbcheck-'));
+  try {
+    writeFileSync(path.join(root, '.env'), 'APP_ENV=prod\nDB_ENGINE="supabase"\n');
+    writeFileSync(path.join(root, '.env.dev'), '# local\nexport DB_ENGINE=Postgres # self-hosted\n');
+    writeFileSync(path.join(root, '.env.example'), 'DB_ENGINE=sqlite\n');
+    writeFileSync(path.join(root, 'notes.env'), 'DB_ENGINE=sqlite\n');
+    assert.deepEqual([...declaredEngines(root, {})].sort(), ['postgres', 'supabase']);
+    assert.deepEqual([...declaredEngines(root, { DB_ENGINE: ' Neon ' })].sort(), ['neon', 'postgres', 'supabase']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the SQLite schema check only applies to a project that runs on SQLite', () => {
+  const project = mkdtempSync(path.join(tmpdir(), 'vx-dbcheck-'));
+  const root = path.join(project, 'back');
+  mkdirSync(root);
+  try {
+    assert.deepEqual(sqliteSchemaScope(root, {}), { applies: false, reason: 'DB_ENGINE=postgres (default), no desktop shell' });
+    writeFileSync(path.join(root, '.env'), 'DB_ENGINE=supabase\n');
+    assert.equal(sqliteSchemaScope(root, {}).applies, false);
+    assert.equal(sqliteSchemaScope(root, { DB_ENGINE: 'sqlite' }).applies, true);
+    writeFileSync(path.join(root, '.env.dev'), 'DB_ENGINE=sqlite\n');
+    assert.deepEqual(sqliteSchemaScope(root, {}), { applies: true, reason: 'DB_ENGINE=sqlite' });
+    rmSync(path.join(root, '.env.dev'));
+    mkdirSync(path.join(project, 'desktop'));
+    writeFileSync(path.join(project, 'desktop', 'desktop.config.json'), '{}');
+    assert.deepEqual(sqliteSchemaScope(root, {}), { applies: true, reason: 'desktop shell (SQLite)' });
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('main skips the schema check of a Postgres project (no ts-node, no better-sqlite3 needed)', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'vx-dbcheck-'));
+  const logs = [];
+  const original = console.log;
+  const previous = process.env.DB_ENGINE;
+  delete process.env.DB_ENGINE;
+  console.log = (line) => logs.push(line);
+  try {
+    mkdirSync(path.join(root, 'src'), { recursive: true });
+    writeFileSync(path.join(root, 'src/a.ts'), 'export const a = 1;\n');
+    writeFileSync(path.join(root, '.env'), 'DB_ENGINE=supabase\n');
+    assert.equal(await main(['--root', root, '--json']), 0);
+    const report = JSON.parse(logs.pop());
+    assert.equal(report.schema, undefined);
+    assert.match(report.schemaSkipped, /DB_ENGINE=supabase/);
+    assert.equal(report.ok, true);
+    assert.equal(await main(['--root', root]), 0);
+    assert.match(logs.pop(), /Schema check \(in-memory SQLite\): skipped/);
+  } finally {
+    console.log = original;
+    if (previous !== undefined) process.env.DB_ENGINE = previous;
     rmSync(root, { recursive: true, force: true });
   }
 });

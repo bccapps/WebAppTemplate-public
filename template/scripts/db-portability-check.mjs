@@ -19,13 +19,15 @@
  *    carries `// pg-only: <reason>`. Literal Postgres column types in entities are only counted: the SQLite normaliser adapts them.
  * 2. Schema check: an in-memory SQLite DataSource is built from the app's entities (after the automatic adaptation) and synchronised;
  *    every entity/column the driver still refuses is listed. Shared modules whose `module.json` `databases` has no `sqlite` are skipped.
+ *    Only run when the project runs on SQLite somewhere (`sqliteSchemaScope`: DB_ENGINE=sqlite in the environment or a `.env*` file of
+ *    the back, or a desktop shell); a Postgres-only project skips it (and needs no `better-sqlite3`). `--schema-only` forces it.
  *
  * Exit code 0 = no error, 1 = at least one error, 2 = the check itself could not run. `--json` prints one JSON document.
  * What is adapted automatically and what is not: `nest/common/utils/portableTypes.ts`, `nest/common/utils/dbDialect.ts`.
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scanTree, summarize } from './lib/db-portability.mjs';
@@ -47,6 +49,33 @@ export function parseArgs(argv) {
   }
   if (options.staticOnly && options.schemaOnly) throw new Error('--static-only and --schema-only are exclusive');
   return options;
+}
+
+/** `.env`, `.env.dev`, `.env.preprod`… of the back; `*.example` templates are not a declaration. */
+const ENV_FILE = /^\.env(\.[\w-]+)?$/;
+const DB_ENGINE_LINE = /^\s*(?:export\s+)?DB_ENGINE\s*=\s*["']?([^"'#\s]+)/m;
+
+/** DB_ENGINE values (lower case) of the current environment and of the back's `.env*` files. */
+export function declaredEngines(root, env = process.env) {
+  const engines = new Set();
+  if (env.DB_ENGINE?.trim()) engines.add(env.DB_ENGINE.trim().toLowerCase());
+  for (const name of readdirSync(root)) {
+    if (!ENV_FILE.test(name) || name.endsWith('.example')) continue;
+    const match = readFileSync(path.join(root, name), 'utf8').match(DB_ENGINE_LINE);
+    if (match) engines.add(match[1].toLowerCase());
+  }
+  return engines;
+}
+
+/**
+ * Whether the SQLite schema check applies: the project runs on SQLite somewhere — DB_ENGINE=sqlite (environment or a back `.env*`
+ * file) or a desktop shell (`desktop/desktop.config.json`, whose back always runs on SQLite). Unset DB_ENGINE means postgres.
+ */
+export function sqliteSchemaScope(root, env = process.env) {
+  const engines = declaredEngines(root, env);
+  if (engines.has('sqlite')) return { applies: true, reason: 'DB_ENGINE=sqlite' };
+  if (existsSync(path.join(root, '..', 'desktop', 'desktop.config.json'))) return { applies: true, reason: 'desktop shell (SQLite)' };
+  return { applies: false, reason: `DB_ENGINE=${[...engines].join(', ') || 'postgres (default)'}, no desktop shell` };
 }
 
 /** Runs the schema helper inside the app (ts-node). Returns its report, or a `failures` report when it could not run. */
@@ -82,6 +111,9 @@ export function renderText(report) {
     if (types) out.push(`  ℹ entity columns adapted automatically on SQLite: ${types}`);
     if (scan.summary.topRules.length) out.push(`  top rules: ${scan.summary.topRules.map(([rule, n]) => `${rule}×${n}`).join(', ')}`);
   }
+  if (report.schemaSkipped) {
+    out.push(`Schema check (in-memory SQLite): skipped — the project does not run on SQLite (${report.schemaSkipped}); --schema-only forces it.`);
+  }
   if (report.schema) {
     const { schema } = report;
     out.push(`Schema check (in-memory SQLite): ${schema.entities} entit${schema.entities === 1 ? 'y' : 'ies'} in ${schema.modules?.length ?? 0} module(s), ${schema.failures.length} failure(s).`);
@@ -106,7 +138,11 @@ export async function main(argv = process.argv.slice(2)) {
     const scan = scanTree(options.root, { followShared: options.includeShared });
     report.static = { files: scan.files, findings: scan.findings, entityTypes: scan.entityTypes, summary: summarize(scan.findings) };
   }
-  if (!options.staticOnly) report.schema = runSchemaCheck(options.root, options);
+  if (!options.staticOnly) {
+    const scope = options.schemaOnly ? { applies: true } : sqliteSchemaScope(options.root);
+    if (scope.applies) report.schema = runSchemaCheck(options.root, options);
+    else report.schemaSkipped = scope.reason;
+  }
   const staticErrors = report.static?.summary.errors ?? 0;
   const schemaFailures = report.schema?.failures.length ?? 0;
   report.ok = staticErrors === 0 && schemaFailures === 0;
