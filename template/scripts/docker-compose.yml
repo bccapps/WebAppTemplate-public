@@ -216,10 +216,15 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     container_name: ${PROJECT_NAME}_redis
+    # Eviction only among keys that carry a TTL, shortest remaining TTL first: throttle counters, caches and
+    # transport sessions (seconds to minutes) go before token revocations (EX = remaining token life, up to
+    # 10 years for static API tokens); keys without TTL (feed cursors, worker registry ids) are never evicted.
+    # allkeys-lru evicted anything, revocations included (EXISTS does not refresh the LRU clock).
+    # Overridable per project: REDIS_MAXMEMORY / REDIS_MAXMEMORY_POLICY (back/.env).
     command: >
       redis-server
-      --maxmemory 128mb
-      --maxmemory-policy allkeys-lru
+      --maxmemory ${REDIS_MAXMEMORY:-256mb}
+      --maxmemory-policy ${REDIS_MAXMEMORY_POLICY:-volatile-ttl}
       --appendonly yes
       --appendfsync everysec
       ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
