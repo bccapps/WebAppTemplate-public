@@ -35,7 +35,7 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 | Méthode | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/configurations` | Public | Récupère la configuration applicative. **Exemptée du chiffrement de transport** (`@NoTransportCrypt`, décision C — voir plus bas) ; `Cache-Control: public, max-age=60, stale-while-revalidate=600` (durées configurables). |
-| `PUT` | `/api/v1/configurations` | User | Met à jour la configuration. |
+| `PUT` | `/api/v1/configurations` | Admin | Met à jour des clés **existantes** (tableau `{ name, value, description }`). Validé par `ConfigurationService.updateFromAdmin` — voir « Écriture de la configuration : validation » ci-dessous. |
 
 ### Module Config (`ModuleConfigController`)
 | Méthode | Endpoint | Auth | Description |
@@ -44,7 +44,27 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 | `GET` | `/api/v1/admin/module-configs` | Admin | Récupère tous les modules avec leurs valeurs actuelles. |
 | `GET` | `/api/v1/admin/module-configs/:moduleId` | Admin | Récupère un module avec ses valeurs. |
 | `GET` | `/api/v1/admin/module-configs/:moduleId/secret/:key` | Admin | Déchiffre et renvoie la valeur d'un champ `secret` donné (`{ value }`). |
-| `PUT` | `/api/v1/admin/module-configs/:moduleId` | Admin | Met à jour les valeurs de configuration d'un module. |
+| `PUT` | `/api/v1/admin/module-configs/:moduleId` | Admin | Met à jour les valeurs de configuration d'un module (clés hors schéma ignorées ; valeurs modifiées validées par le champ du schéma — voir ci-dessous). |
+
+#### Écriture de la configuration : validation
+
+Les deux routes d'écriture admin valident ce qu'elles stockent, **uniquement pour les valeurs qui changent** : une entrée dont la valeur est identique à celle stockée est acceptée telle quelle (les écrans renvoient la liste entière, et une valeur stockée peut précéder le schéma). Tout le payload est vérifié avant la première écriture (un refus n'écrit rien). Les erreurs sont des `FunctionalException` (HTTP 400) dont le `code` est stable ; le message est en anglais, cite la clé et la règle, **jamais la valeur soumise** (elle peut être un secret). Clés i18n (fr + en) `common.config.error.<code>` dans `locales/common.*.json`.
+
+| Code | Cas |
+| --- | --- |
+| `CFG_UNKNOWN_KEY` | `PUT /configurations` : `name` absent de la table `config`, de `defaultConfigEntries` et des schémas de modules enregistrés (la route n'invente plus de clés). |
+| `CFG_INVALID_FORMAT` | Valeur non textuelle (objet/tableau) pour une clé simple, `string`, `secret` ou `select` ; `pattern` du schéma non respecté (message = `patternMessage` si présent) ; liste invalide pour un `multiselect`. |
+| `CFG_INVALID_NUMBER` / `CFG_OUT_OF_RANGE` | Champ `number` non numérique / hors `validation.min`–`max`. |
+| `CFG_INVALID_BOOLEAN` | Champ `boolean` hors `true/false/'true'/'false'/'1'/'0'/1/0`. |
+| `CFG_INVALID_OPTION` | `select`/`multiselect` hors `options` (non vérifié si le champ a `dynamicOptionsKey` ou aucune `options`). |
+| `CFG_INVALID_JSON` | Champ `json` fourni en chaîne non parsable (un objet/tableau est accepté). |
+| `CFG_VALUE_TOO_LONG` | Valeur de plus de 1 000 000 caractères (`CONFIG_VALUE_MAX_LENGTH`). |
+| `CFG_SECRET_READONLY` | `PUT /configurations` : nouvelle valeur non vide pour un champ `secret` (elle serait stockée en clair ; les secrets passent par `PUT /admin/module-configs/:moduleId`, qui les chiffre). |
+
+- Une valeur vide (`''`, `null`) est toujours acceptée (c'est ainsi que les écrans vident un champ) ; sur un champ `secret`, elle **n'écrase pas** le secret stocké (comportement historique conservé sur les deux routes).
+- `PUT /configurations` → `ConfigurationService.updateFromAdmin`. `ConfigurationService.updateAll` reste la primitive **interne** non validée (crée les clés inconnues), utilisée par `ModuleConfigService`, `LlmResolverService` et les modules d'app : ne pas l'exposer sur une route.
+- `PUT /admin/module-configs/:moduleId` → `ModuleConfigService.updateModuleConfig` (aussi appelé côté serveur : bascules `data-ingestion`, calibration TradeKong…), même validation par champ ; les clés hors schéma restent ignorées silencieusement. Règles de type : `utils/configValueValidation.ts` (`validateConfigFieldValue`).
+- Tests : `utils/configValueValidation.spec.ts`, `services/ConfigAdminWrites.spec.ts` (règles + rejeu des payloads réels d'`AdminPage`, `AdminModules`, `AdminFeatures`, `ModuleConfigForm`, `AdminAuth`, `AdminUsertradingplatform`, `AdminLlmChat`, appelants serveur).
 
 ### Session admin (`AdminSessionController`, enregistré par `AuthCoreModule`, pas par `CommonModule`)
 | Méthode | Endpoint | Auth | Description |
@@ -151,7 +171,7 @@ Sans contributeur, la route répond `{ status: 'ok', checks: {} }` : un projet p
 | --- | --- | --- | --- |
 | `POST` | `/api/v1/cookie-consent` | Public | Journalise un choix de consentement (`CookieConsentLogDto { categories: { necessary: true, audienceMeasurement: boolean } }`, validé) — preuve de consentement CNIL, anonyme (pas de résolution d'utilisateur, `userId` toujours `null` aujourd'hui — voir `CookieConsentController`). Appelé en fire-and-forget par `CookieConsentBanner`/`CookieConsentSettingsModal` (front), erreurs ignorées côté client. |
 
-DTO des corps (2026-10-18, `dtos/`) : `CookieConsentLogDto`, `BugReportDto` (`POST /api/v1/common/bug-report` : sujet ≤ 300, description ≤ 20 000 ; l'id du rapporteur vient de `req.user`, les champs sont échappés dans l'email HTML), `ThemeCreateDto` / `ThemeCssUpdateDto` (thèmes admin, CSS ≤ 1 000 000), `TestEmailDto`, `DecryptPayloadDto` (`admin/decrypt`). `PUT /configurations` (tableau) et `PUT /admin/module-configs/:moduleId` (map dynamique validée par le schéma du module) restent sans DTO de classe.
+DTO des corps (2026-10-18, `dtos/`) : `CookieConsentLogDto`, `BugReportDto` (`POST /api/v1/common/bug-report` : sujet ≤ 300, description ≤ 20 000 ; l'id du rapporteur vient de `req.user`, les champs sont échappés dans l'email HTML), `ThemeCreateDto` / `ThemeCssUpdateDto` (thèmes admin, CSS ≤ 1 000 000), `TestEmailDto`, `DecryptPayloadDto` (`admin/decrypt`). `PUT /configurations` (tableau) et `PUT /admin/module-configs/:moduleId` (map dynamique) restent sans DTO de classe : leur validation est faite dans le service (voir « Écriture de la configuration : validation »), car elle compare chaque entrée à la valeur stockée.
 
 ### Dons (`DonationController`)
 Widget de don non-custodial : affiche une adresse/QR/lien à payer, ne confirme ni ne suit jamais un paiement (pas de webhook, pas d'indexeur on-chain). Paramétrage via `donationsConfigSchema` (champs `donations_*`, groupe `donations`, tous `hidden: true` — gérés par l'écran admin dédié `AdminDonations.tsx`, pas par le formulaire générique). Prix live (BTC/ETH/SOL uniquement, USDC/USDT traités 1:1 USD) : `DonationPriceService`, CoinGecko via `throttledFetchJson('donations-coingecko', …)`, cache mémoire 60 s. Catalogue des contrats EVM (USDC/USDT par chaîne) et du mint USDC Solana : `constants/donationEvmCatalog.ts` — **adresses à revérifier sur un explorateur de blocs avant mise en production**, voir l'avertissement en tête de ce fichier.
@@ -426,7 +446,7 @@ export class MonService {
 | GET | `/api/v1/admin/module-configs` | Récupère tous les modules avec valeurs actuelles |
 | GET | `/api/v1/admin/module-configs/:moduleId` | Récupère un module avec ses valeurs |
 | GET | `/api/v1/admin/module-configs/:moduleId/secret/:key` | Déchiffre et renvoie la valeur d'un champ `secret` (`{ value }`) |
-| PUT | `/api/v1/admin/module-configs/:moduleId` | Met à jour les valeurs d'un module |
+| PUT | `/api/v1/admin/module-configs/:moduleId` | Met à jour les valeurs d'un module (valeurs modifiées validées par le champ du schéma : codes `CFG_*`, voir « Écriture de la configuration : validation ») |
 
 ### Seeding automatique des valeurs par défaut
 

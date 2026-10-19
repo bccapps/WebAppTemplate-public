@@ -68,9 +68,13 @@ export class ConfigurationController {
     description: 'Configuration updated',
     type: ConfigurationDto
   })
+  @ApiBadRequestResponse({
+    description: 'Unknown key (CFG_UNKNOWN_KEY), invalid value (CFG_INVALID_*, CFG_OUT_OF_RANGE, CFG_VALUE_TOO_LONG) or secret change (CFG_SECRET_READONLY)',
+    type: FunctionalException
+  })
   @UseInterceptors(AdminOnlyInterceptor)
   @Put('/api/v1/configurations')
   async updateConfiguration(@Body() payload: ConfigurationDto[]): Promise<ConfigurationDto[]> {
-    return await this.configurationService.updateAll(payload);
+    return await this.configurationService.updateFromAdmin(payload);
   }
 }

@@ -13,6 +13,10 @@ import { Repository } from 'typeorm';
 import ConfigurationDto from '../dtos/ConfigurationDto';
 import { ConfigurationMapper } from '../mappers/ConfigurationMapper';
 import ConfigurationEntity from '../entities/ConfigurationEntity';
+import { FunctionalException } from '../exceptions/FunctionalException';
+import { ConfigFieldSchema } from '../types/ModuleConfigSchema';
+import { validateConfigFieldValue, validatePlainConfigValue } from '../utils/configValueValidation';
+import { defaultConfigEntries } from 'src/config/defaultConfig';
 import { ModuleConfigRegistry } from './ModuleConfigRegistry';
 
 @Injectable()
@@ -155,8 +159,63 @@ export class ConfigurationService implements OnApplicationBootstrap {
     return all.filter((dto) => dto.name.startsWith('api_url_'));
   }
 
+  private findModuleField(name: string): ConfigFieldSchema | undefined {
+    for (const schema of this.moduleConfigRegistry.getAllSchemas()) {
+      const field = schema.fields.find((f) => f.key === name);
+      if (field) return field;
+    }
+    return undefined;
+  }
+
   /**
-   * update or create configuration variables
+   * Admin entry point of `PUT /api/v1/configurations`: same write as `updateAll`, after checking the whole
+   * payload (nothing is written when one entry is refused).
+   *  - a `name` that is neither stored, nor in `defaultConfigEntries`, nor a registered module field is refused
+   *    (`CFG_UNKNOWN_KEY`): this route edits existing keys, it does not create arbitrary ones;
+   *  - an entry whose value equals the stored one is accepted as is (pages resend the whole list, and stored
+   *    values may predate the schema);
+   *  - a changed value of a module-schema field is validated against that field; an empty value on a `secret`
+   *    field leaves the stored secret untouched, a non-empty one is refused (`CFG_SECRET_READONLY`): the secret
+   *    would be stored unencrypted, secrets go through `PUT /admin/module-configs/:moduleId`.
+   * Internal callers (module config service, seeders, other modules) keep using `updateAll`.
+   */
+  async updateFromAdmin(dtos: ConfigurationDto[]): Promise<ConfigurationDto[]> {
+    if (!dtos || !Array.isArray(dtos)) return this.configDtos ?? [];
+    const accepted: ConfigurationDto[] = [];
+    for (const dto of dtos) {
+      if (!dto?.name) continue;
+      if (await this.checkAdminEntry(dto)) accepted.push(dto);
+    }
+    return this.updateAll(accepted);
+  }
+
+  /** Throws when the entry is refused; returns false when it must be skipped (secret left as is). */
+  private async checkAdminEntry(dto: ConfigurationDto): Promise<boolean> {
+    if (typeof dto.name !== 'string') {
+      throw new FunctionalException('CFG_INVALID_FORMAT', 'Configuration name must be a string');
+    }
+    const stored = await this.configurationRepository.findOne({ where: { name: dto.name } });
+    const field = this.findModuleField(dto.name);
+    const known = stored || field || defaultConfigEntries.some((entry) => entry.name === dto.name);
+    if (!known) throw new FunctionalException('CFG_UNKNOWN_KEY', `Unknown configuration key '${dto.name}'`);
+
+    const value = dto.value ?? '';
+    if (stored && String(stored.value) === String(value)) return true;
+
+    if (field?.type === 'secret') {
+      if (value === '') return false;
+      throw new FunctionalException(
+        'CFG_SECRET_READONLY',
+        `Secret key '${dto.name}' cannot be changed here: use the module configuration endpoint`,
+      );
+    }
+    const issue = field ? validateConfigFieldValue(field, value) : validatePlainConfigValue(value);
+    if (issue) throw new FunctionalException(issue.code, `Invalid value for '${dto.name}': ${issue.reason}`);
+    return true;
+  }
+
+  /**
+   * update or create configuration variables (internal use: no validation, creates unknown names)
    */
   async updateAll(dtos: ConfigurationDto[]): Promise<ConfigurationDto[]> {
     if (!dtos || !Array.isArray(dtos)) return this.configDtos ?? [];

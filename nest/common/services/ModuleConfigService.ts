@@ -12,6 +12,8 @@ import { ModuleConfigRegistry } from './ModuleConfigRegistry';
 import { ModuleConfigSeederService } from './ModuleConfigSeederService';
 import { ConfigurationService } from './ConfigurationService';
 import { CryptService } from './CryptService';
+import { FunctionalException } from '../exceptions/FunctionalException';
+import { validateConfigFieldValue } from '../utils/configValueValidation';
 import {
   ModuleConfigSchema,
   ModuleConfigWithValues,
@@ -141,28 +143,36 @@ export class ModuleConfigService {
     const schema = this.registry.getSchema(moduleId);
     if (!schema) return null;
 
-    const dtos = Object.entries(values)
-      .filter(([key]) => schema.fields.some((f) => f.key === key))
-      .filter(([key, value]) => {
-        const field = schema.fields.find((f) => f.key === key);
-        // Skip secret fields where the value is null/empty — preserves existing stored secret
-        if (field?.type === 'secret') {
-          return value != null && String(value).length > 0;
-        }
-        return true;
-      })
-      .map(([key, value]) => {
-        const field = schema.fields.find((f) => f.key === key);
-        return {
-          name: key,
-          value: this.serializeValue(value, field),
-          description: field?.description ?? '',
-        };
-      });
+    // Fresh enough cache (reloaded when older than 5 s): "changed" is judged against what is really stored.
+    await this.configService.getConfiguration();
+    // Unknown keys are ignored; the whole payload is validated before anything is written.
+    const dtos = Object.entries(values ?? {}).flatMap(([key, value]) => {
+      const field = schema.fields.find((f) => f.key === key);
+      if (!field) return [];
+      // Skip secret fields where the value is null/empty — preserves existing stored secret
+      if (field.type === 'secret' && !(value != null && String(value).length > 0)) return [];
+      const serialized = this.serializeValue(value, field);
+      this.assertValidChange(field, value, serialized);
+      return [{ name: key, value: serialized, description: field.description ?? '' }];
+    });
 
     await this.configService.updateAll(dtos);
 
     return this.getModuleConfigWithValues(moduleId);
+  }
+
+  /**
+   * Refuses a CHANGED value that does not fit its field. A value serializing to what is already stored is accepted
+   * untouched (screens resend every field, and stored values may predate the schema). Secrets are always a change
+   * (their ciphertext is never comparable). Never puts the submitted value in the error: it may be a secret.
+   */
+  private assertValidChange(field: ConfigFieldSchema, value: unknown, serialized: string): void {
+    if (field.type !== 'secret') {
+      const stored = this.configService.get(field.key);
+      if (stored !== undefined && stored !== null && String(stored) === serialized) return;
+    }
+    const issue = validateConfigFieldValue(field, value);
+    if (issue) throw new FunctionalException(issue.code, `Invalid value for '${field.key}': ${issue.reason}`);
   }
 
   private parseValue(value: any, field: ConfigFieldSchema): any {
