@@ -128,10 +128,16 @@ function extractNode(archive, version, target, outDir) {
   if (target.os !== 'win') chmodSync(path.join(outDir, target.exe), 0o755);
 }
 
+/**
+ * Fresh copy of `from` into `to`. `dereference` only applies to `from` itself: cpSync rewrites nested relative
+ * symlinks (python3 -> python3.12) as absolute paths into the build tree, which break once shipped and make the
+ * next copy over them fail with EEXIST. Hence the real path of `from`, verbatim symlinks and a cleared `to`.
+ */
 function copyDir(from, to) {
   if (!existsSync(from)) throw new Error(`Missing ${from} (build the project first)`);
+  rmSync(to, { recursive: true, force: true });
   mkdirSync(path.dirname(to), { recursive: true });
-  cpSync(from, to, { recursive: true, dereference: true });
+  cpSync(realpathSync(from), to, { recursive: true, verbatimSymlinks: true });
 }
 
 /** Removes `*.js.map` and `*.d.ts` like back/Dockerfile. */

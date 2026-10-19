@@ -17,6 +17,8 @@ set -euo pipefail
 # Usage:
 #   ./scripts/bundle.sh                         this machine + win-x64 + linux-x64
 #   ./scripts/bundle.sh --targets darwin-arm64,win-x64
+#   ./scripts/bundle.sh windows                 one or more platforms: windows (win), macos (mac), linux, or a target id
+#   ./scripts/bundle.sh macos linux             (macos = this Mac's architecture; windows/linux = x64)
 #   ./scripts/bundle.sh --clean                 full rebuild (production node_modules, DESKTOP_CLEAN=1 for the hook)
 #
 # Per target (ids of scripts/desktop/lib.mjs: darwin-arm64, darwin-x64, linux-x64, linux-arm64, win-x64):
@@ -38,18 +40,39 @@ cd "${PROJECT_ROOT}"
 source "${SCRIPT_DIR}/desktop/common.sh"
 
 TARGETS=""; EXPLICIT=0
+# Platform names accepted as arguments, resolved against the host once known.
+platform_target() {
+  case "$1" in
+    windows|win) echo win-x64 ;;
+    linux) echo linux-x64 ;;
+    macos|mac|darwin) echo "${HOST_OS_ARCH_DARWIN}" ;;
+    darwin-arm64|darwin-x64|linux-x64|linux-arm64|win-x64) echo "$1" ;;
+    *) return 1 ;;
+  esac
+}
+POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --targets) TARGETS="${2:?--targets needs a comma-separated list}"; EXPLICIT=1; shift 2 ;;
     --clean) export DESKTOP_CLEAN=1; shift ;;
     -h|--help) sed -n '/^# Usage:/,/^# =====/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) err "Unknown option: $1"; exit 2 ;;
+    -*) err "Unknown option: $1"; exit 2 ;;
+    *) POSITIONAL+=("$1"); shift ;;
   esac
 done
 
 desktop_check_project
 HOST="$(host_target)"
 HOST_OS="${HOST%%-*}"
+HOST_OS_ARCH_DARWIN="darwin-${HOST##*-}"
+if [[ ${#POSITIONAL[@]} -gt 0 ]]; then
+  [[ -z "${TARGETS}" ]] || { err "Give either platform names or --targets, not both"; exit 2; }
+  for p in "${POSITIONAL[@]}"; do
+    t="$(platform_target "$p")" || { err "Unknown platform: $p (windows, macos, linux or a target id)"; exit 2; }
+    TARGETS="${TARGETS:+${TARGETS},}${t}"
+  done
+  EXPLICIT=1
+fi
 if [[ -z "${TARGETS}" ]]; then
   TARGETS="${HOST}"
   for t in win-x64 linux-x64; do [[ "${t%%-*}" == "${HOST_OS}" ]] || TARGETS="${TARGETS},${t}"; done

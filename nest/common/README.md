@@ -162,6 +162,15 @@ Widget de don non-custodial : affiche une adresse/QR/lien à payer, ne confirme 
 | `GET` | `/api/v1/donations/quote` | Public | `{ chain, asset, amountUsd }` → `{ amount, uri, chainId? }` : montant dans l'unité native + URI prête pour un wallet (BIP21 Bitcoin, EIP-681 EVM natif/ERC-20, Solana Pay). Refuse une combinaison chaîne/actif non activée par l'admin. |
 | `POST` | `/api/v1/donations/stripe/checkout-session` | Public | `{ amountUsd, successUrl, cancelUrl }` → `{ url }` : crée une session Stripe Checkout (carte/Apple Pay/Google Pay) et renvoie son URL de redirection. |
 
+### Dons (`DonationController`)
+Widget de don non-custodial : affiche une adresse/QR/lien à payer, ne confirme ni ne suit jamais un paiement (pas de webhook, pas d'indexeur on-chain). Paramétrage via `donationsConfigSchema` (champs `donations_*`, groupe `donations`, tous `hidden: true` — gérés par l'écran admin dédié `AdminDonations.tsx`, pas par le formulaire générique). Prix live (BTC/ETH/SOL uniquement, USDC/USDT traités 1:1 USD) : `DonationPriceService`, CoinGecko via `throttledFetchJson('donations-coingecko', …)`, cache mémoire 60 s. Catalogue des contrats EVM (USDC/USDT par chaîne) et du mint USDC Solana : `constants/donationEvmCatalog.ts` — **adresses à revérifier sur un explorateur de blocs avant mise en production**, voir l'avertissement en tête de ce fichier.
+
+| Méthode | Endpoint | Auth | Description |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/donations/config` | Public | Configuration publique (méthodes activées, adresses, chaînes/actifs activés, montants prédéfinis) — ne renvoie jamais la clé secrète Stripe, seulement si elle est définie. |
+| `GET` | `/api/v1/donations/quote` | Public | `{ chain, asset, amountUsd }` → `{ amount, uri, chainId? }` : montant dans l'unité native + URI prête pour un wallet (BIP21 Bitcoin, EIP-681 EVM natif/ERC-20, Solana Pay). Refuse une combinaison chaîne/actif non activée par l'admin. |
+| `POST` | `/api/v1/donations/stripe/checkout-session` | Public | `{ amountUsd, successUrl, cancelUrl }` → `{ url }` : crée une session Stripe Checkout (carte/Apple Pay/Google Pay) et renvoie son URL de redirection. |
+
 ## Configuration requise
 - Variables d'environnement Prowl : `PROWL_API_KEY`, `PROWL_API_URL` (optionnel), `PROWL_APPLICATION_NAME`.
 - **Email** : Configuré via le Module Config Schema (`emailConfigSchema`, groupe `email`). Clés de configuration :

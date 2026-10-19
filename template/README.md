@@ -274,9 +274,10 @@ node scripts/add-desktop.mjs --name "My App" --identifier org.acme.myapp
 cd back && npm run desktop:dev                          # needs the Rust toolchain; builds nothing, uses back/dist and front/dist
 ./scripts/app.sh                                        # builds the app for this machine and launches it (--no-run, --no-build, --clean)
 ./scripts/bundle.sh                                     # packages in desktop/dist/: this machine's installer + win-x64 zip + linux-x64 tar.gz
+./scripts/install.sh macos                              # builds for this machine and installs it (/Applications, /usr/local, %LOCALAPPDATA%\Programs)
 ```
 
-`app.sh` and `bundle.sh` (details in `desktop/README.md`, « Build and package scripts ») build back + front, call the project's
+`app.sh`, `bundle.sh` and `install.sh` (details in `desktop/README.md`, « Build and package scripts ») build back + front, call the project's
 optional `scripts-local/desktop-prepare.sh <target>` (what `packaging.extraResources` copies, e.g. an embedded engine), then
 `scripts/desktop/build-desktop.mjs`. `npm run desktop:build` (from `back/`) is `app.sh --no-run`.
 

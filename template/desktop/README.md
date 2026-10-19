@@ -221,14 +221,15 @@ no `cargo build --release` or `tauri build` needed for development.
 
 ## Build and package scripts
 
-Two entry points from the project root wrap the steps below (they are what most projects need):
+Three entry points from the project root wrap the steps below (they are what most projects need):
 
 | Script | Does |
 |---|---|
 | `./scripts/app.sh` | Builds the app for **this machine** and launches it. macOS: `<Product>.app` (no DMG), opened with `open` after stopping a running copy (single instance). Linux / Windows (Git Bash): the shell binary only (`--bundles none`), run with `DESKTOP_RESOURCES` on the resources folder. `--no-run` (build only; `npm run desktop:build` from `back/`), `--no-build` (launch the last build), `--clean`. |
 | `./scripts/bundle.sh` | Distributable packages, copied to `desktop/dist/`. Default targets: this machine, `win-x64` and `linux-x64` (`--targets a,b` to choose). This machine: native installer (`tauri build`: macOS `.dmg`, Linux `.deb` + `.AppImage`, Windows NSIS). Other OS: portable archive by `package-cross.mjs`. A target whose tools are missing (mingw-w64 + `zip` for Windows from macOS/Linux, a running Docker for Linux from macOS/Windows; macOS only on a Mac) is skipped with the reason. Exit 1 when a target failed, or when a target named by `--targets` was skipped. `--clean`. |
+| `./scripts/install.sh <target>` | Builds the app for **this machine** and installs it; the target (`macos`, `linux`, `windows` or a target id) is mandatory and must be this machine's. macOS: `<Product>.app` (no DMG) copied to `/Applications` (sudo only when it is not writable). Linux: the AppImage, a self-contained file, as `/usr/local/bin/<slug>`; when tauri produces none, the shell binary and its resources in `/usr/local/lib/<slug>` with a `/usr/local/bin/<slug>` link (resources are found next to the executable); both add `/usr/local/share/applications/<slug>.desktop` and an icon (sudo). Windows (Git Bash): `%LOCALAPPDATA%\Programs\<Product>` (no admin rights), desktop and Start menu shortcuts, an `HKCU` « Installed apps » entry whose `uninstall.cmd` removes all of it. A running copy is stopped first; the user data folder is never touched. `--no-build` (install the last build), `--clean`. |
 
-Both, in order: `npm ci` in `back/`, `front/`, `desktop/` when `node_modules` is missing; `npm run build` in `back/` and `front/`;
+All three, in order: `npm ci` in `back/`, `front/`, `desktop/` when `node_modules` is missing; `npm run build` in `back/` and `front/`;
 the **prepare hook** of the project; `build-desktop.mjs --target <t> --out desktop/build/resources-<t>` (one resources folder per
 target, so a target never reuses another platform's `node_modules`; `--skip-install` is passed while `back/package-lock.json` is
 unchanged since the last assembly of that target). Shared steps: `scripts/desktop/common.sh`.
