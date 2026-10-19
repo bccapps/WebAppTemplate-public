@@ -20,6 +20,14 @@ import { Request, Response } from 'express';
 import { AppException } from './AppException';
 import { ProwlService } from '../services/ProwlService';
 
+/** 4xx status of an `http-errors`-style error (Express/body-parser), or null for anything else. */
+export function httpErrorStatus(exception: unknown): number | null {
+  const candidate = (exception as { status?: unknown; statusCode?: unknown; expose?: unknown } | null) ?? {};
+  const status = candidate.status ?? candidate.statusCode;
+  if (typeof status !== 'number' || !Number.isInteger(status) || status < 400 || status > 499) return null;
+  return candidate.expose === false ? null : status;
+}
+
 @Injectable()
 @Catch()
 export class AppExceptionFilter implements ExceptionFilter {
@@ -51,6 +59,13 @@ export class AppExceptionFilter implements ExceptionFilter {
           : String(exceptionResponse);
       console.warn(
         `[AppExceptionFilter] ${exception.constructor.name} (${status}) : ${message} | ip=${clientIp} | endpoint=${request.method} ${request.originalUrl ?? request.url} | detail=${detail}`
+      );
+    } else if (httpErrorStatus(exception) !== null) {
+      // http-errors raised by Express middleware (body-parser: 413 payload too large, 400 malformed JSON…) carry the
+      // client's mistake as `status`: answer with it, and do not page the operator for a visitor's bad request.
+      status = httpErrorStatus(exception) as number;
+      console.warn(
+        `[AppExceptionFilter] ${exception.constructor?.name ?? 'HttpError'} (${status}) : ${message} | ip=${clientIp} | endpoint=${request.method} ${request.originalUrl ?? request.url}`
       );
     } else {
       console.error(`[AppExceptionFilter] Unhandled exception (ip=${clientIp}):`, exception);
