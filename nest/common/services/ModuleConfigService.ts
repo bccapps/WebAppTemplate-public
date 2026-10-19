@@ -22,6 +22,15 @@ import {
 
 const CRYPT_NAMESPACE = 'module_config';
 
+/**
+ * Boolean field value → stored string. Some screens send booleans as strings ("false"), which a plain truthiness test
+ * turned into "true" (a non-empty string is truthy): the string forms are parsed explicitly.
+ */
+export function toBooleanString(value: unknown): 'true' | 'false' {
+  if (typeof value === 'string') return ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase()) ? 'true' : 'false';
+  return value ? 'true' : 'false';
+}
+
 @Injectable()
 export class ModuleConfigService {
   private readonly logger = new Logger(ModuleConfigService.name);
@@ -167,7 +176,9 @@ export class ModuleConfigService {
    * (their ciphertext is never comparable). Never puts the submitted value in the error: it may be a secret.
    */
   private assertValidChange(field: ConfigFieldSchema, value: unknown, serialized: string): void {
-    if (field.type !== 'secret') {
+    // Booleans are always validated: their serialization collapses any junk string to "false", which could then match
+    // the stored value and let an invalid submission through as "unchanged".
+    if (field.type !== 'secret' && field.type !== 'boolean') {
       const stored = this.configService.get(field.key);
       if (stored !== undefined && stored !== null && String(stored) === serialized) return;
     }
@@ -227,7 +238,7 @@ export class ModuleConfigService {
         return this.cryptService.encryptForStorage(strVal, CRYPT_NAMESPACE);
       }
       case 'boolean':
-        return value ? 'true' : 'false';
+        return toBooleanString(value);
       case 'number':
         return String(value);
       case 'json':

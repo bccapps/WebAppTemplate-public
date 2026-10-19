@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from '@jest/globals';
-import { ModuleConfigService } from './ModuleConfigService';
+import { ModuleConfigService, toBooleanString } from './ModuleConfigService';
 import { ModuleConfigSchema } from '../types/ModuleConfigSchema';
 
 const SCHEMA: ModuleConfigSchema = {
@@ -57,5 +57,25 @@ describe('ModuleConfigService.getResolvedValue', () => {
   it('returns the raw value unchanged for a key no schema owns', () => {
     const service = makeService({ someUnrelatedKey: 'raw-value' });
     expect(service.getResolvedValue('someUnrelatedKey')).toBe('raw-value');
+  });
+});
+
+describe('toBooleanString', () => {
+  it('parses string booleans instead of treating every non-empty string as true', () => {
+    expect(toBooleanString('false')).toBe('false');
+    expect(toBooleanString('FALSE')).toBe('false');
+    expect(toBooleanString('0')).toBe('false');
+    expect(toBooleanString('')).toBe('false');
+    expect(toBooleanString('true')).toBe('true');
+    expect(toBooleanString(' True ')).toBe('true');
+    expect(toBooleanString('1')).toBe('true');
+  });
+
+  it('keeps real booleans and numbers as before', () => {
+    expect(toBooleanString(true)).toBe('true');
+    expect(toBooleanString(false)).toBe('false');
+    expect(toBooleanString(1)).toBe('true');
+    expect(toBooleanString(0)).toBe('false');
+    expect(toBooleanString(null)).toBe('false');
   });
 });
