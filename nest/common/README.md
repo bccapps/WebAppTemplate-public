@@ -153,6 +153,15 @@ Sans contributeur, la route répond `{ status: 'ok', checks: {} }` : un projet p
 
 DTO des corps (2026-10-18, `dtos/`) : `CookieConsentLogDto`, `BugReportDto` (`POST /api/v1/common/bug-report` : sujet ≤ 300, description ≤ 20 000 ; l'id du rapporteur vient de `req.user`, les champs sont échappés dans l'email HTML), `ThemeCreateDto` / `ThemeCssUpdateDto` (thèmes admin, CSS ≤ 1 000 000), `TestEmailDto`, `DecryptPayloadDto` (`admin/decrypt`). `PUT /configurations` (tableau) et `PUT /admin/module-configs/:moduleId` (map dynamique validée par le schéma du module) restent sans DTO de classe.
 
+### Dons (`DonationController`)
+Widget de don non-custodial : affiche une adresse/QR/lien à payer, ne confirme ni ne suit jamais un paiement (pas de webhook, pas d'indexeur on-chain). Paramétrage via `donationsConfigSchema` (champs `donations_*`, groupe `donations`, tous `hidden: true` — gérés par l'écran admin dédié `AdminDonations.tsx`, pas par le formulaire générique). Prix live (BTC/ETH/SOL uniquement, USDC/USDT traités 1:1 USD) : `DonationPriceService`, CoinGecko via `throttledFetchJson('donations-coingecko', …)`, cache mémoire 60 s. Catalogue des contrats EVM (USDC/USDT par chaîne) et du mint USDC Solana : `constants/donationEvmCatalog.ts` — **adresses à revérifier sur un explorateur de blocs avant mise en production**, voir l'avertissement en tête de ce fichier.
+
+| Méthode | Endpoint | Auth | Description |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/donations/config` | Public | Configuration publique (méthodes activées, adresses, chaînes/actifs activés, montants prédéfinis) — ne renvoie jamais la clé secrète Stripe, seulement si elle est définie. |
+| `GET` | `/api/v1/donations/quote` | Public | `{ chain, asset, amountUsd }` → `{ amount, uri, chainId? }` : montant dans l'unité native + URI prête pour un wallet (BIP21 Bitcoin, EIP-681 EVM natif/ERC-20, Solana Pay). Refuse une combinaison chaîne/actif non activée par l'admin. |
+| `POST` | `/api/v1/donations/stripe/checkout-session` | Public | `{ amountUsd, successUrl, cancelUrl }` → `{ url }` : crée une session Stripe Checkout (carte/Apple Pay/Google Pay) et renvoie son URL de redirection. |
+
 ## Configuration requise
 - Variables d'environnement Prowl : `PROWL_API_KEY`, `PROWL_API_URL` (optionnel), `PROWL_APPLICATION_NAME`.
 - **Email** : Configuré via le Module Config Schema (`emailConfigSchema`, groupe `email`). Clés de configuration :
@@ -203,6 +212,21 @@ DTO des corps (2026-10-18, `dtos/`) : `CookieConsentLogDto`, `BugReportDto` (`PO
 | `common_storage_r2_secretAccessKey` | secret | _(vide)_ | Secret Access Key du même jeton — affiché une seule fois par Cloudflare à sa création. |
 | `common_storage_r2_bucket` | string | _(vide)_ | Nom du bucket R2. |
 | `common_storage_r2_publicBaseUrl` | string | _(vide)_ | Domaine personnalisé connecté au bucket (recommandé — `r2.dev` n'est pas garanti pour de la production par Cloudflare) ou son URL `r2.dev`. Sert de préfixe aux URLs renvoyées après upload. |
+
+- **Dons (widget `DonateButton`)** : `donationsConfigSchema`, groupe `donations`, tous les champs `hidden: true` (gérés par `AdminDonations.tsx` côté front, pas par le formulaire générique). Voir aussi « Dons (`DonationController`) » plus haut.
+
+| Clé | Type | Défaut | Description |
+| --- | --- | --- | --- |
+| `donations_enabledMethods` | multiselect | `[]` | Parmi `bitcoin`, `evm`, `solana`, `stripe`, `paypal` — n'affiche que les méthodes à la fois activées ici et dont l'adresse/l'identifiant requis est renseigné. |
+| `donations_presetAmountsUsd` | json | `[1, 5, 10]` | Boutons de montant rapide (USD), avant la saisie libre. |
+| `donations_bitcoinAddress` | string | _(vide)_ | Adresse BTC de réception. |
+| `donations_evmAddress` | string | _(vide)_ | Adresse EVM de réception, valable sur les 4 chaînes supportées. |
+| `donations_evmChains` | multiselect | toutes | Parmi `ethereum`, `bsc`, `base`, `arbitrum`. |
+| `donations_evmAssets` | multiselect | `ETH,USDC,USDT` | Parmi `ETH`, `USDC`, `USDT`. |
+| `donations_solanaAddress` | string | _(vide)_ | Adresse SOL de réception. |
+| `donations_solanaAssets` | multiselect | `SOL,USDC` | Parmi `SOL`, `USDC`. |
+| `donations_stripeSecretKey` | secret | _(vide)_ | Clé secrète d'un compte Stripe, utilisée pour créer des sessions Checkout. |
+| `donations_paypalMeUsername` | string | _(vide)_ | Identifiant paypal.me. |
 
 `local` reste le défaut : aucun changement de comportement pour une app qui ne configure rien. Passer à `r2` n'affecte que les **nouveaux** uploads — les fichiers déjà écrits sur disque restent servis tels quels par `GET /api/v1/inline-image/:filename` (`InlineImageController`, module `user`), jamais lus depuis R2. Motivation : un volume Docker nommé (`SHARED_DIRECTORY` → `/app/shared`) est partagé entre les *replicas* d'un même hôte, jamais entre plusieurs hôtes physiques distincts — un fichier écrit via une requête tombée sur l'hôte A serait invisible depuis l'hôte B. `POST /api/v1/admin/inline-image` renvoie désormais `{ filename, url }` : `url` est l'URL publique R2 (`ImageStorageService.publicUrl()`) quand ce provider est actif, `null` sinon — le front (`InlineImageService.uploadInlineImage()`, README `user`) l'utilise directement au lieu de composer une URL vers ce backend, puisqu'un fichier R2 n'y est jamais joignable.
 

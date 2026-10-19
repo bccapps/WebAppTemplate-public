@@ -21,6 +21,7 @@ import { BugReportController } from './controllers/BugReportController';
 import { SystemInfoController } from './controllers/SystemInfoController';
 import { ThemeController } from './controllers/ThemeController';
 import { CookieConsentController } from './controllers/CookieConsentController';
+import { DonationController } from './controllers/DonationController';
 import { HealthController } from './controllers/HealthController';
 import { EventStreamController } from './event-stream/EventStreamController';
 
@@ -56,6 +57,8 @@ import { DiskAlertService } from './services/DiskAlertService';
 import { ImageStorageService } from './services/ImageStorageService';
 import { CookieConsentService } from './services/CookieConsentService';
 import { CookieConsentRetentionCronService } from './services/CookieConsentRetentionCronService';
+import { DonationService } from './services/DonationService';
+import { DonationPriceService } from './services/DonationPriceService';
 import { ThemeEntity } from './entities/ThemeEntity';
 import { CookieConsentEntity } from './entities/CookieConsentEntity';
 
@@ -71,7 +74,7 @@ import ConfigurationEntity from './entities/ConfigurationEntity';
 
 @Module({
   imports: [TypeOrmModule.forFeature([ConfigurationEntity, ThemeEntity, CookieConsentEntity])],
-  controllers: [ConfigurationController, LocaleController, CryptController, ModuleConfigController, EmailController, BugReportController, SystemInfoController, ThemeController, CookieConsentController, HealthController, EventStreamController],
+  controllers: [ConfigurationController, LocaleController, CryptController, ModuleConfigController, EmailController, BugReportController, SystemInfoController, ThemeController, CookieConsentController, DonationController, HealthController, EventStreamController],
   providers: [
     ConfigurationService,
     ConfigSeederService,
@@ -105,6 +108,8 @@ import ConfigurationEntity from './entities/ConfigurationEntity';
     ImageStorageService,
     CookieConsentService,
     CookieConsentRetentionCronService,
+    DonationService,
+    DonationPriceService,
     AppExceptionFilter,
     ...throttleProviders,
     ThrottleRegistry,

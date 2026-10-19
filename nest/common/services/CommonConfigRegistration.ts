@@ -10,6 +10,7 @@
 import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { ModuleConfigService } from './ModuleConfigService';
 import { commonConfigSchema } from '../configSchema';
+import { donationsConfigSchema } from '../donationsConfigSchema';
 
 @Injectable()
 export class CommonConfigRegistration implements OnApplicationBootstrap {
@@ -17,5 +18,6 @@ export class CommonConfigRegistration implements OnApplicationBootstrap {
 
   onApplicationBootstrap(): void {
     this.moduleConfigService.register(commonConfigSchema);
+    this.moduleConfigService.register(donationsConfigSchema);
   }
 }
