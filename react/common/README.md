@@ -744,7 +744,7 @@ function Header() {
 }
 ```
 
-Enregistrer les images par défaut de l'app au démarrage :
+Les fichiers restent dans `public/images/` (ou un dossier de marque propre à l'app, comme `public/brand/` pour la mascotte d'AgentHub), toujours référencés depuis le thème (`images` du `ThemeDefinition`) et jamais en dur dans un composant. Une app sur le thème `default` sans thème privé enregistre ses images par défaut au démarrage :
 ```typescript
 import { themeRegistry } from '@/modules_shared/common/theme/themes'
 themeRegistry.setDefaultImages({ logoMain: '/images/mon-logo.svg' })
