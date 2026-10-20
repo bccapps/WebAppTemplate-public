@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import { describe, it, expect } from '@jest/globals';
 import { authUserId, extractBearerToken } from './authRequest';
 import { SecurityException } from '../exceptions/SecurityException';
 

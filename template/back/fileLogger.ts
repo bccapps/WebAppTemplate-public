@@ -68,7 +68,7 @@ export function installFileLogging(): void {
     }
   }
 
-  const fmt = (args: any[]) =>
+  const fmt = (args: unknown[]) =>
     args
       .map((a) => {
         if (typeof a === 'string') return a;
@@ -78,8 +78,8 @@ export function installFileLogging(): void {
       .join(' ');
 
   (['log', 'info', 'warn', 'error', 'debug'] as const).forEach((level) => {
-    const orig = (console as any)[level].bind(console);
-    (console as any)[level] = (...args: any[]) => {
+    const orig = console[level].bind(console);
+    console[level] = (...args: unknown[]) => {
       const stamp = ts();
       orig(`[${stamp}]`, ...args);
       write(`[${stamp}] [${level.toUpperCase()}] ${fmt(args)}`);

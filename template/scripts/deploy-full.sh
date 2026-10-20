@@ -922,6 +922,9 @@ prepare_front_build() {
   assert_no_broken_symlinks "./front"
   rm -rf "${FRONT_BUILD_DIR}"
   rsync -aL --delete "${RSYNC_DIR_EXCLUDES[@]}" "./front/" "${FRONT_BUILD_DIR}/"
+  # App-specific nginx locations (optional front/nginx.locations.conf) at the `# @app-locations` marker of nginx.conf.
+  node "${SCRIPT_DIR}/merge-nginx-locations.mjs" "${FRONT_BUILD_DIR}/nginx.conf" "${FRONT_BUILD_DIR}/nginx.locations.conf" \
+    || { err "[LOCAL] front/nginx.locations.conf could not be merged into nginx.conf"; exit 1; }
 }
 
 prepare_back_build() {

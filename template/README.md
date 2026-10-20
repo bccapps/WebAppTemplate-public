@@ -105,6 +105,8 @@ Progress markers (`==> ` lines parsed by Agent Hub): `[BACK:<host>] Tagging curr
 | `back/Dockerfile` | Lean, cloud-ready (multi-stage, no PM2, env at runtime) |
 | `back/Dockerfile.selfhosted` | Self-hosted / VPS (PM2, baked .env) |
 
+`front/nginx.conf` is shared (linked from the template). An app that needs its own `location` blocks (a streaming gateway, large request bodies, long timeouts) writes them in a real file `front/nginx.locations.conf`: `deploy-full.sh` splices it at the `# @app-locations` marker, before the generic `/api/` block (`scripts/merge-nginx-locations.mjs`). Never replace the shared `nginx.conf` for that.
+
 ## Common dependency baseline (front)
 
 `front/package.base.json` is the single source for any dependency more than
