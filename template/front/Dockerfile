@@ -4,7 +4,8 @@
 # NOTE: the automated deploy (deploy-full.sh) rewrites this with a prebuilt
 # variant; this file is the source of truth for local builds (run.sh) and the
 # template the deploy starts from.
-FROM node:22-alpine AS build
+# Node major: see back/Dockerfile (24 everywhere, ships npm 11).
+FROM node:24-alpine AS build
 WORKDIR /app
 
 COPY package*.json ./
@@ -18,7 +19,7 @@ ARG VITE_API_URL=/api/v1
 
 RUN npm run build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.30-alpine
 
 # Backend port baked into the nginx config at build time (upstream = back:${NODE_PORT}).
 # Only ${NODE_PORT} is substituted; nginx runtime vars ($host, $uri, …) are preserved.

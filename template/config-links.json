@@ -10,7 +10,6 @@
   "back/eslint.config.mjs": "back/eslint.config.mjs",
   "back/.dockerignore": "back/.dockerignore",
   "back/nest-cli.json": "back/nest-cli.json",
-  "back/Dockerfile.base": "back/Dockerfile.base",
   "back/Dockerfile": "back/Dockerfile",
   "front/.env.example": "front/.env.example",
   "front/Dockerfile": "front/Dockerfile",

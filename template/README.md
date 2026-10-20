@@ -339,7 +339,7 @@ when they drift by more than ~2×:
 | `npm run i18n:check` | missing locale keys | _to measure_ |
 
 A slow suite is a signal: look for real timers or vendored directories scanned by the analyzer before accepting it. The embedded
-Node of the desktop app is pinned in `scripts/desktop/lib.mjs` (latest 22.x published at least two weeks ago).
+Node of the desktop app is pinned in `scripts/desktop/lib.mjs` (latest 24.x published at least two weeks ago).
 
 ### Repo map
 

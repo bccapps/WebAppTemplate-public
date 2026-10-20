@@ -119,7 +119,7 @@ services:
       - shared_directory:/app/shared
 
   back-lb:
-    image: nginx:alpine
+    image: nginx:1.30-alpine
     restart: unless-stopped
     container_name: ${PROJECT_NAME}_back_lb
     depends_on:
@@ -273,7 +273,7 @@ services:
   # Not started by default — activate with:  docker compose --profile metrics up -d
   # See PROMETHEUS.md for full setup instructions.
   vmagent:
-    image: victoriametrics/vmagent:latest
+    image: victoriametrics/vmagent:v1.153.0
     restart: unless-stopped
     container_name: ${PROJECT_NAME}_vmagent
     profiles: [metrics]

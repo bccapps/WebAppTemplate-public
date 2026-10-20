@@ -20,7 +20,7 @@ un vrai fichier à cet emplacement (override projet conservé).
 | Env-injection | symlink + ENV | `main.ts` (Swagger/body/DB/CORS via env) ; l'essentiel du démarrage HTTP (helmet, CORS, rawBody, ValidationPipe, `HOST`, `TRUST_PROXY`, `RAW_BODY_PATHS`) vit dans `modules_shared/common/bootstrap` (`configureHttpApp`) |
 | Base + extends | `extends` natif TS | `tsconfig.base.json` ← `tsconfig.json` projet |
 | Base + inject | symlink ou local | `nest-cli.base.json` (+ assets proto si besoin) |
-| ARG | symlink + build-arg | `Dockerfile.base`, `Dockerfile` (`ARG NESTCLI_VERSION`) |
+| Dockerfile | symlink | `Dockerfile` (versions des images : en-tête du fichier) |
 | Config jest | symlink (`config-links.json`) | `jest.config.js` (roots = projet + libs, via `scripts/lib-roots.mjs`) ; la clé `jest` de `package.local.json` est fusionnée par-dessus (`scripts/merge-jest.mjs` : objets fusionnés clé à clé — `moduleNameMapper`, `transform` —, tableaux/scalaires remplacés ; `build-package.mjs` retire `jest` du `package.json` généré) |
 | Base + local + merge | `build-package.mjs` | `package.base.json` + `<module>/package.fragment.json` (modules liés) + `package.local.json` → `package.json` |
 

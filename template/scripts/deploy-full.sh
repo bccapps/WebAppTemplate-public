@@ -211,11 +211,6 @@ if [[ "${ROLLBACK_MODE}" != "1" ]]; then
   echo "==> [LOCAL] Deploy revision: ${DEPLOY_REVISION}"
 fi
 
-# Base image for the back builder stage (NestJS CLI pre-installed).
-# Must match the FROM line in back/Dockerfile.selfhosted and back/Dockerfile.
-NESTJS_CLI_VERSION="11.0.16"
-BACK_BASE_IMAGE_TAG="$(echo "${COMPOSE_PROJECT_NAME}" | tr '[:upper:]' '[:lower:]')-nestcli:22-${NESTJS_CLI_VERSION}"
-
 # Cloud front detection (early, needed to make FRONT_HOSTS optional)
 VITE_API_URL_VALUE=""
 if [[ -f "${FRONT_ENV_FILE}" ]]; then
@@ -989,7 +984,7 @@ build_front_locally() {
   # Replace Dockerfile with a minimal prebuilt version (no npm, no vite on remote).
   # nginx.conf is already processed above — no ARG/envsubst needed at build or runtime.
   cat > "${FRONT_BUILD_DIR}/Dockerfile" << 'DOCKEREOF'
-FROM nginx:1.27-alpine
+FROM nginx:1.30-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY dist /usr/share/nginx/html
 DOCKEREOF
@@ -1071,21 +1066,16 @@ build_back_locally() {
 #   1. no `--mount=type=bind,source=.` around npm ci (it folds the whole context into the
 #      cache key, so every dist change re-runs a 739 MB install)
 #   2. node_modules copied BEFORE dist (stable layers first, volatile last)
-FROM node:22-bookworm-slim AS prod-deps
+#   3. node major = back/Dockerfile's (24: ships npm 11, see the note there)
+FROM node:24-bookworm-slim AS prod-deps
 WORKDIR /app
-# npm major MUST match the machine that writes the lock (see the matching note in
-# back/Dockerfile): node 22 ships npm 10, the control machine runs npm 11, and npm 10
-# rejects an npm 11 lock with:
-#     npm error Missing: chokidar@3.6.0 from lock file
-# npm 11 accepts locks written by both majors, npm 10 only its own.
-RUN npm install -g npm@11
 # *.tgz: local tarball deps (`file:` in package.json). BuildKit tolerates a wildcard
 # matching nothing, so this is a no-op for projects without tarball deps.
 COPY package*.json *.tgz ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev
 
-FROM node:22-bookworm-slim
+FROM node:24-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production
 
@@ -1269,28 +1259,6 @@ fi
 # ======================
 # MULTI-HOST DEPLOYMENT HELPERS
 # ======================
-
-# Ensures the NestJS CLI base image exists on the remote Docker host.
-# Built once; skipped on subsequent deploys unless the tag changes.
-ensure_back_base_image() {
-  local context_name="$1"
-  local docker_ssh_command="$2"
-  local target_host="$3"
-
-  if DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" \
-      image inspect "${BACK_BASE_IMAGE_TAG}" >/dev/null 2>&1; then
-    echo "==> [BACK:${target_host}] Base image ${BACK_BASE_IMAGE_TAG} already present — skipping"
-    return
-  fi
-
-  echo "==> [BACK:${target_host}] Building base image ${BACK_BASE_IMAGE_TAG} (one-time setup, ~2 min)"
-  DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" build \
-    --tag "${BACK_BASE_IMAGE_TAG}" \
-    - <<EOF
-FROM node:22-bookworm-slim
-RUN npm -g install @nestjs/cli@${NESTJS_CLI_VERSION} --omit=dev
-EOF
-}
 
 # Maintenance mode toggle for back-lb (see the maintenance.flag `if` block added to its
 # generated nginx conf in docker-compose.yml / docker-compose-cloud.yml). back-lb is
@@ -1484,7 +1452,6 @@ deploy_back_host() {
   fi
 
   ensure_docker_context "${context_name}" "${ssh_target}" "${ssh_port}"
-  ensure_back_base_image "${context_name}" "${docker_ssh_command}" "${target_host}"
 
   # Keep the running version as `previous` BEFORE the build overwrites `latest` (rollback target).
   dv_tag_previous "$(dv_back_image)"

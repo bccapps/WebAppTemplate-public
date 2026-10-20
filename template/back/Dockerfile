@@ -15,19 +15,15 @@
 # to every remote build. A plain COPY of the manifests + tarballs keeps the key stable.
 
 # ---- Production deps (separate stage — avoids npm prune pass) ----
-FROM node:22-bookworm-slim AS prod-deps
+#
+# Node major: 24 (LTS) everywhere — the three stages below, front/Dockerfile, the stages
+# emitted by scripts/deploy-full.sh, the CI and the desktop runtime. It ships npm 11, the
+# npm of the machines that write the locks: npm 10 (node 22) rejects some npm 11 locks
+# (`npm error Missing: chokidar@3.6.0 from lock file`, a back on 2026-09-27) and crashes
+# resolving vitest 4.1 without a lock (`Cannot read properties of null (reading
+# 'edgesOut')`, CI on 2026-10-20). Never go back to a node image shipping npm 10.
+FROM node:24-bookworm-slim AS prod-deps
 WORKDIR /app
-# npm major MUST match the machine that WRITES the lock: node 22 ships npm 10, the control
-# machine runs node 23+ (npm 11). npm 10 rejects an npm 11 lock — it insists on also
-# installing the optional peer `chokidar@^3.5.2` declared by the @angular-devkit/core
-# nested under @nestjs/schematics, a peer npm 11 deliberately skips — and dies with:
-#     npm error Missing: chokidar@3.6.0 from lock file
-# (one project's back, 2026-09-27; reproduced outside Docker with npm 10.9.9 vs 11.19.0 —
-# front and runner locks happen to satisfy both majors, only back diverges).
-# npm 11 accepts locks written by BOTH majors, npm 10 only its own: the image follows the
-# machine that generates the lock, rather than asking every dev to downgrade.
-# Keep in sync with the prod-deps stage emitted by scripts/deploy-full.sh (prebuilt path).
-RUN npm install -g npm@11
 # *.tgz: local tarball deps referenced via `file:` in package.json. BuildKit tolerates a
 # wildcard matching nothing, so this is a no-op for projects without tarball deps.
 COPY package*.json *.tgz ./
@@ -35,17 +31,11 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev
 
 # ---- Builder ----
-FROM node:22-bookworm-slim AS builder
+FROM node:24-bookworm-slim AS builder
 WORKDIR /app
 
-# Same npm major as prod-deps below — the `npm ci` there validates the same lock.
-# (npm 11 also runs the builder's own `npm ci` on the write path: install of dev deps.)
-RUN npm install -g npm@11
-
-ARG NESTCLI_VERSION=11.0.16
-RUN --mount=type=cache,target=/root/.npm \
-    npm install -g @nestjs/cli@${NESTCLI_VERSION} --omit=dev
-
+# `npm run build` runs the @nestjs/cli of the lock (devDependency of package.base.json):
+# no global CLI to install here.
 # Copy package manifests (and local tarballs) first — npm ci layer is only invalidated
 # when they change, not on every source edit.
 COPY package*.json *.tgz ./
@@ -79,7 +69,7 @@ RUN touch /app/.no-cert.crt
 # shim (ELF relocation types glibc-built binaries use aren't supported by musl's ld.so).
 # All 3 stages must share the same libc so node_modules installed in prod-deps/builder
 # match what the runtime actually loads.
-FROM node:22-bookworm-slim
+FROM node:24-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production
 
