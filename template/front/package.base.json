@@ -2,6 +2,11 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "vite --mode dev",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "update:libs": "git submodule update --remote --merge .libs/vx-public .libs/vx-private && node .libs/apptemplate/scripts/link-shared.mjs front",
     "predev": "node .libs/apptemplate/scripts/link-shared.mjs front",
     "lint": "eslint .",
     "i18n:check": "node .libs/apptemplate/scripts/check-i18n.mjs --check",
