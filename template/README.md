@@ -97,6 +97,8 @@ Progress markers (`==> ` lines parsed by Agent Hub): `[BACK:<host>] Tagging curr
 - [ ] Update `back/src/config/defaultConfig.ts` with project-specific defaults
 - [ ] Configure `back/.env` and `back/.env.dev`
 - [ ] Update `FEATURES.md` with project capabilities
+- [ ] Run the back once to seed the configuration, then start the front and check that the config resolves
+- [ ] New features: create the module on both stacks with its translations and config schema upfront, reuse the shared utilities
 
 ## Dockerfiles
 
@@ -298,9 +300,54 @@ invalid identifier. The identifier names the OS data folder of the app: change t
 | `scripts/create-project.sh [options] [<name> [dir]]` | New project (wizard above): mounts `vx-public` (+ `vx-private`) in `back/.libs` and `front/.libs`, `.libs/apptemplate` symlinks, `shared-modules.json`, env files. URLs: `VX_PUBLIC_URL` / `VX_PRIVATE_URL` (defaults: `https://github.com/bccapps/WebAppTemplate-{public,private}.git`) |
 | `scripts/add-module.mjs <id>... [--remove]` | Add / remove shared modules in an existing project |
 | `scripts/add-desktop.mjs [--name <text>] [--identifier <id>] [--dry-run]` | Add the desktop shell (Tauri) to an existing project (see « Desktop application ») |
-| `scripts/update_common.sh [--push-only\|--pull-only]` | For each mounted library: commit local changes of the back mount, fetch, rebase on `origin/main`, push; then the same on the front mount; both end on the same SHA; the parent repo gets a `chore: bump <lib>` commit. Then symlinks, `package.json` regeneration. Refuses a legacy app (run the migration first) |
+| `scripts/update_common.sh [--push-only\|--pull-only]` | For each mounted library: switch to `main` (mounts default to a detached HEAD), commit local changes of the back mount, fetch, rebase on `origin/main`, push; then the same on the front mount (it rebases on what back just pushed); both end on the same SHA; the parent repo gets a `chore: bump <lib>` commit. Then symlinks, root `CLAUDE.md` imports / `AGENTS.md`, `package.json` regeneration (also with `--pull-only`), `npm install` and an auto-commit when something changed. `git push` the parent afterwards. Refuses a legacy app (run the migration first) |
 | `scripts/migrate-to-webapptemplate.sh` | One-shot, idempotent migration of a legacy app (`nestcommon`/`reactcommon`/`apptemplate` submodules). Does not commit |
 | `scripts/deploy-full.sh` | Deploys with the **latest `main`** of the libraries (`git submodule update --init --remote`), not the refs pinned by the app commit |
+
+## Project layout and agent docs
+
+- **Lib roots** (`scripts/lib-roots.mjs`): a module listed in `shared-modules.json` is resolved in `<stack>/.libs/vx-public/<nest|react>/<m>`,
+  then `.libs/vx-private/...`, then the legacy `.libs/nestcommon` | `.libs/reactcommon`; a module present in both public and private is
+  an error. Package scripts call `.libs/apptemplate/scripts/*.mjs` directly (no per-project copy of `link-shared.mjs`).
+- **Agent docs** (`scripts/project-docs.mjs`, run by `update_common.sh`): the root `CLAUDE.md` is a real file made of `@imports`
+  (`@front/.libs/apptemplate/CLAUDE.md`, plus `@front/.libs/vx-private/CLAUDE.private.md` when vx-private is mounted), the marker
+  `<!-- project-specific notes below -->` and the project notes (kept across refreshes). `AGENTS.md` (for agents that ignore
+  `@import`) is generated from the same files and git-ignored.
+
+### Shared config files
+
+`config-links.json` lists the config files shared from the template (`tsconfig.json`, `viteConfig.ts`, `vitestConfig.ts`, `Dockerfile`, ...), materialized as
+symlinks by `scripts/link-config.mjs`; a project-local real file is left untouched (intentional override). `main.ts` / `main.tsx`
+are project-specific on purpose. A subpath-`exports` package (`pkg/subpath`, e.g. `@base-org/account/node`) needs, under
+`moduleResolution: "node"`, a `compilerOptions.paths` entry `"pkg/subpath": ["./node_modules/pkg/dist/<.d.ts path, no extension>"]`
+(see the existing `ox`/`ox/*` entries): `update_common.sh` regenerates `package.json` but this entry is added by hand in each app
+that keeps its own `tsconfig.json`.
+
+### Verification loop
+
+Each project records, in the notes of its root `CLAUDE.md`, the measured duration of its checks (machine, date), and re-measures
+when they drift by more than ~2×:
+
+| Command | Scope | Duration |
+|---|---|---|
+| `cd back && npm run lint` / `cd front && npm run lint` | lint | _to measure_ |
+| `cd back && npm run build` | type-check + compile (`nest build`) | _to measure_ |
+| `cd front && npx tsc -b` | type-check only (the full build adds `vite build`) | _to measure_ |
+| `cd back && npx jest <file>` | one spec file | _to measure_ |
+| `cd back && npm test` | all back unit tests | _to measure_ |
+| `cd front && npx vitest run <file>` | one front spec | _to measure_ |
+| `npm run i18n:check` | missing locale keys | _to measure_ |
+
+A slow suite is a signal: look for real timers or vendored directories scanned by the analyzer before accepting it. The embedded
+Node of the desktop app is pinned in `scripts/desktop/lib.mjs` (latest 22.x published at least two weeks ago).
+
+### Repo map
+
+`scripts/repo_map.py` writes `.repo-map.md` (TypeScript, Python, Dart, Go; follows the `modules_shared` symlinks into `.libs/`).
+`## Signatures`: detailed signatures within `--max-tokens` (default 8,000), app code before shared code, most recently modified
+first; `## Index`: every other file, one line each (`--no-index` drops it). Tests, generated files, `vendor/`/`third_party/`,
+`*_build/` and symlinks leaving the repo are excluded; a language it does not extract is invisible (`--stats`), and `--check`
+then answers "up to date" whatever changes there. Use `python3`, not `python`.
 
 ## DB SSL Connection
 

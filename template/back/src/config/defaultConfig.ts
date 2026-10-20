@@ -13,5 +13,5 @@ export type DefaultConfigEntry = {
   description?: string;
 };
 
-// Add project-specific defaults here (see CLAUDE.md §9 "Getting Started").
+// Add project-specific defaults here (see the template README, « Needed Customizations »).
 export const defaultConfigEntries: DefaultConfigEntry[] = [];

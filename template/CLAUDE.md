@@ -1,150 +1,97 @@
 # Project Context
 
+Rules only; the how-to lives in the READMEs linked from each rule (template `README.md`, `nest/common/README.md`, `react/common/README.md`, `nest/database/README.md`, `desktop/README.md`).
+
 ## 1. Architecture Overview
 
-- **Monorepo**: `front/` (React + Vite) and `back/` (NestJS + TypeORM + Postgres)
-- **Module-first**: a business capability = one dedicated module on both front & back. Keep controllers/services/entities grouped; mirror naming between layers.
-- **Shared modules**: `back/src/modules_shared` and `front/src/modules_shared` — read the README.md in each. Do not modify without asking.
-- **Remote API modules (MANDATORY)**: check `front/src/config/configApis.ts` → `apiUrlMap`. If a module maps to a remote URL (not `default`), its data lives on a remote API — do NOT use its shared-module entities/repos/services on the backend; use or create a `-remote` variant (`<module>-remote`) that fetches via HTTP. The original symlink may still be needed as a dependency of other shared modules. **Transitive**: any shared-module service (even in another module) needing data from a remote module must inject the `-remote` service — local tables will be empty.
-- **API base URLs (MANDATORY)**: every HTTP call in `front/src/modules_shared` uses `configurationService.getApiUrl('moduleId')`. NEVER hardcode `/api/...` or import `getApiBaseUrl` (internal to `ConfigurationService`). The URL already includes `/api/v1`; services only append the resource path (`getApiUrl('mymodule') + '/items'`). This lets any module be redirected to a remote API with one `apiUrlMap` entry.
-- **Internationalization**: user-facing strings → `back/src/locales`. Generic → `common.*.json`, app-specific → `custom.*.json`. `common.*.json` holds only reusable common-language keys (auth, forms, config, errors…) and has NO relation to the `common` module; module-specific keys belong in `<module>/locales/`. `back/src/locales/common.*.json` must be a **real file** in every app, never a symlink into another app. The template carries a canonical subset at `back/locales/common.*.json`; `npm run locales:sync` (also run by `update_common.sh`) only ever adds missing keys, never overwrites.
+- **Monorepo**: `front/` (React + Vite) and `back/` (NestJS + TypeORM + Postgres or SQLite).
+- **Module-first**: a business capability = one module on both front & back, same names on both layers; new domains in `src/modules/<feature>`, same-module imports by relative path only.
+- **Shared modules**: `{back,front}/src/modules_shared` (symlinks into `.libs/`). **README-first (MANDATORY)**: read a module's README before touching it or reimplementing anything; a capability that belongs to a shared module goes there, README updated in the same change. Do not modify a shared module without asking.
+- **Remote API modules (MANDATORY)**: if `front/src/config/configApis.ts` → `apiUrlMap` maps a module to a remote URL, its data lives on that API: the back never uses its local entities/repos/services, it uses (or creates) the `<module>-remote` variant — transitively, for every service of any module needing that data (local tables are empty). The original symlink may still be needed by other modules.
+- **API base URLs (MANDATORY)**: every HTTP call of `front/src/modules_shared` uses `configurationService.getApiUrl('moduleId')` (already includes `/api/v1`) + the resource path. Never hardcode `/api/...` nor import `getApiBaseUrl`.
+- **Internationalization**: user-facing strings in `back/src/locales`: `common.*.json` = reusable common-language keys only (unrelated to the `common` module), `custom.*.json` = app-specific; `back/src/locales/common.*.json` is a **real file** in every app, never a symlink (`npm run locales:sync` only adds missing keys from the template). A shared module's keys ship in `<module>/locales/` (front ones are bundled into every app); never copy them into `common.*.json`. `npm run i18n:check` is the CI gate.
 
 ### 1b. Shared libraries (submodules)
 
-Two git repositories hold the code reused across projects, each mounted TWICE (a checkout in `back/.libs/` and one in `front/.libs/`, because Node resolves dependencies from the real path of a file): `vx-public` (this template, the public modules `common`, `database`, `voice`: shared scripts, Dockerfiles, `package.base.json`, this `CLAUDE.md`, the i18n audit...) and, when the project has access, `vx-private` (further modules; it ships its own `CLAUDE.private.md` rules, imported below). `<stack>/.libs/apptemplate` is a committed symlink to `vx-public/template`.
+`vx-public` (this template + public modules `common`, `database`, `voice`) and, when the project has access, `vx-private` (its rules: `CLAUDE.private.md`), each mounted twice (`back/.libs/` and `front/.libs/`: Node resolves from a file's real path). `<stack>/.libs/apptemplate` → `vx-public/template`; root `scripts` → `front/.libs/apptemplate/scripts`. Resolution order, generated docs, config links: template `README.md`, « Project layout and agent docs ».
 
-- **Project docs layout**: the root `CLAUDE.md` is a real, generated file made of `@imports` (`@front/.libs/apptemplate/CLAUDE.md`, plus `@front/.libs/vx-private/CLAUDE.private.md` when vx-private is mounted) followed by a `<!-- project-specific notes below -->` marker; write project notes below it only. `AGENTS.md` (for agents that ignore `@import`) is GENERATED by `scripts/update_common.sh` from the same files and is git-ignored: never edit it. The root `scripts` is a symlink to `front/.libs/apptemplate/scripts`.
-- **Lib roots (`scripts/lib-roots.mjs`)**: a module listed in `shared-modules.json` is resolved in `<stack>/.libs/vx-public/<nest|react>/<m>`, then `.libs/vx-private/...`, then the legacy `.libs/nestcommon` | `.libs/reactcommon`; a module in both public and private is an error. `.libs/apptemplate` is an alias of the template (symlink to `vx-public/template` in the new layout). Package scripts call `.libs/apptemplate/scripts/*.mjs` directly (no per-project copy of `link-shared.mjs`).
-- **Editing (MANDATORY)**: libraries are edited in their **`.libs/` working tree** and published with **`./scripts/update_common.sh`** from the project root. Never edit another clone of the libraries (it only *pulls* after a push).
-  - `vx-public` (template + public modules) → `front/.libs/vx-public/` is the canonical mount (the template is `front/.libs/apptemplate/`, same files); the `back` mount is synchronized by the script.
-  - `vx-private` (when mounted) → its own rules (`CLAUDE.private.md`).
-  - `update_common.sh`, per mounted repository: switch to `main` (default is detached HEAD), commit the local changes of the back mount, fetch + rebase on `origin/main`, push; then the same for the front mount (it rebases on what back just pushed); both mounts must end on the same SHA; the parent repo gets a `chore: bump <repo>` commit. Then it refreshes `CLAUDE.md` imports / `AGENTS.md`, regenerates both `package.json` and runs `npm install` if needed. Flags `--push-only`, `--pull-only`. Afterwards `git push` the parent repo. Deploys take the latest `main` of each library (`git submodule update --init --remote`).
-- **Adding or removing a shared module**: `node scripts/add-module.mjs <id>` (or `--remove <id>`) updates `shared-modules.json`, the `.env.example` blocks and the links — never import a shared module by hand in `AppModule`; wiring goes through the module's plugin. Projects are created with `scripts/create-project.sh` (answers saved in `project.config.json`).
-- **Back plugin format (MANDATORY to know before writing a `plugin.ts`)**: `export const plugin: NestModulePlugin = { id, module?, modules?, order?, auth? }` (`nest/common/plugins/NestModulePlugin.ts`).
-  - `module`: a Nest module, or a factory `(options) => DynamicModule` for a module whose `forRoot` needs classes only the app has (ports); the factory validates its input with `requirePluginOptions(id, options, [required keys])`, which stops the app at startup with the plugin id and the missing keys.
-  - `modules`: further modules of the same folder (e.g. `tradingplatform`, `trading`), registered right after `module`.
-  - `order`: registration order, default 100, lower first, ties keep the order of `shared-modules.json`.
-  - The options of factory plugins come from `back/src/config/pluginOptions.ts` (app-owned file, created empty by the template, `export const pluginOptions: PluginOptions = { '<plugin id>': { ... } }`). `link-shared.mjs` imports it into `plugins.generated.ts` when the file exists; `AppModule` imports `sharedPluginModules`.
-  - On the back, `link-shared.mjs` also warns `module <name> listé, sans plugin et importé par aucun fichier (lien probablement inutile)` for a listed module that has no plugin (except `common`, `database`, `voice`) and whose path (`modules_shared/<name>/` or `/<name>/`) appears in no import specifier of the app (`src/**/*.ts`, `plugins.generated.ts` excluded) nor of the other linked modules. The warning is informative: remove the module from `shared-modules.json` or import it.
-  - An app can drop part of a plugin without touching it: `pluginOptions['<id>'] = false` disables the plugin; `pluginOptions['<id>'] = { excludeModules: ['ClassName', ...] }` removes entries of its `modules` by class name (an unknown name stops the app at startup; factories receive their options without that key). Use it for scheduled jobs the app does not want.
-  - **Libraries rule**: a module that other modules import themselves (a dependency, e.g. `tokens-api`, `rotki-remote`, `api-access`) has NO plugin; it stays listed in `shared-modules.json` (that creates the symlink the imports need). **Never write a plugin that calls a `forRoot` another module also calls**: Nest would create a second instance (duplicate services and scheduled jobs). A plugin registers a module at the ROOT of the app only.
-  - `common` also provides a global rate limiter, off by default (`common_throttleEnabled`); do not add a second `ThrottlerGuard` in the app while it is on. It counts per user (`user:<id>`, resolved through `AUTH_PORT` in the guard itself) and per IP otherwise, and takes extra named throttlers through `ThrottleRegistry` (name, limit, window, `paths`/`skipIf`): never re-implement a limiter with `ThrottlerModule` for a per-route budget (see `nest/common/README.md`, « Limiteur de débit »).
-- **Desktop shell (optional)**: `desktop/` (Tauri 2) turns the project into a desktop app: it starts the back (embedded Node) on a free loopback port with `LOCAL_TRUST=true`, `DB_ENGINE=sqlite` and `SERVE_FRONT_DIR`, waits for `GET /api/v1/health`, then shows the front (same origin, relative API URLs). Everything project-specific is in `desktop/desktop.config.json`; the shell code stays generic — never put project logic in `desktop/src-tauri`. Mount `useDesktopDownloads()` (`react/common`) once in the front layout so downloads show a toast. Add it with `create-project.mjs --desktop` (question « Desktop application (Tauri)? ») or `node scripts/add-desktop.mjs` on an existing project: it records `desktop: { enabled, identifier (reverse domain), productName, sidecars }` in `project.config.json`, copies `desktop/` and `.github/workflows/build-desktop.yml`, fills `desktop.config.json` and adds `desktop:dev` / `desktop:build` to `back/package.local.json`; it is refused with the `user` module (the shell forces `LOCAL_TRUST=true`) or a database other than SQLite, and never overwrites existing files. Build and run for this machine: `./scripts/app.sh`; packages for macOS/Windows/Linux in `desktop/dist/`: `./scripts/bundle.sh` (project step before assembly: optional `scripts-local/desktop-prepare.sh <target>`). Packaging (`scripts/desktop/build-desktop.mjs`, `package-cross.mjs`, `make-dmg.sh`; a single version from `project.config.json`; `packaging.extraResources` for sidecars; native modules other than `better-sqlite3` are only reported): configuration, dev launch, signing and what is not yet automated are in `desktop/README.md`.
-- **Optional modules (MANDATORY)**: `user` (and `common`) must NEVER statically import `commerce` or `infra` (those folders are pruned when unlisted in `shared-modules.json`). Cross them through the `@Optional() @Inject(TOKEN)` extension points of `back/src/modules_shared/common/types/ExtensionPoints.ts` (`KEY_VALUE_CACHE`, `USER_METRICS_SINK`, `TIER_PRICING_PROVIDER`): the optional module provides the token (`{ provide: TOKEN, useExisting: RealService }`, globally visible), the consumer degrades gracefully when it is absent. Enabling `commerce` / `infra` = `add-module`; their plugin wires them.
-- **Locales of a shared module ship with that module** (`<module>/locales/*`), not in the app repo. A front module's `locales/locales.<lang>.json` is bundled into the front (`import.meta.glob` in `LocaleService`) and reaches every app, whether `localesLocation` is `remote` or `local`; the back's `/locales` serves only `common.*`, `custom.*` and the Nest modules' `locales/`. Never copy a front module key into the shared `common.*.json`. `npm run i18n:audit` (report) / `npm run i18n:check` (CI gate) find keys used in code but missing from a locale.
-- **README-first (MANDATORY)**: before touching a `modules_shared` module, read its README.md to discover existing services, endpoints, methods, DTOs — never reimplement. New capabilities that belong to a shared module go there (not in app code), with the README updated in the same change.
-- **`package.json` is GENERATED — never edit it directly (MANDATORY)**: `<stack>/package.json` is rebuilt on every `npm install`/`npm run build` by `node .libs/apptemplate/scripts/build-package.mjs <stack>`, which deep-merges `<stack>/.libs/apptemplate/<stack>/package.base.json` (shared base), the `package.fragment.json` of each module listed in `shared-modules.json` (deps a module needs, in file order), the optional `<stack>/src/modules/<feature>/package.fragment.json` of the app's own modules (alphabetical) and `<stack>/package.local.json` (local wins) and **overwrites** the result. Two fragments declaring different versions of one package print a `⚠` warning (the later wins). Direct edits are silently wiped, and a fresh clone's first `npm install` uses what is *committed*, so a dependency added that way breaks the deploy build.
-  - Dependency shared across projects → edit `package.base.json` in the **front** `vx-public` mount, push with `update_common.sh`.
-  - Dependency of a project feature → `package.fragment.json` in that feature's folder `src/modules/<feature>/` (it leaves with the feature). `<stack>/package.local.json` is for what cannot belong to a module and must stay minimal: `scripts` (only project-specific ones: `dev`, `build`, `test`, `start:prod`, `migrate`, `migrate:prod`, `update:libs` come from the base), `overrides`/pins, tooling used by project scripts. A dependency every app needs does not belong in a local file: promote it to `package.base.json`.
-  - After either: `node .libs/apptemplate/scripts/build-package.mjs <stack> && npm install`, then `git add <stack>/package.json <stack>/package-lock.json` (+ the edited base/local file).
-  - Propagation: `update_common.sh` regenerates both `package.json` after every sync (including `--pull-only`), runs `npm install` and auto-commits if anything changed — new base deps reach consuming apps the next time they run it. **Not automated**: a needed `tsconfig.json` `paths` entry (next point) must be added by hand in each app.
-  - A subpath-`exports` package (`pkg/subpath`, e.g. `@base-org/account/node`) needs a `tsconfig.json` `compilerOptions.paths` entry under `moduleResolution: "node"`: `"pkg/subpath": ["./node_modules/pkg/dist/<.d.ts path, no extension>"]` (see the existing `ox`/`ox/*` entries). `tsconfig.json` is meant to be a shared symlink (`config-links.json`, materialized by `scripts/link-config.mjs`, which leaves a project-local real file untouched as an intentional override); a project may keep its own real `tsconfig.json`, hence the per-project fix. `main.ts`/`main.tsx` are intentionally project-specific (not in `config-links.json`).
+- **Project docs**: the root `CLAUDE.md` is generated (`@imports` + `<!-- project-specific notes below -->`): write project notes below the marker only. `AGENTS.md` is generated and git-ignored: never edit it.
+- **Editing libraries (MANDATORY)**: edit them in their `.libs/` working tree only (never another clone), publish with `./scripts/update_common.sh` from the project root (`--push-only`, `--pull-only`), then `git push` the parent. `vx-public` canonical mount = `front/.libs/vx-public/` (= `front/.libs/apptemplate/`); the back mount is synchronized by the script. Deploys take the latest `main` of each library.
+- **Shared modules in a project**: `node scripts/add-module.mjs <id>` / `--remove <id>`; never import a shared module by hand in `AppModule` — wiring goes through its plugin.
+- **Back plugins**: `export const plugin: NestModulePlugin = { id, module?, modules?, order?, auth? }`; factory form `(options) => DynamicModule` validated with `requirePluginOptions`, options in `back/src/config/pluginOptions.ts` (`false` disables a plugin, `excludeModules` drops some of its modules). Contract: `nest/common/README.md`, « Plugins ».
+  - **Libraries rule**: a module that other modules import (e.g. `tokens-api`, `api-access`) has NO plugin and stays listed in `shared-modules.json` (for the symlink). Never write a plugin calling a `forRoot` another module also calls (second instance: duplicate services and crons); a plugin registers at the app ROOT only.
+  - `common` ships a global rate limiter (off by default, `common_throttleEnabled`): no second `ThrottlerGuard` while it is on, per-route budgets through `ThrottleRegistry`, never a hand-made `ThrottlerModule` (`nest/common/README.md`, « Limiteur de débit »).
+- **Optional modules (MANDATORY)**: `user` and `common` never statically import `commerce` or `infra` (pruned when unlisted): cross through the `@Optional() @Inject(TOKEN)` extension points of `common/types/ExtensionPoints.ts`; the consumer degrades gracefully without them.
+- **Desktop shell (optional)**: `desktop/` (Tauri 2), added by `create-project.mjs --desktop` or `scripts/add-desktop.mjs`; project specifics in `desktop/desktop.config.json` only, never project logic in `desktop/src-tauri`. Everything else: `desktop/README.md`.
+- **`package.json` is GENERATED — never edit it (MANDATORY)**: `build-package.mjs` merges `package.base.json` (shared) → `package.fragment.json` of each listed shared module → `src/modules/<feature>/package.fragment.json` (app features) → `package.local.json`, and overwrites `<stack>/package.json` on every install/build (direct edits are wiped; a fresh clone installs what is committed).
+  - Dependency every/several apps need → `package.base.json` in the front `vx-public` mount. Dependency of one feature → that feature's `package.fragment.json`. `package.local.json` stays minimal: project-specific `scripts`, `overrides`/pins, tooling of project scripts (common scripts come from the base).
+  - Then `node .libs/apptemplate/scripts/build-package.mjs <stack> && npm install`, commit `package.json` + `package-lock.json` + the edited source file. A subpath-`exports` package may need a `tsconfig.json` `paths` entry by hand in each app (template `README.md`, « Shared config files »).
 
 ## 2. Frontend Stack
 
-- **Tech**: React + Vite + TypeScript, React Router, MUI, HttpService, Toast/Loader utilities. Wagmi/Reown (web3) and TanStack Query are brought ONLY by the `user` module (via its plugin) — the public template has none of them
-- **Entry**: `src/main.tsx` → `RootGate` → optional landing page via `useLandingPage` config
-- **App shell**: outer plugin `Provider`s (`providerPlacement` `outer`, the default; ascending `order`) → `ThemeModeProvider` → `BrowserRouter` → `PreloaderGate` (`coreServices` of `App.tsx` = configurationService, cryptService, localeService, + the `preload` entries of the plugins; `mode: 'background'` ones start after the configuration and are not awaited) → `VisualThemeProvider` → `ThemeShell` → inner plugin `Provider`s (`providerPlacement: 'inner'`: config loaded, router and theme available) → `PageLayout`. An app removes a core service by deleting its line in `coreServices`
-- **Layout**: `PageLayout.tsx` + `Header.tsx` + `AppSidebar.tsx`. Header keeps Title, the alerts bell, the admin shortcuts, `SwitchLanguage`, `ThemeSwitch` and `<PluginHeaderActions placement="end" />` (the plugins' `HeaderActions`, which receive `{ isAuth, isAdmin }`; `ReownAuthButton` only appears through the `user` plugin; in anonymous mode a logout-admin button is shown). Any other header (an app's own top bar) renders the same `<PluginHeaderActions />`. `PageLayout` picks the layout of the current route: `page` (header + sidebar + footer), `admin` (same, the sidebar adds the admin menu) or `fullscreen` (the page alone). Everything else is free to change
-- **Routing**: `Router.tsx` declares the app routes `{ path, element | lazy, guard?, layout?: 'page' | 'fullscreen' | 'admin' }` and resolves them with the plugin `routes`/`adminRoutes` (`resolveRoutes`: a `Suspense` wraps the routes so `lazy: () => import(...)` works; a path declared twice throws in dev). Guards come from `react/common/plugins/guards`: `RequireAdmin`, `RequireAuth`, `RequireFeature('id')` (lets everything through without the `user` plugin, which registers the feature checker). `front/src/config/pluginRoutes.ts` (app-owned, empty) disables (`false`) or replaces a plugin route by path
-- **Module plugins (MANDATORY)**: `front/src/plugins.ts` collects, via `import.meta.glob('./modules_shared/*/plugin.tsx')`, the `AppPlugin` of every linked module (back: `src/modules_shared/plugins.generated.ts`, written by `link-shared.mjs`). `App.tsx`, `Router.tsx`, `Header.tsx`, `AppSidebar.tsx` and `AppModule.ts` read them: adding/removing a shared module requires NO edit of those files. In public/shared code use `sessionAuth` (`common/auth/sessionAuth`) instead of `userService`; `userManagementEnabled` tells whether `user` is linked (otherwise the admin is protected by `ADMIN_TOKEN` + `AdminTokenGate`)
-  - **Front plugin format**: `export const plugin: AppPlugin = { id, order?, preload?: { key, service, mode?: 'blocking' | 'background' }[], Provider?, providerPlacement?: 'outer' | 'inner', HeaderActions?, routes?, adminRoutes?, navMenu?, adminMenu? }` (`react/common/plugins/AppPlugin.ts`; full contract in `react/common/README.md`). A module needing options from the app exports a factory instead, `export const plugin = (options) => AppPlugin`, validating with `requirePluginOptions(id, options, [keys])`; the options come from `front/src/config/pluginOptions.ts` (app-owned, empty by default: `{ '<module folder>': { ... } }`), same principle as the back.
-- **Public files and updates**: `front/public/` (`robots.txt`, `_redirects`, `_headers`, favicon) is project-owned after creation. `main.tsx` keeps `installPreloadErrorReload` (single reload on `vite:preloadError`): do not replace it with an unguarded `location.reload()`. Optional PWA (`pwa.enabled` in `project.config.json`): the service worker (`src/sw.ts`) must never cache `/api/`; the install button goes through `usePwaInstallPrompt`. Template files that depend on the PWA wrap the variable parts in `{{#PWA}}` ... `{{/PWA}}` marker lines (inside a comment of the file's syntax)
-- **Navigation**: the sidebar (`AppSidebar`) shows the entries of `front/src/config/navigation.ts` (app-owned, empty: `appNavMenu`, `appAdminMenu`) then those of the plugins (`navMenu`, `adminMenu`), sections with the same id merged. An item is `{ id, labelId, to, icon, visible?(ctx) }`, `ctx = { isAdmin, isAuth, hasFeature }`; the admin menu is shown to admins on `admin` layout pages. No visible entry = no sidebar. The admin panels `Admin*`/`Dashboard*` of the modules are discovered by `AdminPage`/`AdminDashboard` on their own
-- **Config**: use `configurationService` for global settings; avoid hardcoding
-- **Components**: small & reusable; extract logic into hooks/services. Keep component files moderate; compose components from components to separate blocks and distinct UI items.
-- **Utilities**: use existing Toast, Loader, HttpService and everything in `modules_shared` (back & front) instead of reimplementing
-- **UI**: modern, responsive on all devices; `front/src/styles/global.css` may be revamped for a polished theme (dark & light)
-- **Modules**: new domains under `src/modules/<feature>` mirroring `modules_shared`; inside a module, import same-module files by relative path only
-- **Themes & styles (MANDATORY)**: the look of an app lives in a **theme**, never in a shared component. Themes are discovered automatically (`common/theme/discoverThemes.ts`, no registration file): shared ones in `common/themes/<id>/` (vx-public, e.g. `default`), **private** ones in the app's `front/src/themes/<id>/` (never published; the app's identity: palette, fonts, logo, background, app CSS). A theme = `index.ts` (default export `ThemeDefinition`, `appDefault: true` for the app's own, `images`, `fonts`) + its CSS under `:root[data-theme='<id>']` (and `[data-color-scheme='dark']`). An app with a real identity has its own private theme; an app not customized yet uses the shared `default`. Rules of the Colors/Images items below apply to every shared module (`vx-public`, `vx-private`) and to app code. README: `common/README.md`, « Système de thèmes visuels ».
-  - **Colors**: no hex/rgb/hsl literal in a component or its CSS. A shared component reads only (a) the token contract `common/theme/tokens.css` (`--color-*`, `--accent-*`, `--surface-*`, `--radius-*`, `--shadow-*`…) or (b) its module's tokens, `<module>/styles/tokens.css` (`--<module>-<component>-<role>`, single-valued defaults in `:where(:root)` so any theme overrides them; literals live ONLY in these files). A token that does not exist yet is added there, with its default, never inlined. A theme overrides tokens; it never needs a component edit.
-  - **Where a literal stays**: colors handed to JS (canvas, chart libs, MUI `alpha()`/`darken()`, SVG presentation attributes) are resolved from the theme at runtime (`getComputedStyle` of the token / the app's `readPalette()`), and data colors (series, avatars, user-chosen) stay data. Never `var()` in a canvas option.
-  - **Images**: logos and page backgrounds are declared by the theme (`ThemeDefinition.images`: `logoMain`, `logoSmall`, `heroBackground`, `favicon`) and read with `useThemeImage(key)`; the files stay in `public/images/` (standard folder; an app whose brand is a whole family of assets, e.g. AgentHub's mascot in `public/brand/`, keeps its own folder, still referenced only from the theme). An app on the shared `default` theme without logo files of its own registers them once with `themeRegistry.setDefaultImages(...)`. Never hardcode `/images/logo-*.svg` in a component.
-  - **Fonts**: declared by the theme (`fonts`), not by `@import` in shared CSS. **No per-app copy of shared styles**: the shared stylesheets live in `common/styles/` (`shared_ui.css` for the shared modules, `theme_default.css` = app shell + UI for `PageLayout`) and a module's own CSS in `<module>/styles/<module>.css`, both imported by relative path (never `@/styles/...`, never CSS `@import` between them: import order is set by JS imports). An app's differences go in its private theme (`themes/<id>/colors.css`, `app.css`, loaded in order by `themes/<id>/styles.ts`); see the README of `common`, « Feuilles partagées et feuilles d'app ».
-- **Tables (MANDATORY)**: all data tables/lists have clickable sortable headers (MUI `TableSortLabel`) via `useSortableTable` from `common/hooks/useSortableTable`. Non-sortable columns (Actions, Color) keep plain headers.
-- **Session reactivity (MANDATORY)**: any component depending on session state MUST call `useSessionKeys([...keys])` at the top (`@/modules_shared/common/hooks/useSessionKeys`), e.g. `['user']` when the `user` module is linked (see `CLAUDE.private.md`). It subscribes to `AppSession` events; without it `appSession.get(key)` returns stale values after the session changes.
-- **Page = thin wrapper (MANDATORY)**: pages in `front/src/components/pages/` only import and compose module components (`modules_shared`), handle route params, feature gating (when the `user` module is linked) and layout. Business logic, forms, lists, UI, state and data fetching belong in the module (a shared module if reusable, `src/modules` otherwise).
-- **Forms**: mark required fields and show an error when one is missing on submit. While submitting, show a loading state, block all field interaction and any modal close. In a modal, blur the background.
+- **Tech**: React + Vite + TypeScript, React Router, MUI, HttpService, Toast/Loader. Wagmi/Reown and TanStack Query come ONLY with the `user` plugin. Optional landing page via the `useLandingPage` config. Shell, layouts (`page` | `admin` | `fullscreen`), routing, guards, navigation and the `AppPlugin` contract: `react/common/README.md`.
+- **Module plugins (MANDATORY)**: shared modules plug in through `plugin.tsx` (front, collected by `src/plugins.ts`) / `plugin.ts` (back, `plugins.generated.ts`): adding or removing one requires NO edit of `App.tsx`, `Router.tsx`, `Header.tsx`, `AppSidebar.tsx`, `AppModule.ts`. App-owned overrides: `config/pluginOptions.ts`, `config/pluginRoutes.ts` (disable/replace a plugin route), `config/navigation.ts`. Shared code uses `sessionAuth` (`common/auth/sessionAuth`), not `userService`; `userManagementEnabled` tells whether `user` is linked (otherwise the admin is protected by `ADMIN_TOKEN` + `AdminTokenGate`). `Admin*`/`Dashboard*` panels are auto-discovered.
+- **Routes**: declared in `Router.tsx` (`{ path, element | lazy, guard?, layout? }`); a custom header renders `<PluginHeaderActions />`.
+- **Public files**: `front/public/` is project-owned. `main.tsx` keeps `installPreloadErrorReload` (no unguarded `location.reload()`). PWA: the service worker never caches `/api/` (template `README.md`, « Front public files and PWA »).
+- **Code**: small reusable components, logic in hooks/services; use `configurationService`, Toast, Loader, HttpService and `modules_shared` instead of reimplementing.
+- **Page = thin wrapper (MANDATORY)**: `components/pages/` only compose module components, handle route params, feature gating and layout; logic, forms, lists, state and fetching live in the module.
+- **Themes & styles (MANDATORY)**: an app's look lives in a **theme** (`common/themes/<id>/` shared, `front/src/themes/<id>/` private = the app's identity, `appDefault: true`), never in a shared component. Details: `react/common/README.md`, « Système de thèmes visuels » and « Feuilles partagées et feuilles d'app ».
+  - **Colors**: no hex/rgb/hsl literal in a component or its CSS. Components read the token contract `common/theme/tokens.css` or their module's `<module>/styles/tokens.css` (`--<module>-<component>-<role>`, defaults in `:where(:root)`, the only place for literals); a missing token is added there. A theme overrides tokens, never a component. Colors for JS (canvas, charts, MUI `alpha()`, SVG attributes) are resolved from the theme at runtime, never `var()` in a canvas option; data colors stay data.
+  - **Images & fonts**: declared by the theme (`images`, `fonts`), read with `useThemeImage(key)`; never hardcode `/images/logo-*.svg`, no font `@import` in shared CSS.
+  - **No per-app copy of shared styles**: shared sheets in `common/styles/` (`shared_ui.css`, `theme_default.css`), a module's own CSS in `<module>/styles/<module>.css`, imported by relative path (never `@/styles/...`, no CSS `@import` between them); app differences in `themes/<id>/colors.css` + `app.css`.
+- **Tables (MANDATORY)**: sortable clickable headers (`TableSortLabel`) via `common/hooks/useSortableTable`; Actions/Color columns stay plain.
+- **Session reactivity (MANDATORY)**: a component depending on session state calls `useSessionKeys([...keys])` (`common/hooks/useSessionKeys`) at the top, or `appSession.get(key)` goes stale.
+- **Forms**: required fields marked, error on submit when missing; while submitting: loading state, fields and modal close blocked; modal background blurred.
 
 ## 3. Backend Stack
 
-- **Tech**: NestJS, TypeORM, Postgres (or SQLite), ScheduleModule for crons
-- **Entry**: `src/main.ts` → `startApp({ appModule, swagger, http?, early?, beforeCreate?, beforeInit? })` (`modules_shared/common/bootstrap/startApp.ts`: every common startup step in the right order; `main.ts` holds only what is project-specific, never copy the steps back into it). Swagger at `/api` only when `resolveSwaggerEnabled()` (`SWAGGER_ENABLED=true|false`, default: outside production only). HTTP hardening (trust proxy, `helmet`, CORS, `rawBody` capture, global `ValidationPipe`) is `configureHttpApp(app)` from `modules_shared/common/bootstrap`, called before `app.init()`; a project with its own `main.ts` calls the same function instead of re-implementing it (extra CORS request headers: `extraCorsHeaders: ['x-company-id']`; no global pipe: `validation: false`; never re-do `enableCors` or `useGlobalPipes` by hand). Env: `HOST`, `CLIENT_ORIGINS` (`*` refused in production), `TRUST_PROXY`, `RAW_BODY_PATHS`, `SWAGGER_ENABLED`, `LOG_DIR`, `APP_DATA_DIR` (see `back/.env.example`). Optional `SERVE_FRONT_DIR` serves the built front from Nest (`serveFrontend`; see `nest/common/README.md`). **Rule: every middleware, `SwaggerModule.setup` and `serveFrontend` is registered BEFORE `app.init()`** — Nest adds its 404 handler and exception filter at the end of `init()`, so anything registered afterwards is silently unreachable (Swagger 404, no gzip). Compression is `lazyCompression(getThreshold)`, which reads the DB threshold on the first request
-- **Health**: `GET /api/v1/health` is provided by `common` (public, not transport-encrypted) and aggregates the `HEALTH_CONTRIBUTORS` extension point; never declare another controller on that path, add a contributor (the `infra` module does)
-- **Modules**: new domains under `src/modules/<feature>` mirroring `modules_shared`; same-module imports by relative path only
-- **Database engine**: Postgres by default, SQLite (`DB_ENGINE=sqlite` + `DB_PATH`) as an option; the wizard (`create-project.mjs --db sqlite`) writes `DB_ENGINE=sqlite`, `DB_PATH=data/<project>.db` and adds `better-sqlite3` to `back/package.local.json`; `run.sh dev` then starts no Docker (Redis only if `REDIS_URL` is set). A module declares the engines it supports in the optional `databases` field of its `module.json` (`["postgres"]`; absent = all engines): the wizard and `add-module.mjs` refuse a module that does not support the project engine, so every module with TypeORM entities that is not ported to SQLite (all of vx-private today) MUST declare `"databases": ["postgres"]`; engines, variables and portable column types (`jsonColumnType()`, `timestampColumnType()`) are implemented in `common/utils/dbEngine.ts` (re-exported by `database`; `common` and `voice` must never import `database`) and documented in `modules_shared/database/README.md`. On SQLite the entity decorators are adapted automatically (`jsonb`→`simple-json`, `timestamptz`→`datetime`, enums, arrays, defaults; `common/utils/portableTypes.ts`, applied by `database`), so an entity may be written with Postgres types (`jsonColumnType()`/`timestampColumnType()` stay valid). Postgres-only SQL is NOT translated: follow the dual-engine rule of §5. Schema management is explicit: `DB_SCHEMA_MODE=sync|migrations|manual` (legacy flags unchanged without it; the typeorm CLI never synchronizes; SQLite is backed up on a version change). `npm run db:check` (static scan, plus an in-memory SQLite schema check only when the project runs on SQLite — `DB_ENGINE=sqlite` or a desktop shell; no database needed) is the gate; helpers, rules and limits: `modules_shared/database/README.md`.
-- **TypeORM**: `Datasource.ts` uses `DB_*` env vars, auto-loads entities. `synchronize: true` for dev, migrations for prod.
-- **TypeORM sync safety (MANDATORY)**: before modifying any entity (renaming/removing a column, changing a type, removing an entity), **STOP and warn the user**: with `synchronize: true` TypeORM silently drops and recreates columns/tables, destroying production data. List every destructive change, explain the impact, and **do not proceed** without explicit confirmation. Safe changes (nullable column, new entity) may proceed.
-- **Global config**: `defaultConfig.ts` → `ConfigSeederService` seeds to DB → `ConfigurationService` reads
-- **Locales**: `src/locales` — keys in all supported languages
-- **Email (MANDATORY)**: always `EmailService` (`modules_shared/common/services/EmailService.ts`) via `emailService.sendEmail(to, subject, html, options?)`. NEVER a custom nodemailer transporter; it handles provider config (`common_email_*`), transporter caching and errors.
-- **Outbound HTTP to third-party APIs (MANDATORY)**: never call `fetch`/`axios` directly. Use `throttledFetch` (`modules_shared/common/utils/throttledFetch.ts`): per-source minimum spacing, retry of 429/5xx with exponential backoff + jitter (honors `Retry-After`), never throws (resolves `{ data: null, stale: true }`). This keeps free-tier APIs from rate-limiting or banning us. For a new source, add a thin per-source wrapper (interval table + delegation to `throttledFetch`).
+- **Tech**: NestJS, TypeORM, Postgres or SQLite, ScheduleModule for crons.
+- **Entry**: `main.ts` → `startApp({ appModule, ... })` (`common/bootstrap/startApp.ts`); `main.ts` holds only project specifics, never copies the common steps back. HTTP hardening (helmet, CORS, rawBody, `ValidationPipe`) = `configureHttpApp(app)` (options `extraCorsHeaders`, `validation`, `publicCorsPaths`, `corsOriginPolicy`); never `enableCors`/`useGlobalPipes` by hand. **Every middleware, `SwaggerModule.setup` and `serveFrontend` is registered BEFORE `app.init()`** (afterwards they are silently unreachable). Env and options: `nest/common/README.md`, `back/.env.example`.
+- **Health**: `GET /api/v1/health` belongs to `common`; add a `HEALTH_CONTRIBUTORS` contributor, never another controller on that path.
+- **Database engine**: Postgres default, SQLite with `DB_ENGINE=sqlite`. A module not ported to SQLite declares `"databases": ["postgres"]` in its `module.json` (all vx-private modules with entities today); `common` and `voice` never import `database`. Portable types, `DB_SCHEMA_MODE`, `npm run db:check` (the gate): `nest/database/README.md`. Portability rule: §5.
+- **TypeORM sync safety (MANDATORY)**: before renaming/removing a column, changing a type or removing an entity, **STOP and warn the user** (`synchronize: true` silently drops data): list each destructive change and its impact, wait for explicit confirmation. Nullable columns and new entities may proceed.
+- **Global config**: `defaultConfig.ts` → `ConfigSeederService` → DB → `ConfigurationService`.
+- **Email (MANDATORY)**: always `EmailService.sendEmail(to, subject, html, options?)` (`common/services/EmailService.ts`), never a custom nodemailer transporter.
+- **Outbound HTTP to third-party APIs (MANDATORY)**: never raw `fetch`/`axios`; use `throttledFetch` (`common/utils/throttledFetch.ts`: spacing, retry with backoff, never throws → `{ data: null, stale: true }`), with a thin per-source wrapper for a new source.
 
 ## 4. Module Configuration Schema and Admin Components
 
-Modules expose configurable variables with metadata shown in the admin UI.
+- **Back**: `configSchema.ts` (`ModuleConfigSchema`: moduleId, fields `{ key, type, defaultValue, group }`) registered by an `OnApplicationBootstrap` service (`moduleConfigService.register(schema)`) in the module providers; `ModuleConfigSeederService` seeds the defaults. A key also in `defaultConfig.ts` takes the `defaultConfig.ts` value; a value already in DB is never overwritten. Seed `config` only through `insertConfigIfAbsent` (seeders run concurrently), never find-then-save.
+- **Types**: `string | number | boolean | select | multiselect | json | secret`. **Groups**: `general | polling | streaming | reliability | sources | filtering | performance`. **Locales**: `<module>/locales`, key `{moduleId}_{configKey}`.
+- **Front**: `<AdminPage />` shows global + module configs; a module may add `Admin*.tsx` (its config) and `Dashboard*.tsx` (admin stats).
+- DTOs: 1 DTO per entity, 1 file per DTO, 1 file per entity.
+- **Module README (MANDATORY)**, created with the module and updated in the same change as any endpoint/service/component/entity change, precise enough to integrate the module without reading its source:
+  - back: Rôle, Architecture (entities/controllers/services/mappers), Dépendances, **Endpoints exposés (exhaustif)** (Méthode/Endpoint/Auth/Description for EVERY route), Entités, Points d'extension;
+  - front: Rôle, Structure, **Services** (Méthode/Endpoint/Description for every HTTP call), Composants, Types principaux, Dépendances.
 
-**Backend:**
-- `configSchema.ts` with `ModuleConfigSchema` (moduleId, fields with key, type, defaultValue, group)
-- A registration service implementing `OnApplicationBootstrap` → `moduleConfigService.register(schema)`, added to the module providers
-- Seed precedence (fresh DB): a key declared in both `defaultConfig.ts` and a module `configSchema.ts` takes the **`defaultConfig.ts` value** (the app is more specific); `ModuleConfigSeederService` skips keys listed in `defaultConfigEntries`. A value already in DB is never overwritten, so changing a default does not affect existing databases (edit it in the admin).
-- `ModuleConfigSeederService` seeds `defaultValue` to DB at bootstrap. Both seeders insert through `insertConfigIfAbsent` (`ON CONFLICT DO NOTHING` / `INSERT OR IGNORE`): never seed `config` with find-then-save, the two seeders run concurrently on a first start
-- DTOs: 1 DTO per entity, 1 file per DTO, 1 file per entity
-
-**Locales:** `modules_shared/<module>/locales` — all languages, all texts and labels. Key convention `{moduleId}_{configKey}` (e.g. `mymodule_maxRetries`).
-**Field types:** `string | number | boolean | select | multiselect | json | secret`
-**Groups:** `general | polling | streaming | reliability | sources | filtering | performance`
-
-**Frontend:** `<AdminPage />` displays global + module configs in menu items. A module may add `Admin*.tsx` (its own configuration) and `Dashboard*.tsx` (admin information and statistics).
-
-**Module README (MANDATORY)** — every shared module, created with the module and updated in the same change as any endpoint/service/component/entity added, removed or renamed:
-- Backend sections: Rôle, Architecture (table entities/controllers/services/mappers), Dépendances, **Endpoints exposés (exhaustif)** (table Méthode/Endpoint/Auth/Description for EVERY route), Entités (key fields), Points d'extension.
-- Frontend sections: Rôle, Structure, **Services** (table Méthode/Endpoint/Description for every HTTP call), Composants (table name/description), Types principaux, Dépendances.
-- Precise enough to integrate the module in another project without reading the source.
-
-## 4b. Feature Access Control
-
-> Only exists when the `user` module is linked (`FeatureGuard`, `hasFeature`, tiers). Without it there is no feature gating. The rules (two-layer check, server-side replication, `@RequireFeature`) are in `CLAUDE.private.md`; `common` only provides the `@RequireFeature` decorator.
+Feature access control (`hasFeature`, `@RequireFeature`, tiers) only exists with the `user` module: `CLAUDE.private.md` §4b.
 
 ## 5. Development Workflow & Conventions
 
 **Principles:** DRY, destructuring, early returns, simplicity > cleverness, separation of concerns.
 
-**Before coding**
-- Clarify requirements first — an ambiguous prompt costs more in corrections than in questions.
-- Non-trivial feature → bullet-point plan first (plan mode), validated before implementation.
-- Read the `README.md` of every shared module involved (§1b) and `ARCHITECTURE.md`; at the start of a non-trivial session also read `FEATURES.md`.
-
-**During development**
-- Small increments: one function, one component, one endpoint at a time.
-- Tests alongside implementation, not after. Every public function has at least one unit test.
-- Don't refactor code you just wrote in the same session without a clear reason.
-- Verify assumptions and conclusions on official sources. For hardware/system-specific problems, check the *current development tree* of the project or library, not only the latest release.
-- **Run all relevant intermediate checks yourself** (§8); only ask the user for what cannot be automated.
-- **Debugging**: do the checks yourself — bash commands, small throwaway test programs, remote servers, database reads, logs. Don't ask the user unless you truly cannot.
-- Keep platforms in sync: when targets exist (web, mobile, desktop…), keep functionality aligned and flag anything blocking on one of them.
-- Keep context small: load only the files relevant to the task; one task per session; accept a good partial solution rather than requesting a full rewrite. A `.claudeignore` at the root should exclude `node_modules/`, `dist/`, `build/`, `coverage/`, `*.lock`, `*.log`, `logs/`, `.db/`, `.env*`.
+- **Before coding**: clarify requirements; non-trivial feature → short plan validated first; read the READMEs of the shared modules involved and `ARCHITECTURE.md` (and `FEATURES.md` at the start of a non-trivial session).
+- **While coding**: small increments; tests alongside (every public function has a unit test); don't refactor what you just wrote without reason; verify assumptions on official sources (current development tree, not only the last release); keep platforms (web, mobile, desktop…) aligned and flag blockers.
+- **Do the checks yourself** (§8) and the debugging too (commands, throwaway programs, servers, DB reads, logs); ask the user only for what cannot be automated.
+- **Keep context small**: relevant files only, one task per session; `.claudeignore` excludes `node_modules/`, `dist/`, `build/`, `coverage/`, `*.lock`, `*.log`, `logs/`, `.db/`, `.env*`.
 
 **Conventions**
-- Language: code and comments in English.
-- Naming: `camelCase` functions, `PascalCase` classes, `SCREAMING_SNAKE_CASE` constants.
-- **PostgreSQL AND SQLite compatibility (MANDATORY)**: every entity, query and raw SQL you write must work on BOTH engines (`DB_ENGINE`), whichever one the project runs today. TypeORM operators and the `QueryBuilder` first (`ILike()`, `Between()`…); `common/utils/dbDialect.ts` (`dialect().ilike/monthBucket/jsonExtract/jsonArrayContains…`) or `portableQuery` for what differs; no Postgres-only SQL (`ILIKE`, `::`, `@>`, `->>`, `to_char`, `NOW()`, `ANY()`, `FOR UPDATE SKIP LOCKED`, advisory locks, `percentile_cont`, `date_trunc`). When something genuinely cannot be written for both (a job queue claimed with `SKIP LOCKED`, cross-process locks, heavy analytics, JSON queried inside the database, several writer processes, large volumes), do NOT pick an engine silently: say so BEFORE coding — what is not portable, why, and what the portable alternative would cost — so the user decides whether the project (or that module) restricts itself to one engine; PostgreSQL is the usual choice (richer SQL, row locks, concurrent writers, large volumes). Record a restriction in the module's `module.json` (`"databases": ["postgres"]`) and mark each deliberate query `// pg-only: <reason>`.
-- **Strong typing**: all props have interfaces (optional with `?`, union types for variants), no `any`. Explicitly type callback parameters, `.map()`/`.filter()` arguments and return types where inference fails (strict mode, no implicit `any`).
-- **Commits**: Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`).
-- **Function size** < 40 lines; beyond, split. Keep files moderate.
-- **Performance**: `useMemo` for expensive calculations, `useCallback` for handlers, `React.memo` for pure components.
-- **Internationalization**: add the key to all locale files, reference via the i18n utilities. NEVER use `defaultLabel` on `<I18nLabel>` or default values on `i18n.get()` — missing translations must stay visible.
-- **Live updates**: publish through `EventStreamService` (`common/event-stream`, see the common README); do not add polling for data the server can push. On the React side use `useLiveResource` / `useServerEvents` (`core/events`), which poll only as a fallback (stream unavailable, or a topic refused by its authorizer). A proxy in front of the back must not buffer `/api/v1/events/` (see the common README, « Raccords »).
-- **Configuration discipline**: global settings → `ConfigurationEntity` + `defaultConfigEntries` + translations (never in `config.ts`; add to `defaultConfig.ts`); user settings → the `user` module's `UserSetting` (when linked); module settings → Module Config Schema (§4).
+- Code and comments in English; `camelCase` functions, `PascalCase` classes, `SCREAMING_SNAKE_CASE` constants; Conventional Commits; functions < 40 lines, moderate files.
+- **Strong typing**: interfaces for all props, no `any`, explicit types where inference fails (strict mode).
+- **PostgreSQL AND SQLite (MANDATORY)**: every entity, query and raw SQL works on both engines. TypeORM operators/`QueryBuilder` first, then `common/utils/dbDialect.ts` or `portableQuery`; no Postgres-only SQL (`ILIKE`, `::`, `@>`, `->>`, `to_char`, `NOW()`, `ANY()`, `SKIP LOCKED`, advisory locks, `percentile_cont`, `date_trunc`). When something cannot be portable, say so BEFORE coding (what, why, cost of the portable alternative) and let the user decide; a restriction goes in `module.json` (`"databases": ["postgres"]`) and each such query is marked `// pg-only: <reason>`.
+- **Performance**: `useMemo` for expensive computations, `useCallback` for handlers, `React.memo` for pure components.
+- **i18n**: key in every locale file; NEVER `defaultLabel` on `<I18nLabel>` nor a default in `i18n.get()` (missing translations must show).
+- **Live updates**: push through `EventStreamService` (`common/event-stream`), `useLiveResource` / `useServerEvents` on the front; no new polling for server-pushable data.
+- **Configuration discipline**: global settings → `defaultConfig.ts` + translations (never `config.ts`); user settings → `UserSetting` (`user` module); module settings → §4.
 
 ## 6. Code Quality
 
-- **JSX:** simple logic inline, complex → `useMemo` or functions above the return.
-- **File safety:** ALWAYS read before editing; targeted edits; preserve user changes.
-- **Before finalizing:** remove `console.log`, temp variables, unused imports. Only code that solves the issue.
-- **Error handling:** validate at boundaries only; trust internal code; user-friendly messages via i18n.
-- **No over-engineering:** no extra features, no handling of impossible scenarios, no premature abstractions, no backwards-compat hacks.
-- **File header (MANDATORY):** every new file (`.ts`, `.tsx`, `.js`, etc.) MUST start with the header below (template and public modules, MIT). Modules of `vx-private` have their own header rule (`CLAUDE.private.md`).
+- JSX: simple logic inline, complex → `useMemo` or functions above the return.
+- ALWAYS read before editing; targeted edits; preserve user changes.
+- Before finalizing: no `console.log`, temp variables or unused imports; only code that solves the issue.
+- Validate at boundaries only; user-friendly errors via i18n.
+- No over-engineering: no extra features, impossible cases, premature abstractions or compat hacks.
+- **File header (MANDATORY)**: every new file of the template and public modules starts with the MIT header below (vx-private: `CLAUDE.private.md` §6; projects may define their own).
 ```
 /**
  * VXFramework
@@ -158,98 +105,36 @@ Modules expose configurable variables with metadata shown in the admin UI.
 
 ## 7. Documentation
 
-**Feature tracking (MANDATORY):** `FEATURES.md` at the project root is the canonical inventory of what is built (not a changelog). When a significant feature is added, modified or removed, update its section in the same change, matching the tone and density of the existing ones.
-
-**`ARCHITECTURE.md` (MANDATORY):** create and keep up to date; it is the entry point. It owns the *shape*: data flow, ownership (which component owns the device, the DB, the socket), state-machine contracts, per-platform reality, safety nets. Its top carries a **"Documentation map"**: the single authoritative list of the project's annexes and what each owns. Never keep a second copy of that map.
-
-**Generated documentation**, per module or feature: JSDoc/docstring on public functions; README updated if exposed behavior changes (module READMEs: §4); inline comments for non-obvious logic only.
-
-### One fact, one place
-
-A technical device is described in exactly ONE file; everywhere else links to it. A constant, threshold or behavior written in two places will be wrong in one of them, and nobody knows which.
-
-- Before writing a paragraph, ask **which file owns the question** (the Documentation map).
-- **Never restate a constant**: cite the owning file and section.
-- **Verify against the source, never against another doc**: before copying a value into a doc, grep it in the code.
-- **Correct the stale page — don't append a newer truth beside it.** Fix the false sentence where it stands.
-- **A new doc file needs a home**: put it under `docs/<theme>/` and add it, with its path, to the Documentation map. An annex nobody links to does not exist; otherwise the content belongs in an existing file.
-- Between doc pages, reference an annex by its **path**, not its bare filename (bare filenames are fine in code comments).
-- Detail that would bloat `ARCHITECTURE.md` or this file goes to a dedicated annex referenced by name. Incident post-mortems live in annexes, not here.
-- **Stamp what you checked**: annexes carry a `Last verified against source: <date>` line.
-
-Manual test procedures and TODO lists are optional: create them only when the user asks.
+- **`FEATURES.md` (MANDATORY)**: canonical inventory of what is built (not a changelog), updated in the same change as a significant feature.
+- **`ARCHITECTURE.md` (MANDATORY)**: the entry point; owns the *shape* (data flow, ownership, state machines, per-platform reality, safety nets) and, at its top, the **Documentation map** — the single list of annexes and what each owns.
+- JSDoc on public functions; inline comments for non-obvious logic only; READMEs updated when exposed behavior changes (§4).
+- **One fact, one place**: a device is described in ONE file, everywhere else links to it. Ask which file owns the question; never restate a constant, cite its owner; verify values against the source, not another doc; fix a stale sentence where it stands instead of adding a newer truth beside it; a new doc goes under `docs/<theme>/` and into the Documentation map; reference annexes by path; annexes carry `Last verified against source: <date>`.
+- Manual test procedures and TODO lists only on request.
 
 ## 8. Run Script & Verification Loop
 
-**Launch script (MANDATORY):** always create and maintain a launch script — `./run.sh` or `./scripts/run.sh` (whichever the project uses; do not add a parallel `start.sh`) — that actually starts the application with the needed commands, with OS autodetection for every supported target: macOS, Linux, Windows; for an Android app, the Android SDK emulator. Update it in the same change as any change to how the app starts. A project needing an extra local process in dev (worker, daemon, local agent…) does NOT fork the shared `scripts/run.sh`: it adds an executable `scripts-local/dev-services.sh` (opt-in hook `DEV_SERVICES_HOOK`), which `run.sh dev` starts after back + front with `back/.env.dev` loaded and stops with them (see apptemplate `README.md` → Dev). Dev-only values go in `back/.env.dev`, never in `back/.env` (shipped to production).
-
-**Verification loop — measured, not assumed.** Don't pay for the slowest check after every edit; don't skip the cheap ones either. Measure the real durations on this repo (machine, date, command) and record them here:
-
-| Command | Scope | Duration |
-|---|---|---|
-| `cd back && npm run lint` / `cd front && npm run lint` | lint | _to measure_ |
-| `cd back && npm run build` | type-check + compile (`nest build`) | _to measure_ |
-| `cd front && npx tsc -b` | type-check only (the full build adds `vite build`) | _to measure_ |
-| `cd back && npx jest <file>` | one spec file | _to measure_ |
-| `cd back && npm test` | all back unit tests | _to measure_ |
-| `cd front && npx vitest run <file>` | one front spec (standalone, node environment) | _to measure_ |
-| `npm run i18n:check` | missing locale keys | _to measure_ |
-
-- **Template assets:** the template references no `images/logo-main.*` file; header, landing page and route loader use `public/favicon.svg` (replace it with the project logo). The embedded Node of the desktop app is pinned in `template/scripts/desktop/lib.mjs`: latest 22.x published at least two weeks ago.
-- **Front Vitest config:** `front/vitest.config.ts` is `export default createVitestConfig()` from `front/vitestConfig.ts` (linked from the template, see `config-links.json`). It sets `resolve.preserveSymlinks: true`, without which the relative imports between linked modules (`../common/...` in a spec of `modules_shared/user`) cannot be resolved; never write a Vitest config of your own without it.
-- **While iterating:** the cheap type-check/lint + only the spec files you touched.
-- **Before committing:** the full test suite and `i18n:check` once.
-- Durations drift as the code base grows: date every measurement and update it when it is off by more than ~2×.
-- A slow suite is a signal: look for what makes it slow (real timers, vendored directories scanned by the analyzer/IDE) before accepting it.
+- **Launch script (MANDATORY)**: `./run.sh` or `./scripts/run.sh` (no parallel `start.sh`) really starts the app, with OS autodetection (macOS, Linux, Windows; Android emulator for an Android app), updated with any change to how the app starts. Extra dev processes go in `scripts-local/dev-services.sh` (`DEV_SERVICES_HOOK`), never in a fork of `run.sh`. Dev-only values in `back/.env.dev`, never `back/.env` (shipped to production).
+- **Verification loop, measured**: while iterating, the cheap type-check/lint + the specs you touched; before committing, the full suite and `npm run i18n:check` once. Record the measured durations (command, date) in the project notes of the root `CLAUDE.md` (table skeleton: template `README.md`, « Verification loop »); re-measure when off by ~2×; a slow suite is a signal to investigate.
+- **Front Vitest**: `front/vitest.config.ts` = `createVitestConfig()` (template, `preserveSymlinks: true`); never a Vitest config of your own without it.
 
 ## 9. Repo Map
 
-The repo has a map generator, `./scripts/repo_map.py` (shared via apptemplate), that writes a compact `.repo-map.md` so an LLM agent can orient itself without opening files one by one. It extracts TypeScript, Python, Dart and Go, and follows the `modules_shared` symlinks into `.libs/` so shared modules appear under their app path.
-
-```bash
-python3 scripts/repo_map.py . --check          # stale ⇒ exit 1
-python3 scripts/repo_map.py . --save --stats   # regenerate
-```
-
-Regenerate it after creating, deleting or modifying sources, before closing the task (use `python3`, not `python`).
-
-- **Two levels.** `## Signatures`: detailed signatures within `--max-tokens` (default 8,000), app code (`src/modules/…`) before shared code (`modules_shared`), then most recently modified first. `## Index`: every other file, one line each (declared names only), uncapped (`--no-index` drops it). A source file missing from the map therefore has no extracted declaration.
-- **Know what it covers.** Check which languages the script extracts (`--stats`). A language it ignores is invisible, and `--check` will answer "up to date" whatever changes there. Tests, generated files, `vendor/`/`third_party/`, build copies (`*_build/`) and symlinks leaving the repo are excluded.
-- **It is a navigation aid, not proof.** The whole map is large (tens of thousands of tokens): grep it or read one section rather than loading it entirely. Use it to **orient** (find a directory, a class name, the language of a layer); **never** to conclude that something does not exist — `grep` the source, the only source of truth (§7).
+`python3 scripts/repo_map.py . --check` (stale ⇒ exit 1) / `--save --stats` (regenerate): `.repo-map.md`, regenerated after source changes before closing a task (never committed by hand). Navigation aid only: grep it or read one section; **never** conclude that something does not exist from it — grep the source. Coverage and levels: template `README.md`, « Repo map ».
 
 ## 10. Security
 
-- Never put secrets, API keys or passwords in prompts or generated code.
-- All user input is validated **server-side**; remind yourself of it when a change omits it.
-- Every added dependency is justified; prefer established, actively maintained libraries (see §1b for where to declare it).
+- No secrets, keys or passwords in prompts or code. All user input validated **server-side**. Every dependency justified, established and maintained (where to declare it: §1b).
 - Authentication, payments, personal data: mandatory human review.
-- HTTP hardening lives in one place (`configureHttpApp`): never disable `helmet`, widen CORS to `*` in production (refused at startup) or parse webhook bodies by hand; webhooks read `req.rawBody` (paths in `RAW_BODY_PATHS`). Public, credential-free routes (images, tracking pixels) that must load from any origin go in the `publicCorsPaths` option (open CORS + `Cross-Origin-Resource-Policy: cross-origin` on those prefixes only); a foreign origin (e.g. a browser extension) allowed only on some routes goes in `corsOriginPolicy: (origin, { path, method }) => true | { credentials } | false | undefined` (`CLIENT_ORIGINS` keep every route); never wrap `enableCors` by hand.
-- Local trust mode (`LOCAL_TRUST=true`, single-user local apps only): never enable it on a server, never weaken its checks (loopback **socket** address, never `req.ip`/`X-Forwarded-For`; local `Host`; absent or local `Origin`; `HOST` loopback or the back refuses to start). It has no effect with the `user` module; an app-specific route must still use `RequireUserInterceptor` for per-user data, since the local-trust principal is not a user (`kind: 'local-trust'`).
-- Anything that executes commands or opens terminals/sessions on a remote host (agent runners, VPS access) is security-critical: least privilege, no unvalidated input in a command line, no credentials in logs.
+- HTTP hardening only through `configureHttpApp`: never disable `helmet`, widen CORS to `*` in production, wrap `enableCors` or parse webhook bodies by hand (webhooks read `req.rawBody`, `RAW_BODY_PATHS`); per-route CORS openings via `publicCorsPaths` / `corsOriginPolicy` (`nest/common/README.md`).
+- `LOCAL_TRUST=true` (single-user local apps only): never on a server, never weaken its checks (loopback **socket** address, never `req.ip`/`X-Forwarded-For`); per-user app routes still use `RequireUserInterceptor`.
+- Remote command execution / terminal sessions are security-critical: least privilege, no unvalidated input in a command line, no credentials in logs.
 
 ## 11. Communication & Expected Behavior
 
-- **Be critical, not apologetic.** Challenge assumptions, the user's included: if a request contradicts these rules, the architecture, or a simpler path, say so *before* acting and give your reasoning. Don't validate by default and don't soften a real problem; agreeing is only useful when it is earned.
-- Focus on solutions, not on mistakes.
-- **Flag uncertainties** rather than inventing an answer.
-- **Propose alternatives** when several approaches are valid, with their trade-offs and a recommendation.
-- **Announce the plan before acting** on any task spanning more than 3 files.
-- **Do not modify files outside the requested scope** without flagging it explicitly.
-- When context seems incomplete or intent is unclear, **ask a short clarifying question** instead of proceeding on partial information or producing code that may be wasted.
-
-## 12. Plan Mode & Execution
-
-- Plans extremely concise — sacrifice grammar for brevity.
-- Once a plan is validated, **don't interrupt yourself**: continue until everything is implemented and coded.
-- Finish with a synthesis, then unresolved questions or relevant suggestions.
-
-## 13. Getting Started
-
-1. Update `back/src/config/defaultConfig.ts` with project defaults
-2. Configure `back/.env` and `back/.env.local` for Postgres
-3. Run the backend to trigger the seeders
-4. Start the frontend, verify the config resolves
-5. New features: create the modules on both stacks, add translations + config upfront, use the existing utilities
+- **Be critical, not apologetic**: if a request contradicts these rules, the architecture or a simpler path, say so *before* acting, with reasons; agreement must be earned.
+- Focus on solutions; **flag uncertainties** instead of inventing; **propose alternatives** with trade-offs and a recommendation.
+- **Announce the plan before acting** on a task spanning more than 3 files; **flag any change outside the requested scope**; ask a short question when intent is unclear.
+- Plans extremely concise; once validated, don't interrupt yourself until everything is done; finish with a synthesis, then open questions or suggestions.
 
 ---
-**Updated:** 2026-10-18 — keep under ~6,000 tokens: move detail to annexes (§7).
+**Updated:** 2026-10-20 — keep under ~6,000 tokens: rules here, detail in the READMEs/annexes (§7). Getting started: template `README.md`, « Needed Customizations ».

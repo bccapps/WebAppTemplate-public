@@ -270,7 +270,7 @@ regenerate_and_install() {
     ok "${stack}: package.json/package-lock.json committed"
   fi
 
-  warn "${stack}: if a new dependency uses a subpath export (pkg/subpath) and moduleResolution is \"node\", you may still need a tsconfig.json \"paths\" entry by hand — see CLAUDE.md \"package.json is a GENERATED file\"."
+  warn "${stack}: if a new dependency uses a subpath export (pkg/subpath) and moduleResolution is \"node\", you may still need a tsconfig.json \"paths\" entry by hand — see the template README, « Shared config files »."
 }
 
 regenerate_and_install back
