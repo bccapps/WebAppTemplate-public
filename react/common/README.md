@@ -5,9 +5,8 @@ This module contains common services and utils used by other modules.
 ## Configuration
 In tsconfig.app.json, add the following in the compiler options :
     /* Path Resolution */
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
 In vite.config.ts, add the following :
   resolve: {

@@ -25,7 +25,7 @@ Rules only; the how-to lives in the READMEs linked from each rule (template `REA
 - **Desktop shell (optional)**: `desktop/` (Tauri 2), added by `create-project.mjs --desktop` or `scripts/add-desktop.mjs`; project specifics in `desktop/desktop.config.json` only, never project logic in `desktop/src-tauri`. Everything else: `desktop/README.md`.
 - **`package.json` is GENERATED — never edit it (MANDATORY)**: `build-package.mjs` merges `package.base.json` (shared) → `package.fragment.json` of each listed shared module → `src/modules/<feature>/package.fragment.json` (app features) → `package.local.json`, and overwrites `<stack>/package.json` on every install/build (direct edits are wiped; a fresh clone installs what is committed).
   - Dependency every/several apps need → `package.base.json` in the front `vx-public` mount. Dependency of one feature → that feature's `package.fragment.json`. `package.local.json` stays minimal: project-specific `scripts`, `overrides`/pins, tooling of project scripts (common scripts come from the base).
-  - Then `node .libs/apptemplate/scripts/build-package.mjs <stack> && npm install`, commit `package.json` + `package-lock.json` + the edited source file. A subpath-`exports` package may need a `tsconfig.json` `paths` entry by hand in each app (template `README.md`, « Shared config files »).
+  - Then `node .libs/apptemplate/scripts/build-package.mjs <stack> && npm install`, commit `package.json` + `package-lock.json` + the edited source file.
 
 ## 2. Frontend Stack
 

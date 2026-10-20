@@ -318,10 +318,9 @@ invalid identifier. The identifier names the OS data folder of the app: change t
 
 `config-links.json` lists the config files shared from the template (`tsconfig.json`, `viteConfig.ts`, `vitestConfig.ts`, `Dockerfile`, ...), materialized as
 symlinks by `scripts/link-config.mjs`; a project-local real file is left untouched (intentional override). `main.ts` / `main.tsx`
-are project-specific on purpose. A subpath-`exports` package (`pkg/subpath`, e.g. `@base-org/account/node`) needs, under
-`moduleResolution: "node"`, a `compilerOptions.paths` entry `"pkg/subpath": ["./node_modules/pkg/dist/<.d.ts path, no extension>"]`
-(see the existing `ox`/`ox/*` entries): `update_common.sh` regenerates `package.json` but this entry is added by hand in each app
-that keeps its own `tsconfig.json`.
+are project-specific on purpose. Both stacks resolve modules in `bundler` mode, which reads the `exports` of each package:
+a subpath-`exports` package (`pkg/subpath`, e.g. `@base-org/account/node`) needs no `compilerOptions.paths` entry. The back keeps
+`module: commonjs` and `strict: false`; `tsconfig.build.json` sets `rootDir: ./src` so the build still emits `dist/main.js`.
 
 ### Verification loop
 

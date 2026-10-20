@@ -13,8 +13,7 @@
     "sourceMap": true,
     "outDir": "./dist",
     "paths": {
-      "src/*": ["./src/*"],
-      "@base-org/account/node": ["./node_modules/@base-org/account/dist/index.node"]
+      "src/*": ["./src/*"]
     },
     "moduleResolution": "bundler",
     "forceConsistentCasingInFileNames": true,
