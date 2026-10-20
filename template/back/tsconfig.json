@@ -12,6 +12,7 @@
     "target": "ESNext",
     "sourceMap": true,
     "outDir": "./dist",
+    "rootDir": "./",
     "paths": {
       "src/*": ["./src/*"]
     },
