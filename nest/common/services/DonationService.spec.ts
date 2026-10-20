@@ -95,7 +95,7 @@ describe('DonationService.getQuote', () => {
     const sol = await service.getQuote('solana', 'SOL', 10);
     expect(sol.uri).toBe('solana:SoLAddr?amount=0.1');
     const usdc = await service.getQuote('solana', 'USDC', 10);
-    expect(usdc.uri).toBe('solana:SoLAddr?amount=10&spl-token=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+    expect(usdc.uri).toBe('solana:SoLAddr?amount=10&spl-token=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'); // gitleaks:allow — public USDC mint address, not a secret
   });
 
   it('rejects a chain/asset combination that makes no sense', async () => {
