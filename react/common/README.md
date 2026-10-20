@@ -303,6 +303,8 @@ build si une telle valeur atteint le bundle.
 
 `AdminPage` / `AdminDashboard` : un fichier `Admin*.tsx` ou `Dashboard*.tsx` peut, en plus de son `default`, exporter `isAvailable(): boolean` — évalué au rendu ; `false` masque l'onglet. Ex. `market-intelligence/components/ui/AdminConfig.tsx` : `export const isAvailable = () => !configurationService.isRemoteModule('market-intelligence')`. Sans export, l'onglet est toujours affiché (comportement inchangé pour les autres apps).
 
+`AdminDashboard` (2026-10-20) : un onglet par module ; un module qui a plusieurs `Dashboard*.tsx` ouvre un menu déroulant, une entrée par fichier (libellé tiré du nom de fichier sans `Dashboard`, comme `AdminPage` / `UserAdminPage`). Seul le dashboard sélectionné est monté : chacun ne charge ses données qu'à son ouverture. Découper un dashboard lourd en plusieurs fichiers suffit donc à séparer ses chargements.
+
 ## Session applicative — `core/session/` (`appSession`)
 
 `appSession` (instance de `Session`) garde des valeurs par clé (`set`/`get`/`has`/`force`), les
