@@ -41,7 +41,6 @@ module.exports = async () => {
     coverageDirectory: '../coverage',
     testEnvironment: 'node',
     roots: ['<rootDir>', ...libDirs],
-    transformIgnorePatterns: ['node_modules/(?!(.*/)?(@noble|@scure)/)'],
     moduleNameMapper: { '^src/(.*)$': '<rootDir>/$1' },
     setupFiles: ['<rootDir>/test-setup.ts'],
     // vx-private specs import vx-public modules by relative path: see scripts/jest-resolver.cjs

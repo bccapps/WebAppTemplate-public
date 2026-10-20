@@ -15,9 +15,6 @@
       }
     ]
   },
-  "transformIgnorePatterns": [
-    "node_modules/(?!(.*/)?(@noble|@scure)/)"
-  ],
   "moduleNameMapper": {
     "^src/(.*)$": "<rootDir>/src/$1"
   },
