@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import '../../../styles/tokens.css';
 import React from 'react';
 import { I18nLabel } from '@/modules_shared/common/components/ui/label/I18nLabel';
 import { httpService } from '@/modules_shared/common/core/http/HttpService';
@@ -38,9 +39,9 @@ function formatBytes(bytes: number): string {
 }
 
 function getBarColor(percent: number): string {
-  if (percent >= 90) return '#e53935';
-  if (percent >= 70) return '#fb8c00';
-  return '#43a047';
+  if (percent >= 90) return 'var(--common-admindashboard-bar-critical)';
+  if (percent >= 70) return 'var(--common-admindashboard-bar-warning)';
+  return 'var(--common-admindashboard-bar-ok)';
 }
 
 const AdminCommonDashboard: React.FC = () => {
@@ -118,8 +119,8 @@ const AdminCommonDashboard: React.FC = () => {
             style={{
               padding: '1.25rem',
               borderRadius: 'var(--radius-md, 12px)',
-              background: 'var(--color-surface, #fff)',
-              border: '1px solid var(--color-border, #e0e0e0)',
+              background: 'var(--common-admindashboard-card-bg)',
+              border: '1px solid var(--common-admindashboard-border)',
             }}
           >
             <div style={{ fontWeight: 600, marginBottom: '0.75rem', fontSize: '1rem' }}>
@@ -130,7 +131,7 @@ const AdminCommonDashboard: React.FC = () => {
               style={{
                 height: 8,
                 borderRadius: 4,
-                background: 'var(--color-border, #e0e0e0)',
+                background: 'var(--common-admindashboard-border)',
                 overflow: 'hidden',
                 marginBottom: '0.75rem',
               }}

@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import '../../styles/tokens.css';
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -352,7 +353,7 @@ const AdminThemesContent = () => {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'rgba(0,0,0,0.15)',
+              background: 'var(--common-adminthemes-scrim)',
             }}
           >
             <CircularProgress />
@@ -499,7 +500,7 @@ const AdminThemesContent = () => {
               }}
               sx={{
                 '& .MuiInputBase-root': {
-                  bgcolor: 'rgba(0,0,0,0.04)',
+                  bgcolor: 'var(--common-adminthemes-field-bg)',
                   borderRadius: 1,
                 },
               }}

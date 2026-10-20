@@ -25,43 +25,43 @@
 
 [data-color-scheme='dark'] .Toastify__toast-theme--light,
 [data-color-scheme='dark'] .Toastify__toast-theme--colored.Toastify__toast--default {
-  background: var(--card, #262626);
-  color: var(--card-foreground, #ebebeb);
-  border: 1px solid var(--border, #383838);
+  background: var(--common-toast-bg);
+  color: var(--common-toast-fg);
+  border: 1px solid var(--common-toast-border);
   /* The library shadow (black at 10 %) vanishes against a dark backdrop. */
-  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 18px 45px var(--common-toast-shadow);
 }
 
 /* The surface stays neutral in dark mode, so the icon carries the severity. */
 [data-color-scheme='dark'] .Toastify__toast-theme--light {
-  --toastify-icon-color-success: var(--metric-green, #4ade80);
-  --toastify-icon-color-error: var(--destructive, #ef4444);
-  --toastify-icon-color-warning: var(--metric-orange, #fbbf24);
-  --toastify-icon-color-info: var(--accent, #38bdf8);
+  --toastify-icon-color-success: var(--common-toast-success);
+  --toastify-icon-color-error: var(--common-toast-error);
+  --toastify-icon-color-warning: var(--common-toast-warning);
+  --toastify-icon-color-info: var(--common-toast-info);
 }
 
 /* Default bar is a rainbow gradient — unreadable over a dark surface. Typed
    bars get the matching severity colour. */
 [data-color-scheme='dark'] .Toastify__progress-bar-theme--light,
 [data-color-scheme='dark'] .Toastify__progress-bar--info {
-  background: var(--accent, #38bdf8);
+  background: var(--common-toast-info);
 }
 
 [data-color-scheme='dark'] .Toastify__progress-bar--success {
-  background: var(--metric-green, #4ade80);
+  background: var(--common-toast-success);
 }
 
 [data-color-scheme='dark'] .Toastify__progress-bar--error {
-  background: var(--destructive, #ef4444);
+  background: var(--common-toast-error);
 }
 
 [data-color-scheme='dark'] .Toastify__progress-bar--warning {
-  background: var(--metric-orange, #fbbf24);
+  background: var(--common-toast-warning);
 }
 
 /* Default is black at 0.3 opacity — invisible on a dark surface. */
 [data-color-scheme='dark'] .Toastify__close-button--light {
-  color: var(--card-foreground, #ebebeb);
+  color: var(--common-toast-fg);
   opacity: 0.5;
 }
 
@@ -71,6 +71,6 @@
 }
 
 [data-color-scheme='dark'] .Toastify__spinner {
-  border-color: var(--border, #383838);
-  border-right-color: var(--accent, #38bdf8);
+  border-color: var(--common-toast-border);
+  border-right-color: var(--common-toast-info);
 }

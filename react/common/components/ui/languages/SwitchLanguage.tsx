@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import '../../../styles/tokens.css';
 import { useCallback, useEffect, useState } from 'react';
 import { IconButton, Menu, MenuItem, Tooltip, ListItemIcon, ListItemText } from '@mui/material';
 import LanguageIcon from '@mui/icons-material/Language';
@@ -24,7 +25,7 @@ export const SwitchLanguage = () => {
   const open = Boolean(anchorEl);
   const { mode } = useThemeMode();
   const isDark = mode === 'dark';
-  const iconColor = isDark ? '#fff' : '#000';
+  const iconColor = isDark ? 'var(--common-switchlanguage-icon-dark)' : 'var(--common-switchlanguage-icon-light)';
 
   useEffect(() => {
     const refreshLanguages = () => {
@@ -86,8 +87,8 @@ export const SwitchLanguage = () => {
             p: 0.5,
             '&:hover': {
               backgroundColor: isDark
-                ? 'rgba(255,255,255,0.08)'
-                : 'rgba(0,0,0,0.04)',
+                ? 'var(--common-switchlanguage-hover-dark)'
+                : 'var(--common-switchlanguage-hover-light)',
             },
           }}
         >

@@ -12,6 +12,7 @@ import { toast, ToastContainer } from 'react-toastify';
 import { I18nLabel } from '../label/I18nLabel';
 import 'react-toastify/dist/ReactToastify.css';
 // Imported after the library stylesheet: it only adds the dark scheme on top.
+import '../../../styles/tokens.css';
 import './ToastZone.css';
 import { Box } from '@mui/material';
 

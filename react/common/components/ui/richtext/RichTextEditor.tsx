@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import '../../../styles/tokens.css';
 import React, { useEffect, useReducer, useState } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { mergeAttributes, type DOMOutputSpecArray } from '@tiptap/core';
@@ -166,9 +167,9 @@ const editorSx = (minHeight: number, isZoneEditor: boolean, zoneBackground?: str
   ...(isZoneEditor ? { backgroundColor: zoneBackground || undefined } : {}),
   '& .ProseMirror': {
     outline: 'none',
-    ...(isZoneEditor ? { color: '#000000' } : {})
+    ...(isZoneEditor ? { color: 'var(--common-richtext-zone-text)' } : {})
   },
-  ...(isZoneEditor ? { '& .ProseMirror a': { color: '#0645ad' } } : {}),
+  ...(isZoneEditor ? { '& .ProseMirror a': { color: 'var(--common-richtext-zone-link)' } } : {}),
   '& img': { maxWidth: '100%', height: 'auto' },
   // ProseMirror adds this class to a node's DOM element while it holds a
   // NodeSelection (e.g. a clicked image) — with no rule for it, selecting an
@@ -178,7 +179,7 @@ const editorSx = (minHeight: number, isZoneEditor: boolean, zoneBackground?: str
   // the <img> — both selectors are needed depending on whether the image is
   // currently linked.
   '& img.ProseMirror-selectednode, & a.ProseMirror-selectednode': {
-    outline: '2px solid #1976d2',
+    outline: '2px solid var(--common-richtext-selection-outline)',
     outlineOffset: '2px',
   },
   '& video': { maxWidth: '100%' }

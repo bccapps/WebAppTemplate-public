@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import '../../../styles/tokens.css';
 import { Box, Typography } from '@mui/material';
 import { i18n } from '../../../core/i18n/I18n';
 
@@ -67,7 +68,7 @@ export const Loader = ({ size = 96, label = i18n.get('common.loading'), logoSrc 
             inset: 0,
             borderRadius: '50%',
             border: '2.5px solid transparent',
-            borderTopColor: 'var(--color-primary, #1fcb7d)',
+            borderTopColor: 'var(--common-loader-spinner)',
             animation: 'loaderSpin 1s linear infinite',
             '@keyframes loaderSpin': {
               to: { transform: 'rotate(360deg)' },

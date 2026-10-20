@@ -8,6 +8,7 @@
  */
 
 
+import '../../../styles/tokens.css';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Box, Dialog, Typography } from '@mui/material';
@@ -82,7 +83,7 @@ export function Lightbox({ items, index, onIndexChange, onClose, actions, sidePa
       fullScreen
       onClose={onClose}
       aria-label={i18n.get('common.ui.media.lightbox.title')}
-      slotProps={{ paper: { sx: { bgcolor: 'rgba(6,5,4,0.96)', color: '#efe8e1', backgroundImage: 'none', flexDirection: 'row' } } }}
+      slotProps={{ paper: { sx: { bgcolor: 'var(--common-lightbox-paper-bg)', color: 'var(--common-lightbox-paper-fg)', backgroundImage: 'none', flexDirection: 'row' } } }}
     >
       <Box sx={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, height: 56, px: 2, flexShrink: 0 }}>
@@ -125,7 +126,7 @@ export function Lightbox({ items, index, onIndexChange, onClose, actions, sidePa
       </Box>
 
       {sidePanel && panel && (
-        <Box component="aside" sx={{ width: 320, flexShrink: 0, overflowY: 'auto', p: 2.5, borderLeft: '1px solid rgba(255,255,255,0.1)', bgcolor: 'rgba(255,255,255,0.03)' }}>
+        <Box component="aside" sx={{ width: 320, flexShrink: 0, overflowY: 'auto', p: 2.5, borderLeft: '1px solid var(--common-lightbox-aside-border)', bgcolor: 'var(--common-lightbox-aside-bg)' }}>
           {sidePanel(item, current)}
         </Box>
       )}
@@ -134,7 +135,7 @@ export function Lightbox({ items, index, onIndexChange, onClose, actions, sidePa
 }
 
 function Media({ item, zoom, onToggleZoom }: { item: LightboxItem; zoom: boolean; onToggleZoom: () => void }) {
-  const shadow = '0 40px 120px -30px rgba(0,0,0,0.9)';
+  const shadow = '0 40px 120px -30px var(--common-lightbox-media-shadow)';
   if (item.type === 'video') {
     return (
       <Box
@@ -145,7 +146,7 @@ function Media({ item, zoom, onToggleZoom }: { item: LightboxItem; zoom: boolean
         autoPlay
         loop
         playsInline
-        sx={{ maxWidth: '100%', maxHeight: 'calc(100vh - 8rem)', borderRadius: 2, bgcolor: '#000', boxShadow: shadow }}
+        sx={{ maxWidth: '100%', maxHeight: 'calc(100vh - 8rem)', borderRadius: 2, bgcolor: 'var(--common-lightbox-media-bg)', boxShadow: shadow }}
       />
     );
   }
@@ -170,7 +171,7 @@ function NavArrow({ side, onClick }: { side: 'left' | 'right'; onClick: () => vo
       labelId={side === 'left' ? 'common.ui.media.lightbox.previous' : 'common.ui.media.lightbox.next'}
       kbd={side === 'left' ? '←' : '→'}
       onClick={onClick}
-      sx={{ position: 'absolute', top: '50%', [side]: 12, transform: 'translateY(-50%)', width: 44, height: 44, color: 'inherit', bgcolor: 'rgba(255,255,255,0.06)' }}
+      sx={{ position: 'absolute', top: '50%', [side]: 12, transform: 'translateY(-50%)', width: 44, height: 44, color: 'inherit', bgcolor: 'var(--common-lightbox-nav-bg)' }}
     >
       {side === 'left' ? <ChevronLeftIcon /> : <ChevronRightIcon />}
     </TipIconButton>
@@ -197,7 +198,7 @@ function Strip({ items, current, onSelect }: { items: LightboxItem[]; current: n
             borderRadius: 1,
             cursor: 'pointer',
             border: 0,
-            bgcolor: 'rgba(255,255,255,0.08)',
+            bgcolor: 'var(--common-lightbox-thumb-bg)',
             outline: `2px solid ${i === current ? theme.palette.primary.main : 'transparent'}`,
             opacity: i === current ? 1 : 0.5,
             '&:hover, &:focus-visible': { opacity: 0.9 },

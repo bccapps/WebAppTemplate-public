@@ -1,0 +1,90 @@
+/**
+ * VXFramework
+ *
+ * Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
+ * SPDX-License-Identifier: MIT
+ *
+ * Licensed under the MIT License. See LICENSE in the project root.
+ */
+
+/* Component-level colour tokens of the shared modules: one semantic variable per hardcoded literal, same value in
+   light and dark. Wrapped in :where() (specificity 0) so a theme or an app can override any of them. */
+
+:where(:root) {
+  /* AdminThemes */
+  --common-adminthemes-scrim: rgba(0,0,0,0.15);
+  --common-adminthemes-field-bg: rgba(0,0,0,0.04);
+
+  /* ModuleConfigForm */
+  --common-moduleconfig-border: var(--border, #ccc);
+  --common-moduleconfig-copied-bg: var(--success-bg, #e6f4ea);
+  --common-moduleconfig-copied-fg: var(--success, #2e7d32);
+
+  /* CryptoPayPanel */
+  --common-cryptopay-qr-bg: #fff;
+
+  /* AdminCommonDashboard */
+  --common-admindashboard-bar-critical: #e53935;
+  --common-admindashboard-bar-warning: #fb8c00;
+  --common-admindashboard-bar-ok: #43a047;
+  --common-admindashboard-card-bg: var(--color-surface, #fff);
+  --common-admindashboard-border: var(--color-border, #e0e0e0);
+
+  /* SwitchLanguage */
+  --common-switchlanguage-icon-dark: #fff;
+  --common-switchlanguage-icon-light: #000;
+  --common-switchlanguage-hover-dark: rgba(255,255,255,0.08);
+  --common-switchlanguage-hover-light: rgba(0,0,0,0.04);
+
+  /* Loader */
+  --common-loader-spinner: var(--color-primary, #1fcb7d);
+
+  /* LoaderModal */
+  --common-loadermodal-scrim: rgba(0, 0, 0, 0.35);
+
+  /* ThemeSwitch */
+  --common-themeswitch-icon-dark: #fff;
+  --common-themeswitch-icon-light: #000;
+
+  /* RichTextEditor */
+  --common-richtext-zone-text: #000000;
+  --common-richtext-zone-link: #0645ad;
+  --common-richtext-selection-outline: #1976d2;
+
+  /* VideoPoster */
+  --common-videoposter-badge-bg: rgba(0,0,0,0.55);
+  --common-videoposter-caption-gradient: rgba(0,0,0,0.75);
+
+  /* Lightbox */
+  --common-lightbox-paper-bg: rgba(6,5,4,0.96);
+  --common-lightbox-paper-fg: #efe8e1;
+  --common-lightbox-aside-border: rgba(255,255,255,0.1);
+  --common-lightbox-aside-bg: rgba(255,255,255,0.03);
+  --common-lightbox-media-shadow: rgba(0,0,0,0.9);
+  --common-lightbox-media-bg: #000;
+  --common-lightbox-nav-bg: rgba(255,255,255,0.06);
+  --common-lightbox-thumb-bg: rgba(255,255,255,0.08);
+
+  /* TerminalShell */
+  --common-terminalshell-line-error: #ff3333;
+  --common-terminalshell-line-command: rgba(0,255,65,0.6);
+  --common-terminalshell-line-output: #00ff41;
+  --common-terminalshell-divider: rgba(0,255,65,0.15);
+
+  /* UserAdminThemes */
+  --common-useradminthemes-active-ring: rgba(var(--accent-rgb, 31,203,125),0.18);
+
+  /* AdminVoiceProviderCatalog */
+  --common-voicecatalog-border: rgba(255,255,255,0.08);
+  --common-voicecatalog-overlay: rgba(4,7,15,0.55);
+
+  /* ToastZone */
+  --common-toast-bg: var(--card, #262626);
+  --common-toast-fg: var(--card-foreground, #ebebeb);
+  --common-toast-border: var(--border, #383838);
+  --common-toast-success: var(--metric-green, #4ade80);
+  --common-toast-error: var(--destructive, #ef4444);
+  --common-toast-warning: var(--metric-orange, #fbbf24);
+  --common-toast-info: var(--accent, #38bdf8);
+  --common-toast-shadow: rgba(0, 0, 0, 0.55);
+}

@@ -609,6 +609,10 @@ common/themes/default/            # Thème partagé par défaut (sans CSS : il s
 front/src/themes/<id>/            # Thèmes privés de l'app
 ```
 
+### Jetons des modules
+
+Un composant partagé ne contient aucune couleur en dur : il lit le contrat de jetons (`theme/tokens.css`) ou les jetons de son module, `<module>/styles/tokens.css` (`--<module>-<composant>-<rôle>`, valeurs par défaut en `:where(:root)`, donc surchargeables par n'importe quel thème sans toucher au composant). Pour `common` : `styles/tokens.css` (préfixe `--common-`). Les couleurs qui doivent être des valeurs résolues (canvas, librairies de graphiques, `alpha()` MUI, attributs SVG) ou qui sont des données (séries, avatars, couleurs choisies par l'utilisateur) restent en JS.
+
 ### Créer un thème
 
 **1. Créer le dossier** `front/src/themes/mon-theme/` (thème privé de l'app) ou `common/themes/mon-theme/` (thème partagé, via `vx-public`)

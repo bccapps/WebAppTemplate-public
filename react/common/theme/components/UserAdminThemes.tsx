@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import '../../styles/tokens.css';
 import {
   Box,
   Card,
@@ -59,7 +60,7 @@ function ThemeCard({
           border: isActive ? '2px solid' : '1px solid',
           borderColor: isActive ? 'primary.main' : 'divider',
           transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
-          boxShadow: isActive ? '0 0 0 3px rgba(var(--accent-rgb, 31,203,125),0.18)' : 'none',
+          boxShadow: isActive ? '0 0 0 3px var(--common-useradminthemes-active-ring)' : 'none',
           position: 'relative',
         }}
       >

@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import '../../../common/styles/tokens.css';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
@@ -262,7 +263,7 @@ const AdminVoiceProviderCatalog = () => {
           </IconButton>
         </Stack>
 
-        <Box sx={{ position: 'relative', borderRadius: 2, border: '1px solid rgba(255,255,255,0.08)' }}>
+        <Box sx={{ position: 'relative', borderRadius: 2, border: '1px solid var(--common-voicecatalog-border)' }}>
           {loading && (
             <Box
               sx={{
@@ -271,7 +272,7 @@ const AdminVoiceProviderCatalog = () => {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                backgroundColor: 'rgba(4,7,15,0.55)',
+                backgroundColor: 'var(--common-voicecatalog-overlay)',
                 zIndex: 1,
               }}
             >

@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import '../../styles/tokens.css';
 import React from 'react';
 import { i18n } from '@/modules_shared/common/core/i18n/I18n';
 import { moduleConfigService } from '@/modules_shared/common/services/ModuleConfigService';
@@ -283,7 +284,7 @@ const ModuleConfigForm: React.FC<ModuleConfigFormProps> = ({ moduleId, groups, c
       flexShrink: 0,
       padding: '0.25rem 0.5rem',
       fontSize: '0.75rem',
-      border: '1px solid var(--border, #ccc)',
+      border: '1px solid var(--common-moduleconfig-border)',
       borderRadius: '4px',
       background: 'transparent',
       color: 'inherit',
@@ -327,8 +328,8 @@ const ModuleConfigForm: React.FC<ModuleConfigFormProps> = ({ moduleId, groups, c
                 ...btnStyle,
                 cursor: copyValue ? 'pointer' : 'default',
                 opacity: copyValue ? 1 : 0.4,
-                background: isCopied ? 'var(--success-bg, #e6f4ea)' : 'transparent',
-                color: isCopied ? 'var(--success, #2e7d32)' : 'inherit',
+                background: isCopied ? 'var(--common-moduleconfig-copied-bg)' : 'transparent',
+                color: isCopied ? 'var(--common-moduleconfig-copied-fg)' : 'inherit',
                 transition: 'background 0.2s, color 0.2s',
               }}
             >

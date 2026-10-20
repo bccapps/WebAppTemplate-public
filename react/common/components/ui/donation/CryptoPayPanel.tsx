@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import '../../../styles/tokens.css';
 import { useEffect, useState } from 'react';
 import { Alert, Box, CircularProgress, IconButton, Stack, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -92,7 +93,7 @@ export const CryptoPayPanel = ({ amountUsd, address, chains, assets }: CryptoPay
 
       {!loading && !loadError && quote && (
         <Stack spacing={1.5} sx={{ alignItems: 'center' }}>
-          <Box sx={{ bgcolor: '#fff', p: 1.5, borderRadius: 1 }}>
+          <Box sx={{ bgcolor: 'var(--common-cryptopay-qr-bg)', p: 1.5, borderRadius: 1 }}>
             <QRCodeSVG value={quote.uri} size={180} />
           </Box>
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center', width: '100%' }}>

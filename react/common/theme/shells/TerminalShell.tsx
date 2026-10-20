@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import '../../styles/tokens.css';
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { commandRegistry } from '../commands/CommandRegistry'
@@ -151,10 +152,10 @@ export function TerminalShell({ children, appName = 'VX' }: { children: React.Re
               lineHeight: 1.4,
               color:
                 line.type === 'error'
-                  ? '#ff3333'
+                  ? 'var(--common-terminalshell-line-error)'
                   : line.type === 'command'
-                    ? 'rgba(0,255,65,0.6)'
-                    : '#00ff41',
+                    ? 'var(--common-terminalshell-line-command)'
+                    : 'var(--common-terminalshell-line-output)',
               marginBottom: '0.1rem',
             }}
           >
@@ -163,7 +164,7 @@ export function TerminalShell({ children, appName = 'VX' }: { children: React.Re
         ))}
 
         {/* React page content rendered below terminal lines */}
-        <div style={{ marginTop: '1rem', paddingTop: '0.5rem', borderTop: '1px solid rgba(0,255,65,0.15)' }}>
+        <div style={{ marginTop: '1rem', paddingTop: '0.5rem', borderTop: '1px solid var(--common-terminalshell-divider)' }}>
           {children}
         </div>
       </div>

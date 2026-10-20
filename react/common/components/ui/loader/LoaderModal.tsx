@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import '../../../styles/tokens.css';
 import { Box, CircularProgress, Modal, Typography } from '@mui/material';
 import { i18n } from '../../../core/i18n/I18n';
 
@@ -25,7 +26,7 @@ export const LoaderModal = ({ message = i18n.get('common.loading'), open = true 
         backdrop: {
           sx: {
             backdropFilter: 'blur(8px)',
-            backgroundColor: 'rgba(0, 0, 0, 0.35)',
+            backgroundColor: 'var(--common-loadermodal-scrim)',
           },
         },
       }}

@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import '../../../styles/tokens.css';
 import { useState, useEffect } from 'react';
 import { Box, FormControl, IconButton, MenuItem, Select, Switch, Tooltip } from '@mui/material';
 import DarkModeIcon from '@mui/icons-material/DarkMode';
@@ -57,13 +58,13 @@ export function ThemeSwitch() {
             sx={{
               background: 'none !important',
               backgroundImage: 'none !important',
-              color: isDark ? '#fff' : '#000',
+              color: isDark ? 'var(--common-themeswitch-icon-dark)' : 'var(--common-themeswitch-icon-light)',
               p: 0,
               '&:hover': { background: 'none !important', backgroundImage: 'none !important' },
               '&:active': { background: 'none !important', backgroundImage: 'none !important' },
             }}
           >
-            <LightModeIcon fontSize="small" sx={{ color: isDark ? '#fff' : '#000' }} />
+            <LightModeIcon fontSize="small" sx={{ color: isDark ? 'var(--common-themeswitch-icon-dark)' : 'var(--common-themeswitch-icon-light)' }} />
           </IconButton>
         </span>
       </Tooltip>
@@ -101,13 +102,13 @@ export function ThemeSwitch() {
             sx={{
               background: 'none !important',
               backgroundImage: 'none !important',
-              color: isDark ? '#fff' : '#000',
+              color: isDark ? 'var(--common-themeswitch-icon-dark)' : 'var(--common-themeswitch-icon-light)',
               p: 0,
               '&:hover': { background: 'none !important', backgroundImage: 'none !important' },
               '&:active': { background: 'none !important', backgroundImage: 'none !important' },
             }}
           >
-            <DarkModeIcon fontSize="small" sx={{ color: isDark ? '#fff' : '#000' }} />
+            <DarkModeIcon fontSize="small" sx={{ color: isDark ? 'var(--common-themeswitch-icon-dark)' : 'var(--common-themeswitch-icon-light)' }} />
           </IconButton>
         </span>
       </Tooltip>
