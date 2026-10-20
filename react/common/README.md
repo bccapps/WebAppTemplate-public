@@ -587,7 +587,7 @@ common/theme/                      # Infrastructure partagée
   types.ts                        # ThemeDefinition, ShellType, InteractionMode, ThemeImageKey
   themes.ts                       # ThemeRegistry (register, getDefault, getSelectable, resolveImage)
   discoverThemes.ts               # Scan des deux sources + enregistrement
-  tokens.css                      # Contrat de jetons : valeurs par défaut en :where(:root), jamais prioritaires
+  tokens.css                      # Contrat de jetons = valeurs du thème `default` (:where(:root[data-theme='default']), jamais prioritaires)
   themeImages.ts                  # Registry d'images : clés → URL avec fallback
   VisualThemeService.ts           # Service singleton : applique data-theme, persiste en localStorage
   VisualThemeContext.tsx          # React context + VisualThemeProvider
@@ -605,13 +605,32 @@ common/theme/                      # Infrastructure partagée
     ThemeAction.tsx               # Action sémantique (bouton en standard, hint commande en CLI)
     ThemeNav.tsx                  # Navigation sémantique (sidebar en standard, barre hints en CLI)
     UserAdminThemes.tsx           # Sélecteur de thème utilisateur (retourne null si désactivé)
-common/themes/default/            # Thème partagé par défaut (sans CSS : il s'appuie sur le contrat de jetons)
+common/themes/default/            # Thème partagé par défaut (il charge le contrat de jetons `theme/tokens.css`)
+common/styles/                    # Feuilles partagées : app_shell.css, shared_ui.css, theme_default.css (voir « Feuilles partagées »)
 front/src/themes/<id>/            # Thèmes privés de l'app
 ```
 
 ### Jetons des modules
 
-Un composant partagé ne contient aucune couleur en dur : il lit le contrat de jetons (`theme/tokens.css`) ou les jetons de son module, `<module>/styles/tokens.css` (`--<module>-<composant>-<rôle>`, valeurs par défaut en `:where(:root)`, donc surchargeables par n'importe quel thème sans toucher au composant). Pour `common` : `styles/tokens.css` (préfixe `--common-`). Les couleurs qui doivent être des valeurs résolues (canvas, librairies de graphiques, `alpha()` MUI, attributs SVG) ou qui sont des données (séries, avatars, couleurs choisies par l'utilisateur) restent en JS.
+Un composant partagé ne contient aucune couleur en dur : il lit le contrat de jetons (`theme/tokens.css`, valeurs du thème `default`) ou les jetons de son module, `<module>/styles/tokens.css` (`--<module>-<composant>-<rôle>`, valeurs par défaut en `:where(:root)`, donc surchargeables par n'importe quel thème sans toucher au composant). Pour `common` : `styles/tokens.css` (préfixe `--common-`). Les couleurs qui doivent être des valeurs résolues (canvas, librairies de graphiques, `alpha()` MUI, attributs SVG) ou qui sont des données (séries, avatars, couleurs choisies par l'utilisateur) restent en JS.
+
+### Feuilles partagées et feuilles d'app
+
+Aucune app ne garde de copie de `theme_default.css` : le contenu se répartit selon son propriétaire.
+
+| Feuille | Contenu | Chargée par |
+|---|---|---|
+| `common/styles/shared_ui.css` | Briques d'UI des modules partagés (boutons, formulaires, onglets, tableaux, cartes, alertes, modales) | les pages d'admin de `common` (`AdminPage`, `UserAdminPage`, `AdminDashboard`, `ModuleConfigForm`) et les modules qui s'en servent |
+| `common/styles/app_shell.css` | Habillage d'app du template (fond de page, header, sidebar, tiroir, hero) | le bundle ci-dessous |
+| `common/styles/theme_default.css` | `@import` de `app_shell.css` puis `shared_ui.css` | `PageLayout` / `LandingPage` du template (une app qui a son propre header n'importe que `shared_ui.css`) |
+| `<module>/styles/<module>.css` | Styles propres à un module (`roadmap`, `trading`, `usertradingplatform`) | les composants du module, via un `import` JS |
+| `front/src/themes/<id>/colors.css`, `app.css` | Jetons de couleur de l'app et ses surcharges des feuilles ci-dessus | `front/src/themes/<id>/styles.ts` (voir ci-dessous) |
+
+Règles :
+- Un module ne dépend jamais d'un fichier de l'app (`@/styles/...`) : il importe sa feuille ou celle de `common` par chemin relatif.
+- **Ne jamais utiliser `@import` CSS entre ces fichiers** : un `@import` recopie le contenu au lieu de le dédoublonner, la feuille se retrouverait deux fois et la copie tardive écraserait les surcharges de l'app. L'ordre de cascade se règle par l'ordre des `import` JS.
+- Une app avec un thème privé ajoute `front/src/themes/<id>/styles.ts`, importé une fois (par `PageLayout`, là où l'ancien `theme_default.css` l'était) : `import './colors.css'; import '@/modules_shared/common/styles/theme_default.css'` (ou `shared_ui.css` seul), puis les feuilles des modules liés, puis `import './app.css'` (ses surcharges, qui doivent rester après les feuilles partagées).
+- Le thème `default` n'a pas de fichier de couleurs propre à l'app : une app peut garder sa palette dans un `:root` à elle, qui prime sur `theme/tokens.css` (spécificité 0).
 
 ### Créer un thème
 

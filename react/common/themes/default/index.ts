@@ -9,7 +9,8 @@
 
 import type { ThemeDefinition } from '../../theme/types'
 
-// No CSS: the shared default theme relies on the token contract (theme/tokens.css) and on the app's own :root vars.
+// The default look is the token contract: its values apply while `data-theme='default'` (specificity 0, an app palette wins).
+import '../../theme/tokens.css'
 
 const defaultTheme: ThemeDefinition = {
   id: 'default',

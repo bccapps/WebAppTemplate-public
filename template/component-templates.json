@@ -30,9 +30,7 @@
     "front/src/config/navigation.ts": "front/src/config/navigation.ts",
     "front/src/config/pluginRoutes.ts": "front/src/config/pluginRoutes.ts",
     "front/src/config/pluginOptions.ts": "front/src/config/pluginOptions.ts",
-    "front/src/config/config.ts": "front/src/config/config.ts",
-    "front/src/styles/colors.css": "front/src/styles/colors.css",
-    "front/src/styles/theme_default.css": "front/src/styles/theme_default.css"
+    "front/src/config/config.ts": "front/src/config/config.ts"
   },
   "pwa": {
     "front/pwa.plugin.ts": "front/pwa.plugin.ts",

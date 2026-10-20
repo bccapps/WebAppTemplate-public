@@ -8,7 +8,7 @@
  */
 
 import { useCallback } from 'react';
-import '@/styles/theme_default.css';
+import '@/modules_shared/common/styles/theme_default.css';
 import './LandingPage.css';
 import { HeroVisual } from './HeroVisual';
 import { I18nLabel } from '@/modules_shared/common/components/ui/label/I18nLabel';

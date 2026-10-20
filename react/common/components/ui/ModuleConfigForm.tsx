@@ -13,7 +13,7 @@ import { i18n } from '@/modules_shared/common/core/i18n/I18n';
 import { moduleConfigService } from '@/modules_shared/common/services/ModuleConfigService';
 import { routeRegistry } from '@/modules_shared/common/services/RouteRegistry';
 import type { ConfigFieldOption, ConfigFieldSchema, ModuleConfigWithValues } from '@/modules_shared/common/types/ModuleConfigSchema';
-import '@/styles/theme_default.css';
+import '../../styles/shared_ui.css';
 
 interface ModuleConfigFormProps {
   moduleId: string;

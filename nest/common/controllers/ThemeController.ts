@@ -62,8 +62,8 @@ export class ThemeController {
   @UseInterceptors(AdminOnlyInterceptor)
   async create(@Body() body: ThemeCreateDto) {
     // Read the static CSS files to provide context to the LLM
-    const colorsCss = this.readStaticCss('colors.css');
-    const themeCss = this.readStaticCss('theme_default.css');
+    const colorsCss = this.readBaseColors();
+    const themeCss = this.readBaseStyles();
     const mergedCss = colorsCss + '\n\n' + themeCss;
 
     return await this.themeService.create(body.name, body.description, mergedCss);
@@ -102,11 +102,26 @@ export class ThemeController {
     return { success: true };
   }
 
-  private readStaticCss(filename: string): string {
+  /** Palette of the base theme: the shared default theme's tokens, rewritten as plain `:root` rules for the LLM. */
+  private readBaseColors(): string {
+    const css = this.readFrontFile('modules_shared/common/theme/tokens.css');
+    return css
+      .replace(/:where\(:root\[data-theme='default'\]\[data-color-scheme='dark'\]\)/g, "[data-color-scheme='dark']")
+      .replace(/:where\(:root\[data-theme='default'\]\)/g, ':root');
+  }
+
+  /** Component styles of the base theme: the shared app shell and UI building blocks. */
+  private readBaseStyles(): string {
+    return ['app_shell.css', 'shared_ui.css']
+      .map((file) => this.readFrontFile(`modules_shared/common/styles/${file}`))
+      .join('\n\n');
+  }
+
+  private readFrontFile(relativePath: string): string {
     // Try multiple paths (dev vs built)
     const paths = [
-      join(process.cwd(), 'front', 'src', 'styles', filename),
-      join(process.cwd(), '..', 'front', 'src', 'styles', filename),
+      join(process.cwd(), 'front', 'src', relativePath),
+      join(process.cwd(), '..', 'front', 'src', relativePath),
     ];
     for (const p of paths) {
       try {

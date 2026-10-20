@@ -8,13 +8,14 @@
  */
 
 /* Token contract of the shared modules: the semantic variables their components may read (--color-*, --accent-*,
-   --surface-*, --radius-*, --shadow-*, --header-*, --glass-*). These are the DEFAULT values of the `default` theme.
-   Every selector is wrapped in :where() (specificity 0): an app or a theme (`[data-theme='x']`, see
-   common/theme/README) always overrides them, whatever the load order. A theme overrides the tokens it needs;
-   a shared component never hardcodes a colour and never reads a token that is not listed here. */
+   --surface-*, --radius-*, --shadow-*, --header-*, --glass-*). These are the values of the `default` theme: they apply
+   only while it is the active theme (`data-theme='default'`) and every selector is wrapped in :where() (specificity 0),
+   so an app that keeps its own palette on top of the default theme (a `:root` of its own) always overrides them,
+   whatever the load order. A private theme declares its own values (`:root[data-theme='x']`). A shared component never
+   hardcodes a colour and never reads a token that is not listed here. */
 
 
-:where(:root) {
+:where(:root[data-theme='default']) {
   --background-light: #f5f6fb;
   --background-dark: #0b0f1a;
   --background-menu-light: #eef0f7;
@@ -58,7 +59,7 @@
 }
 
 
-:where([data-color-scheme='dark']) {
+:where(:root[data-theme='default'][data-color-scheme='dark']) {
   --background-light: #0b0f1a;
   --background-dark: #05070f;
   --text-light: #f9fafb;
