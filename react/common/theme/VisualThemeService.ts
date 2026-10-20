@@ -35,8 +35,9 @@ class VisualThemeService {
    * loaded), so the theme tokens exist for pages rendered outside VisualThemeProvider (e.g. the landing page).
    */
   bootstrap(): void {
-    if (typeof document === 'undefined') return
-    document.documentElement.setAttribute('data-theme', this.resolveInitial().id)
+    const theme = this.resolveInitial()
+    this.active = theme
+    if (typeof document !== 'undefined') document.documentElement.setAttribute('data-theme', theme.id)
   }
 
   private resolveInitial(): ThemeDefinition {
