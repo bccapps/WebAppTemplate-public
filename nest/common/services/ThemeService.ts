@@ -66,7 +66,7 @@ export class ThemeService implements OnApplicationBootstrap {
 
   async list(): Promise<ThemeDto[]> {
     const themes = await this.repo.find({
-      select: ['id', 'name', 'code', 'description', 'active', 'isDefault', 'createdAt', 'updatedAt'],
+      select: { id: true, name: true, code: true, description: true, active: true, isDefault: true, createdAt: true, updatedAt: true },
       order: { isDefault: 'DESC', name: 'ASC' },
     });
     return themes.map((t) => this.toDto(t));
@@ -74,7 +74,7 @@ export class ThemeService implements OnApplicationBootstrap {
 
   async listActive(): Promise<ThemeDto[]> {
     const themes = await this.repo.find({
-      select: ['id', 'name', 'code', 'description', 'active', 'isDefault', 'createdAt', 'updatedAt'],
+      select: { id: true, name: true, code: true, description: true, active: true, isDefault: true, createdAt: true, updatedAt: true },
       where: { active: true },
       order: { isDefault: 'DESC', name: 'ASC' },
     });
@@ -83,7 +83,7 @@ export class ThemeService implements OnApplicationBootstrap {
 
   async getCss(code: string): Promise<string | null> {
     const theme = await this.repo.findOne({
-      select: ['css'],
+      select: { css: true },
       where: { code, active: true },
     });
     return theme?.css ?? null;

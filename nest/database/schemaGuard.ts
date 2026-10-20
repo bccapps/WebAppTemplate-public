@@ -67,7 +67,7 @@ export function evaluateSchemaGuard(state: SchemaState, resolution: SchemaResolu
 
 /** Reads the schema state through a throw-away, schema-less connection (no entities, no sync, no migrations). */
 export async function inspectSchemaState(options: DataSourceOptions): Promise<SchemaState> {
-  const probe = new DataSource({ ...options, name: undefined, entities: [], subscribers: [], migrations: [], synchronize: false, migrationsRun: false } as DataSourceOptions);
+  const probe = new DataSource({ ...options, entities: [], subscribers: [], migrations: [], synchronize: false, migrationsRun: false } as DataSourceOptions);
   await probe.initialize();
   try {
     const migrationsTable = (options as { migrationsTableName?: string }).migrationsTableName ?? 'migrations';
