@@ -205,7 +205,7 @@ plugins (`plugin.ts` / `plugin.tsx`). Questions (Enter = default; each has a CLI
 | 5 | functional modules (grouped by category, with description) | closure of `requires` shown before confirmation |
 | 6 | database (selfhosted / cloud / supabase / neon / **sqlite**), Redis (default no) | `DB_ENGINE`, `.env` blocks; sqlite: `DB_PATH=data/<project>.db`, no `DB_*` Postgres variables, `better-sqlite3` in `back/package.local.json`. The question is asked **before** the modules: those that do not support the engine are not offered |
 | 6b | **installable app (PWA)?** (`--pwa` / `--no-pwa`, default no; `--pwa-name`, `--pwa-short-name` (12 characters at most), `--pwa-theme-color`, `--pwa-background-color`) | writes the `pwa` section of `project.config.json` (`enabled`, `name`, `shortName`, `themeColor`, `backgroundColor`; name defaults to the site name, colors to a neutral pair); enabled: copies `front/pwa.plugin.ts`, `front/pwa-assets.config.ts`, `front/src/sw.ts`, `front/src/components/PwaInstallButton.tsx`, keeps the PWA tags of `front/index.html`, the `Header` button and the PWA lines of `front/public/_headers`, and adds `vite-plugin-pwa`, `@vite-pwa/assets-generator`, `workbox-*` and the `pwa:icons` script to `front/package.local.json` (see « Front public files and PWA ») |
-| 7 | languages | `back/src/locales/custom.<lang>.json`, `localesLanguages`, `localeDefault` |
+| 7 | languages | `back/src/locales/custom.<lang>.json`, `back/src/locales/common.<lang>.json` (canonical subset of `back/locales/`), `localesLanguages`, `localeDefault` |
 | 8 | recap | confirmation, then generation |
 
 Files produced: `shared-modules.json`, `project.config.json` (the answers: replay or add a module later),

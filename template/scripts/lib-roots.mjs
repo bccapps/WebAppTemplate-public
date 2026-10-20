@@ -97,6 +97,19 @@ export function readSharedModules(projectRoot, stack, onProblem) {
   return list.map(String);
 }
 
+/**
+ * Real directories of the shared modules a stack links (shared-modules.json), for the tools that must reach the
+ * library sources themselves (Jest roots, ESLint files): they do not descend into the `src/modules_shared` links.
+ * Without a readable shared-modules.json, every existing library root.
+ * @returns {string[]} absolute directories
+ */
+export function linkedModuleDirs(stack, stackDir) {
+  const linked = readSharedModules(path.dirname(stackDir), stack);
+  return linked
+    ? linked.flatMap((name) => resolveModule(stack, stackDir, name)?.dir ?? [])
+    : libRoots(stack, stackDir).map((root) => root.dir);
+}
+
 export function hasModule(projectRoot, stack, name) {
   return readSharedModules(projectRoot, stack)?.includes(name) ?? false;
 }

@@ -31,6 +31,16 @@ export function extractBearerToken(req: AuthRequest): string | null {
   return header.split(' ')[1] || null;
 }
 
+/**
+ * Id of the authenticated user of a request (`req.user`, set by the global auth interceptor). Throws a 401 when the
+ * request carries no principal: for routes behind the auth interceptor, instead of `(req as any).user.id`.
+ */
+export function authUserId(req: unknown): number {
+  const id = (req as AuthRequest | null | undefined)?.user?.id;
+  if (typeof id !== 'number') throw new SecurityException('AUT', 'No authenticated user on the request');
+  return id;
+}
+
 /** Fingerprint only: a rejected token is still a credential and must not reach the logs. */
 export function unrecognizedTokenError(token: string): SecurityException {
   return new SecurityException(

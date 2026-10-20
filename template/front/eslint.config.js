@@ -7,17 +7,25 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import path from 'node:path'
 import js from '@eslint/js'
 import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
+import { linkedModuleDirs } from '../scripts/lib-roots.mjs'
+
+// Linted: the app sources and the real directories of the LINKED shared modules (shared-modules.json, resolved by
+// scripts/lib-roots.mjs like the Jest roots: ESLint does not descend into the `src/modules_shared` links). The rest of
+// `.libs/` (other stacks, unlinked modules, tooling) is not part of the app and is never linted.
+const stackDir = process.cwd()
+const linkedModuleGlobs = linkedModuleDirs('front', stackDir).map((dir) => `${path.relative(stackDir, dir)}/**/*.{ts,tsx}`)
 
 export default tseslint.config(
-  { ignores: ['dist'] },
+  { ignores: ['dist', '.libs/**/*.{js,jsx,mjs,cjs}'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
-    files: ['**/*.{ts,tsx}'],
+    files: ['*.ts', 'src/**/*.{ts,tsx}', ...linkedModuleGlobs],
     languageOptions: {
       ecmaVersion: 2020,
       globals: globals.browser,

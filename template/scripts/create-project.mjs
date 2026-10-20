@@ -423,7 +423,28 @@ function frontEnvValues(answers, fromAnswers) {
   };
 }
 
+/**
+ * `back/src/locales/common.<lang>.json` must be a real file in every app (sync-common-locales only ADDS keys to an
+ * existing one): seeded from the template's canonical subset, the project's own mount first, else this script's.
+ * A language without a canonical file starts from the English one.
+ */
+function writeCommonLocales(root, answers) {
+  const dir = path.join(root, 'back', 'src', 'locales');
+  const sources = [path.join(root, 'back', '.libs', 'apptemplate', 'back', 'locales'), path.join(SCRIPT_DIR, '..', 'back', 'locales')];
+  const sourceDir = sources.find((candidate) => existsSync(path.join(candidate, 'common.en.json')));
+  if (!sourceDir) return log.warn('Canonical common.en.json not found — create back/src/locales/common.<lang>.json by hand.');
+  mkdirSync(dir, { recursive: true });
+  for (const lang of answers.languages) {
+    const file = path.join(dir, `common.${lang}.json`);
+    if (existsSync(file)) continue;
+    const canonical = path.join(sourceDir, `common.${lang}.json`);
+    writeFileSync(file, readFileSync(existsSync(canonical) ? canonical : path.join(sourceDir, 'common.en.json'), 'utf8'));
+    if (!existsSync(canonical)) log.warn(`back/src/locales/common.${lang}.json copied from the English file — translate it.`);
+  }
+}
+
 function writeLocales(root, answers) {
+  writeCommonLocales(root, answers);
   const dir = path.join(root, 'back', 'src', 'locales');
   const template = path.join(dir, 'custom.en.json');
   if (!existsSync(template)) return;
@@ -550,7 +571,7 @@ export function renderPlan(answers, resolved, catalog, root) {
   const desktop = resolveDesktop(answers);
   lines.push(`Desktop         ${desktop.enabled ? `yes ("${desktop.productName}", ${desktop.identifier}; desktop/, .github/workflows/build-desktop.yml, scripts desktop:dev and desktop:build in back/package.local.json)` : 'no'}`);
   lines.push(`Seeded config   ${entries.map((e) => e.name).join(', ')}`);
-  lines.push(`Files           shared-modules.json, project.config.json, back/.env.dev + .env.example, front/.env.dev + .env.example, back/src/config/defaultConfig.ts, back/src/locales/custom.<lang>.json, front/public/{robots.txt,_redirects,_headers,favicon.svg}${pwa.enabled ? ', front/pwa.plugin.ts, front/pwa-assets.config.ts, front/src/sw.ts' : ''}`);
+  lines.push(`Files           shared-modules.json, project.config.json, back/.env.dev + .env.example, front/.env.dev + .env.example, back/src/config/defaultConfig.ts, back/src/locales/{common,custom}.<lang>.json, front/public/{robots.txt,_redirects,_headers,favicon.svg}${pwa.enabled ? ', front/pwa.plugin.ts, front/pwa-assets.config.ts, front/src/sw.ts' : ''}`);
   return lines.join('\n');
 }
 

@@ -25,13 +25,10 @@
 const path = require('path');
 
 module.exports = async () => {
-  const { libRoots, readSharedModules, resolveModule } = await import('../scripts/lib-roots.mjs');
+  const { linkedModuleDirs } = await import('../scripts/lib-roots.mjs');
   const { mergeJestConfig, readLocalJest } = await import('../scripts/merge-jest.mjs');
   const stackDir = process.cwd();
-  const linked = readSharedModules(path.join(stackDir, '..'), 'back');
-  const libDirs = linked
-    ? linked.flatMap((name) => resolveModule('back', stackDir, name)?.dir ?? [])
-    : libRoots('back', stackDir).map((root) => root.dir);
+  const libDirs = linkedModuleDirs('back', stackDir);
   const shared = {
     moduleFileExtensions: ['js', 'json', 'ts'],
     rootDir: path.join(stackDir, 'src'),

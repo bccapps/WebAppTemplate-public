@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
-import { hasModule, libRoots, readSharedModules, resolveModule } from './lib-roots.mjs';
+import { hasModule, libRoots, linkedModuleDirs, readSharedModules, resolveModule } from './lib-roots.mjs';
 
 function project(dirs, shared) {
   const root = mkdtempSync(path.join(tmpdir(), 'lr-'));
@@ -60,5 +60,15 @@ test('readSharedModules / hasModule', () => {
   const problems = [];
   assert.equal(readSharedModules(path.join(root, 'none'), 'back', (r) => problems.push(r)), null);
   assert.equal(problems.length, 1);
+  rmSync(root, { recursive: true });
+});
+
+test('linkedModuleDirs: only the linked modules, every library root without shared-modules.json', () => {
+  const dirs = ['back/.libs/vx-public/nest/common', 'back/.libs/vx-private/nest/user', 'back/.libs/vx-private/nest/unused'];
+  const root = project(dirs, { nestcommon: ['common', 'user', 'absent'] });
+  const back = path.join(root, 'back');
+  assert.deepEqual(linkedModuleDirs('back', back), [path.join(back, '.libs/vx-public/nest/common'), path.join(back, '.libs/vx-private/nest/user')]);
+  rmSync(path.join(root, 'shared-modules.json'));
+  assert.deepEqual(linkedModuleDirs('back', back), [path.join(back, '.libs/vx-public/nest'), path.join(back, '.libs/vx-private/nest')]);
   rmSync(root, { recursive: true });
 });
