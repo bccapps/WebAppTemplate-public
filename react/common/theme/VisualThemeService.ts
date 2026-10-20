@@ -9,6 +9,7 @@
 
 import type { ThemeDefinition } from './types'
 import { themeRegistry } from './themes'
+import { discoverThemes } from './discoverThemes'
 import { commandRegistry } from './commands/CommandRegistry'
 import { configurationService } from '../services/ConfigurationService'
 
@@ -26,9 +27,22 @@ class VisualThemeService {
    * Reads saved theme from localStorage, applies it.
    */
   init(): void {
+    this.applyTheme(this.resolveInitial(), false)
+  }
+
+  /**
+   * Sets `data-theme` as soon as the module is evaluated (before any render and before the configuration is
+   * loaded), so the theme tokens exist for pages rendered outside VisualThemeProvider (e.g. the landing page).
+   */
+  bootstrap(): void {
+    if (typeof document === 'undefined') return
+    document.documentElement.setAttribute('data-theme', this.resolveInitial().id)
+  }
+
+  private resolveInitial(): ThemeDefinition {
     const saved = this.readSaved()
-    const theme = themeRegistry.get(saved) ?? themeRegistry.getDefault()
-    this.applyTheme(theme, false)
+    const selectable = themeRegistry.getSelectable().find((theme: ThemeDefinition) => theme.id === saved)
+    return selectable ?? themeRegistry.getDefault()
   }
 
   /** Whether the theming system is enabled (config flag). */
@@ -89,8 +103,11 @@ class VisualThemeService {
   }
 
   private readSaved(): string {
-    try { return localStorage.getItem(STORAGE_KEY) ?? 'default' } catch { return 'default' }
+    try { return localStorage.getItem(STORAGE_KEY) ?? '' } catch { return '' }
   }
 }
 
 export const visualThemeService = new VisualThemeService()
+
+discoverThemes()
+visualThemeService.bootstrap()

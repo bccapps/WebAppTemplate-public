@@ -32,9 +32,7 @@
     "front/src/config/pluginOptions.ts": "front/src/config/pluginOptions.ts",
     "front/src/config/config.ts": "front/src/config/config.ts",
     "front/src/styles/colors.css": "front/src/styles/colors.css",
-    "front/src/styles/theme_default.css": "front/src/styles/theme_default.css",
-    "front/src/themes/index.ts": "front/src/themes/index.ts",
-    "front/src/themes/default/index.ts": "front/src/themes/default/index.ts"
+    "front/src/styles/theme_default.css": "front/src/styles/theme_default.css"
   },
   "pwa": {
     "front/pwa.plugin.ts": "front/pwa.plugin.ts",

@@ -92,5 +92,7 @@
   "common.donations.admin.presetAmountsUsd.helper": "Montants séparés par des virgules, ex. 1, 5, 10",
   "common.donations.admin.saveError": "Impossible d'enregistrer les réglages de don.",
   "common.donations.admin.saveSuccess": "Réglages de don enregistrés.",
-  "common.donations.admin.save": "Enregistrer"
+  "common.donations.admin.save": "Enregistrer",
+  "common.theme.default.name": "Par défaut",
+  "common.theme.default.description": "L'apparence standard de l'application."
 }

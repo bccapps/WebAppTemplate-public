@@ -15,9 +15,7 @@ class ThemeRegistry {
   private images: Record<ThemeImageKey, string> = { ...defaultImages }
 
   constructor() {
-    // No built-in themes registered here.
-    // Each app registers its own themes via themeRegistry.register() at startup
-    // (see front/src/themes/index.ts or equivalent).
+    // Themes are registered by discoverThemes(): shared ones (common/themes) then private ones (front/src/themes).
   }
 
   register(theme: ThemeDefinition): void {
@@ -32,8 +30,16 @@ class ThemeRegistry {
     return Array.from(this.themes.values())
   }
 
+  /** The app's `appDefault` theme, else the shared `default`. */
   getDefault(): ThemeDefinition {
-    return this.themes.get('default')!
+    const appDefault = this.getAll().find((theme: ThemeDefinition) => theme.appDefault)
+    return appDefault ?? this.themes.get('default')!
+  }
+
+  /** Themes offered to the user: the shared `default` is hidden when the app declares its own default theme. */
+  getSelectable(): ThemeDefinition[] {
+    const hasAppDefault = this.getAll().some((theme: ThemeDefinition) => theme.appDefault)
+    return this.getAll().filter((theme: ThemeDefinition) => !(hasAppDefault && theme.id === 'default'))
   }
 
   /** Override the global default image set (called by each app at startup). */

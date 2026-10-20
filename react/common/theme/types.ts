@@ -57,4 +57,9 @@ export type ThemeDefinition = {
   commands?: Record<string, ThemeCommand>
   /** Whether this theme can be deleted by users. Built-in themes are protected. */
   builtIn?: boolean
+  /**
+   * The app's own theme: used when nothing is saved or the saved id is unknown, and the only one offered in the
+   * selector together with the other private themes (the shared `default` is then hidden). At most one per app.
+   */
+  appDefault?: boolean
 }

@@ -42,7 +42,7 @@ export function VisualThemeProvider({ children }: { children: React.ReactNode })
   const value = useMemo<VisualThemeContextValue>(
     () => ({
       activeTheme: active,
-      availableThemes: themeRegistry.getAll(),
+      availableThemes: themeRegistry.getSelectable(),
       setTheme,
       isEnabled,
     }),

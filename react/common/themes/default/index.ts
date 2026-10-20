@@ -7,11 +7,11 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import type { ThemeDefinition } from '@/modules_shared/common/theme/types'
-// No CSS — the default theme relies entirely on the app's :root CSS vars (colors.css).
-// data-theme="default" has no matching CSS rules, so :root wins.
+import type { ThemeDefinition } from '../../theme/types'
 
-export const defaultTheme: ThemeDefinition = {
+// No CSS: the shared default theme relies on the token contract (theme/tokens.css) and on the app's own :root vars.
+
+const defaultTheme: ThemeDefinition = {
   id: 'default',
   name: 'common.theme.default.name',
   description: 'common.theme.default.description',
@@ -19,3 +19,5 @@ export const defaultTheme: ThemeDefinition = {
   interaction: 'standard',
   builtIn: true,
 }
+
+export default defaultTheme

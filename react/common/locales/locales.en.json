@@ -92,5 +92,7 @@
   "common.donations.admin.presetAmountsUsd.helper": "Comma-separated amounts, e.g. 1, 5, 10",
   "common.donations.admin.saveError": "Could not save the donation settings.",
   "common.donations.admin.saveSuccess": "Donation settings saved.",
-  "common.donations.admin.save": "Save"
+  "common.donations.admin.save": "Save",
+  "common.theme.default.name": "Default",
+  "common.theme.default.description": "The standard look of the application."
 }

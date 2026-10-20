@@ -573,12 +573,21 @@ Le système est activé par défaut. Pour le désactiver (masque le sélecteur u
 
 ### Architecture
 
-Les thèmes eux-mêmes sont **app-spécifiques** et vivent dans `front/src/themes/` (ou équivalent dans chaque app). Le module `common/theme/` ne fournit que l'infrastructure.
+Deux sources de thèmes, découvertes automatiquement par `discoverThemes()` (`import.meta.glob`, appelé à l'évaluation de `VisualThemeService`, qui pose aussi `data-theme` avant le premier rendu) — plus aucun fichier d'enregistrement à écrire :
+
+| Source | Dossier | Contenu |
+|---|---|---|
+| Partagée (publique, `vx-public`) | `common/themes/<id>/index.ts` | `default` et les thèmes génériques réutilisables par toutes les apps |
+| **Privée** (propre à l'app, jamais publiée) | `front/src/themes/<id>/index.ts` | le thème de la marque de l'app (`papanglabs`, `tradekong`, `agenthub`…) |
+
+Les partagés sont enregistrés d'abord, puis les privés : un thème privé de même `id` remplace le partagé. Un module exporte sa définition en `default` (un export nommé reste toléré). Un thème privé marqué `appDefault: true` est le thème de l'app (utilisé quand rien n'est mémorisé) et masque le `default` partagé dans le sélecteur.
 
 ```
-common/theme/                      # Infrastructure partagée (reactcommon)
+common/theme/                      # Infrastructure partagée
   types.ts                        # ThemeDefinition, ShellType, InteractionMode, ThemeImageKey
-  themes.ts                       # ThemeRegistry — singleton vide, les apps y enregistrent leurs thèmes
+  themes.ts                       # ThemeRegistry (register, getDefault, getSelectable, resolveImage)
+  discoverThemes.ts               # Scan des deux sources + enregistrement
+  tokens.css                      # Contrat de jetons : valeurs par défaut en :where(:root), jamais prioritaires
   themeImages.ts                  # Registry d'images : clés → URL avec fallback
   VisualThemeService.ts           # Service singleton : applique data-theme, persiste en localStorage
   VisualThemeContext.tsx          # React context + VisualThemeProvider
@@ -596,23 +605,19 @@ common/theme/                      # Infrastructure partagée (reactcommon)
     ThemeAction.tsx               # Action sémantique (bouton en standard, hint commande en CLI)
     ThemeNav.tsx                  # Navigation sémantique (sidebar en standard, barre hints en CLI)
     UserAdminThemes.tsx           # Sélecteur de thème utilisateur (retourne null si désactivé)
-
-front/src/themes/                  # Thèmes app-spécifiques
-  index.ts                        # Point d'entrée : importe et enregistre tous les thèmes
-  default/                        # Thème par défaut — pas de CSS, utilise les :root vars de l'app
-  retro-visual/                   # Terminal CRT : vert phosphore, scanlines, monospace, coins carrés
-  retro-cli/                      # Retro-visual + shell terminal + navigation CLI
+common/themes/default/            # Thème partagé par défaut (sans CSS : il s'appuie sur le contrat de jetons)
+front/src/themes/<id>/            # Thèmes privés de l'app
 ```
 
 ### Créer un thème
 
-**1. Créer le dossier** `front/src/themes/mon-theme/` (dans l'app, pas dans reactcommon)
+**1. Créer le dossier** `front/src/themes/mon-theme/` (thème privé de l'app) ou `common/themes/mon-theme/` (thème partagé, via `vx-public`)
 
-**2. Écrire le CSS** `theme.css` — surcharger uniquement les vars nécessaires :
+**2. Écrire le CSS** `theme.css` — surcharger uniquement les jetons du contrat (`tokens.css`). Sélecteur `:root[data-theme='mon-theme']` (spécificité supérieure à un `:root` d'app) :
 ```css
 @import url('…');  /* polices si besoin */
 
-[data-theme='mon-theme'] {
+:root[data-theme='mon-theme'] {
   --color-bg: #…;
   --color-primary: #…;
   --font-primary: '…', sans-serif;
@@ -620,7 +625,7 @@ front/src/themes/                  # Thèmes app-spécifiques
 }
 
 /* Mode sombre spécifique au thème (si applicable) */
-[data-theme='mon-theme'][data-color-scheme='dark'] {
+:root[data-theme='mon-theme'][data-color-scheme='dark'] {
   --color-bg: #…;
 }
 
@@ -628,33 +633,30 @@ front/src/themes/                  # Thèmes app-spécifiques
 [data-theme='mon-theme'] body::after { … }
 ```
 
-**3. Écrire le descriptor** `index.ts` :
+**3. Écrire le descriptor** `index.ts` (export `default`) — c'est tout, il est découvert tout seul :
 ```typescript
 import type { ThemeDefinition } from '@/modules_shared/common/theme/types'
 import './theme.css'   // ← import side-effect pour que Vite bundle le CSS
 
-export const monTheme: ThemeDefinition = {
+const monTheme: ThemeDefinition = {
   id: 'mon-theme',
-  name: 'common.theme.monTheme.name',  // clé i18n
-  description: 'common.theme.monTheme.description',
+  name: 'Mon thème',       // texte, ou clé i18n `common.…`
+  description: '…',
   shell: 'standard',       // 'standard' | 'terminal' | 'amstrad'
   interaction: 'standard', // 'standard' | 'cli' | 'basic'
+  appDefault: true,        // thème de l'app (un seul) ; omis pour un thème optionnel
   fonts: [{ family: 'Ma Police', url: 'https://…' }],
-  images: { logoMain: '/themes/mon-theme/logo.svg' },  // optionnel
+  images: { logoMain: '/images/logo-mon-app.svg' },  // optionnel
   commands: {              // seulement pour cli/basic
     '/mapage': { route: '/ma-page', description: 'Aller à ma page' },
   },
   builtIn: true,
 }
+
+export default monTheme
 ```
 
-**4. Enregistrer** dans `front/src/themes/index.ts` :
-```typescript
-import { monTheme } from './mon-theme'
-themeRegistry.register(monTheme)
-```
-
-**5. Ajouter les clés i18n** dans `<module>/locales/locales.{en,fr}.json` du module (voir « Locales d'un module » ci-dessous) — jamais dans les `common.*.json` partagés.
+**4. Ajouter les clés i18n** dans `<module>/locales/locales.{en,fr}.json` du module (voir « Locales d'un module » ci-dessous) — jamais dans les `common.*.json` partagés.
 
 ### Intégration dans l'app
 
@@ -701,8 +703,8 @@ Chaque app doit ajouter dans son `index.html` (avant `<script type="module">`) :
 ```html
 <script>
   (function () {
-    var t = localStorage.getItem('vx_visual_theme') || 'default';
-    document.documentElement.setAttribute('data-theme', t);
+    var t = localStorage.getItem('vx_visual_theme');
+    if (t) document.documentElement.setAttribute('data-theme', t); // sinon `VisualThemeService` pose le thème de l'app
     document.documentElement.setAttribute('data-color-scheme', 'dark');
   })();
 </script>

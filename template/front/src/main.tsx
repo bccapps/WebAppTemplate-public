@@ -14,7 +14,6 @@ import App from './App.tsx'
 import LandingPage from './components/landingpage/LandingPage'
 import { configurationService } from '@/modules_shared/common/services/ConfigurationService'
 import { installPreloadErrorReload } from '@/modules_shared/common/utils/preloadReload'
-import '@/themes' // register app themes with ThemeRegistry
 
 // A tab opened before a deploy can reference a lazy chunk the new deploy removed: reload once to
 // fetch the fresh index.html (guarded against loops, see preloadReload.ts).
