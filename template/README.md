@@ -108,9 +108,11 @@ Progress markers (`==> ` lines parsed by Agent Hub): `[BACK:<host>] Tagging curr
 ## Common dependency baseline (front)
 
 `front/package.base.json` is the single source for any dependency more than
-one consuming app needs. A dependency belongs in `package.local.json`
-(project-specific overlay) ONLY when it serves a feature genuinely unique to
-that app. Before adding a new dependency to a project's `package.local.json`,
+one consuming app needs. A dependency of a feature unique to an app goes in
+the `package.fragment.json` of that feature (`<stack>/src/modules/<feature>/`,
+merged after the shared modules' fragments; two fragments disagreeing on a
+version print a warning). `package.local.json` (project-wide overlay) stays
+minimal: `scripts`, `overrides`/pins and tooling used by project scripts. Before adding a new dependency to a project's `package.local.json`,
 check whether another app on the template already carries the same package;
 if so, it belongs in the base instead, so all apps track one version instead
 of drifting apart silently.

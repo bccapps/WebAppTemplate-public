@@ -12,7 +12,11 @@
  *   1. the SHARED base (`<stack>/.libs/apptemplate/<stack>/package.base.json`)
  *   2. the `package.fragment.json` of each linked shared module, in the order of
  *      `shared-modules.json` (resolved through lib-roots.mjs)
- *   3. the project-local overlay (`<stack>/package.local.json`).
+ *   3. the `package.fragment.json` of each app module (`<stack>/src/modules/<feature>/`), in alphabetical
+ *      order of the folder: the dependencies a project feature needs live next to that feature, so removing
+ *      the feature removes them
+ *   4. the project-local overlay (`<stack>/package.local.json`): only what is project-wide and cannot belong
+ *      to a module (overrides, pins, tooling used by project scripts).
  * Later layers win on every key collision, so a project can pin its own dependency
  * versions (and add its domain-specific deps) without forking the shared base.
  * A `jest` key is dropped from the result when `<stack>/jest.config.js` exists
@@ -35,7 +39,7 @@
  * newline (npm style) and the result is the generated `package.json`.
  */
 
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'fs';
 import path from 'path';
 import process from 'process';
 import { fileURLToPath } from 'url';
@@ -91,11 +95,46 @@ function fragmentFiles(stack, stackDir) {
   return files;
 }
 
+/** Fragment files of the app's own modules (`<stack>/src/modules/<feature>/package.fragment.json`), sorted by folder. */
+function appFragmentFiles(stackDir) {
+  const modulesDir = path.join(stackDir, 'src', 'modules');
+  if (!existsSync(modulesDir)) return [];
+  return readdirSync(modulesDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => ({ name: `app:${entry.name}`, file: path.join(modulesDir, entry.name, 'package.fragment.json') }))
+    .filter(({ file }) => existsSync(file))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+const DEP_KEYS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
+
+/**
+ * Packages that two fragments declare with different specifiers (the later one silently wins in the merge).
+ * The base and the local overlay are left out: overriding them is their purpose.
+ * @returns {{ pkg: string, versions: { from: string, spec: string }[] }[]}
+ */
+export function fragmentConflicts(fragments) {
+  const seen = new Map();
+  for (const { name, file } of fragments) {
+    const json = readJson(file);
+    for (const depKey of DEP_KEYS) {
+      for (const [pkg, spec] of Object.entries(json[depKey] ?? {})) {
+        const list = seen.get(pkg) ?? [];
+        list.push({ from: name, spec });
+        seen.set(pkg, list);
+      }
+    }
+  }
+  return [...seen]
+    .filter(([, list]) => new Set(list.map((v) => v.spec)).size > 1)
+    .map(([pkg, versions]) => ({ pkg, versions }));
+}
+
 /**
  * Compute the merged package.json of a stack. Returns null when the base is absent.
  * @param {'back'|'front'} stack
  * @param {string} stackDir absolute path of <project>/<stack>
- * @returns {{ pkg: object, fragments: string[] } | null}
+ * @returns {{ pkg: object, fragments: string[], conflicts: ReturnType<typeof fragmentConflicts> } | null}
  */
 export function buildPackage(stack, stackDir) {
   const baseFile = path.join(stackDir, '.libs', 'apptemplate', stack, 'package.base.json');
@@ -103,12 +142,12 @@ export function buildPackage(stack, stackDir) {
   if (!existsSync(baseFile)) return null;
   if (!existsSync(localFile)) throw new Error(`${localFile} introuvable — impossible de générer package.json.`);
 
-  const fragments = fragmentFiles(stack, stackDir);
+  const fragments = [...fragmentFiles(stack, stackDir), ...appFragmentFiles(stackDir)];
   let merged = readJson(baseFile);
   for (const { file } of fragments) merged = deepMerge(merged, readJson(file));
   merged = deepMerge(merged, readJson(localFile));
   if (existsSync(path.join(stackDir, 'jest.config.js'))) delete merged.jest;
-  return { pkg: canonicalize(merged), fragments: fragments.map((f) => f.name) };
+  return { pkg: canonicalize(merged), fragments: fragments.map((f) => f.name), conflicts: fragmentConflicts(fragments) };
 }
 
 function main() {
@@ -125,6 +164,10 @@ function main() {
   if (!result) {
     console.log(`[build-package] base absente (.libs/apptemplate/${stack}/package.base.json) — package.json laissé tel quel.`);
     return;
+  }
+  for (const { pkg, versions } of result.conflicts) {
+    const detail = versions.map((v) => `${v.from}: ${v.spec}`).join(', ');
+    console.warn(`[build-package] ⚠ ${pkg} déclaré avec des versions différentes (${detail}) — la dernière gagne ; l'aligner ou le figer dans package.local.json.`);
   }
   writeFileSync(path.join(stackDir, 'package.json'), JSON.stringify(result.pkg, null, 2) + '\n');
 
