@@ -9,10 +9,10 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
       - name: Tooling tests
@@ -39,8 +39,8 @@ jobs:
       matrix:
         mode: [anonymous, anonymous-sqlite, anonymous-sqlite-desktop, users-only, multi-users]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
       - name: Git flow (create-project, update_common, deploy staging) against local origins
