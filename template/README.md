@@ -187,7 +187,7 @@ answer "monitoring/health/Redis cache".
 ## Create a project
 
 ```bash
-./template/scripts/create-project.sh            # interactive wizard (Node >= 20, no dependency)
+./template/scripts/create-project.sh            # interactive wizard (Node >= 24: npm 11, see `engines` of the package bases)
 ./template/scripts/create-project.sh my-app ~/projects --yes --entity "Acme" --email me@acme.io
 ./template/scripts/create-project.sh --answers project.config.json --yes     # replay / CI
 ./template/scripts/create-project.sh --dry-run ...                           # print the plan, write nothing
