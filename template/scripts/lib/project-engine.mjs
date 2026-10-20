@@ -45,8 +45,8 @@ export const ANSWERS_SCHEMA_VERSION = 1;
 export const PWA_DEFAULT_COLORS = { themeColor: '#1976d2', backgroundColor: '#ffffff' };
 /** Dev dependencies added to front/package.local.json when the PWA is enabled. */
 export const PWA_DEV_DEPENDENCIES = {
-  '@vite-pwa/assets-generator': '^1.0.2',
-  'vite-plugin-pwa': '^1.3.0',
+  '@vite-pwa/assets-generator': '^2.0.0',
+  'vite-plugin-pwa': '^2.0.0',
   'workbox-core': '^7.4.1',
   'workbox-precaching': '^7.4.1',
   'workbox-routing': '^7.4.1',

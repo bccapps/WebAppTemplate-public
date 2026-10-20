@@ -145,15 +145,14 @@ export function createViteConfig(opts: ViteConfigOptions = {}): UserConfig {
   const port = parseInt(env.VITE_PORT, 10) || 8080
 
   // Strip console.*/debugger from the bundle for the real production build ONLY — dev and
-  // preprod (and any other named mode) keep full console output. Build-time removal (esbuild
-  // `drop`, not a runtime console shim) means nothing to silently re-enable and a smaller
-  // bundle, at the cost of needing a rebuild to see logs again — acceptable since prod logs
-  // are meant to stay off. Guarded on the caller-supplied `mode`, not on env vars read inside
+  // preprod (and any other named mode) keep full console output. Build-time removal (the Oxc
+  // minifier's `dropConsole`, not a runtime console shim) means nothing to silently re-enable and
+  // a smaller bundle, at the cost of needing a rebuild to see logs again — acceptable since prod
+  // logs are meant to stay off. Guarded on the caller-supplied `mode`, not on env vars read inside
   // this factory (see the `mode` option doc above).
   const dropConsoleInProduction = opts.mode === 'production'
 
   return defineConfig({
-    esbuild: dropConsoleInProduction ? { drop: ['console', 'debugger'] } : undefined,
     define: {
       global: 'window',
       'process.env': {},
@@ -181,53 +180,16 @@ export function createViteConfig(opts: ViteConfigOptions = {}): UserConfig {
     },
     plugins: [envGuardPlugin(opts.allowPublicEnv), react(), ...(opts.extraPlugins ?? [])],
     build: {
-      minify: 'esbuild',
       // Vendor chunks like the web3 stack are legitimately large; lift the warn
       // threshold so it only fires on genuinely oversized chunks, not expected ones.
       chunkSizeWarningLimit: 1200,
-      rollupOptions: {
-        maxParallelFileOps: 2,
+      // No manual vendor chunks: Rolldown (Vite 8) turns `manualChunks` into code-splitting groups that pull each
+      // group's dependencies in (React landed in vendor-charts, +30% critical-path JS); its automatic splitting is
+      // as small and keeps the module execution order. Spread, never `minify: undefined`: Vite spreads `output`
+      // last and an undefined key would turn minification off.
+      rolldownOptions: {
         output: {
-          // Split heavy third-party libraries out of the single app bundle so
-          // each is cached independently and downloaded in parallel. Grouped by
-          // dependency family rather than per-package to avoid a swarm of tiny
-          // chunks. Conditions that don't match a given project are simply inert
-          // (this factory is shared across all front projects). Returning
-          // `undefined` keeps react/router/app code in the entry chunk so module
-          // init order stays correct — every vendor chunk imports react, so
-          // rollup loads the entry chunk before them.
-          manualChunks(id: string) {
-            if (!id.includes('node_modules')) return undefined
-            const p = id.replace(/\\/g, '/')
-            // The web3 / wallet stack (viem, wagmi, @reown, @walletconnect, @solana)
-            // is deliberately NOT manually chunked: it is reached only through the
-            // lazy-loaded WalletAuthIsland (dynamic import), so rollup already emits
-            // it as an on-demand async chunk. Forcing it into a named vendor chunk
-            // turned that chunk into a shared hub — rollup folded the Vite preload
-            // helper and the Buffer polyfill into it, which the entry imports
-            // eagerly, dragging the whole 4.5 MB back onto the critical path.
-            // Charting libraries.
-            if (/node_modules\/(chart\.js|chartjs-|react-chartjs|lightweight-charts)/.test(p)) {
-              return 'vendor-charts'
-            }
-            // Code editor (CodeMirror + Lezer grammars).
-            if (/node_modules\/(@codemirror|@uiw|@lezer|codemirror)\b/.test(p)) {
-              return 'vendor-editor'
-            }
-            // Markdown / HTML rendering pipeline.
-            if (
-              /node_modules\/(react-markdown|remark|rehype|micromark|mdast|hast|unified|unist|dompurify|property-information|space-separated-tokens|comma-separated-tokens)/.test(
-                p,
-              )
-            ) {
-              return 'vendor-markdown'
-            }
-            // MUI + Emotion design system.
-            if (/node_modules\/(@mui|@emotion)\b/.test(p)) {
-              return 'vendor-mui'
-            }
-            return undefined
-          },
+          ...(dropConsoleInProduction ? { minify: { compress: { dropConsole: true, dropDebugger: true } } } : {}),
         },
       },
     },
