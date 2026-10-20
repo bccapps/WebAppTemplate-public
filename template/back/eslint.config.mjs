@@ -13,7 +13,7 @@ import globals from 'globals'
 import tseslint from 'typescript-eslint'
 import { linkedModuleDirs } from '../scripts/lib-roots.mjs'
 
-// Shared ESLint 9 flat config for every NestJS backend (mirrors
+// Shared ESLint 10 flat config for every NestJS backend (mirrors
 // front/eslint.config.js, kept sober: recommended baseline only, no
 // type-aware rules, no exotic plugins).
 //
@@ -34,6 +34,8 @@ export default tseslint.config(
       'node_modules/**',
       'coverage/**',
       '.libs/apptemplate/**',
+      // ESLint 10 looks a config up from each file's directory: never the template's own (real path of the link).
+      '.libs/vx-public/template/**',
       '**/*.js',
       '**/*.mjs',
     ],
