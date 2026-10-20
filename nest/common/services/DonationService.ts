@@ -150,7 +150,9 @@ export class DonationService {
     const secretKey = this.moduleConfigService.getDecryptedSecretValue('common', 'donations_stripeSecretKey');
     if (!secretKey) throw new BadRequestException('Stripe donations are not configured');
 
-    const stripe = new Stripe(secretKey);
+    // Pinned: unpinned, the API version would follow every SDK major (it was the SDK 22 default).
+    // @ts-ignore — apiVersion's type tracks the installed SDK's latest, not this pin.
+    const stripe = new Stripe(secretKey, { apiVersion: '2026-08-26.dahlia' });
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       line_items: [

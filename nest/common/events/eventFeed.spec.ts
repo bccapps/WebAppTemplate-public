@@ -10,7 +10,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { EVENT_FEED_MAX_LIMIT, readEventFeed } from './eventFeed';
 
 const repo = (maxId: number | null) => {
-  const find = jest.fn(async () => [{ id: 8, type: 't', payload: { a: 1 }, createdAt: new Date('2026-09-23T10:00:00Z') }]);
+  const find = jest.fn(async (..._args: unknown[]) => [{ id: 8, type: 't', payload: { a: 1 }, createdAt: new Date('2026-09-23T10:00:00Z') }]);
   return { find, value: { createQueryBuilder: () => ({ select: () => ({ getRawOne: async () => ({ max: maxId }) }) }), find } as never };
 };
 

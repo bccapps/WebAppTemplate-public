@@ -200,7 +200,7 @@ describe('EventStreamService producers', () => {
 
   it('runs per topic while subscribers exist, shared between connections, and stops with the last one', async () => {
     const service = makeService();
-    const produce = jest.fn(async () => ({ type: 'tick' }));
+    const produce = jest.fn(async (..._args: unknown[]) => ({ type: 'tick' }));
     service.registerTopicProducer('x.candle:*', { intervalMs: 1000, authorize: () => true, produce });
     const a = makeSink();
     const b = makeSink();
@@ -247,7 +247,7 @@ describe('EventStreamService producers', () => {
 
   it('starts for subscribers already present when the producer is registered, and stops on unregister', async () => {
     const service = makeService();
-    const produce = jest.fn(async () => null);
+    const produce = jest.fn(async (..._args: unknown[]) => null);
     service.registerTopicAuthorizer('x.late:*', () => true);
     await service.openConnection(alice, ['x.late:1'], makeSink());
     const off = service.registerTopicProducer('x.late:*', { intervalMs: 1000, authorize: () => true, produce });

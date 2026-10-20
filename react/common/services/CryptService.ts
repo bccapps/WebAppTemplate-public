@@ -356,7 +356,7 @@ export class CryptService {
       throw new Error('[CryptService] Unable to decrypt transport payload.');
     }
 
-    let plaintextBuffer = new Uint8Array(plaintextBytes);
+    let plaintextBuffer: Uint8Array = new Uint8Array(plaintextBytes);
     if (flag === TRANSPORT_PAYLOAD_FLAG_DEFLATE) {
       if (!this.supportsDecompression()) {
         // Should never happen: this bundle only ever announces deflate support (via

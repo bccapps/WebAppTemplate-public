@@ -216,7 +216,7 @@ export function createViteConfig(opts: ViteConfigOptions = {}): UserConfig {
             }
             // Markdown / HTML rendering pipeline.
             if (
-              /node_modules\/(react-markdown|remark|rehype|micromark|mdast|hast|unified|unist|html-react-parser|dompurify|property-information|space-separated-tokens|comma-separated-tokens)/.test(
+              /node_modules\/(react-markdown|remark|rehype|micromark|mdast|hast|unified|unist|dompurify|property-information|space-separated-tokens|comma-separated-tokens)/.test(
                 p,
               )
             ) {

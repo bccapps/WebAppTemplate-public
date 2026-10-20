@@ -3,6 +3,7 @@
   "front": {
     "front/index.html": "front/index.html",
     "front/vite.config.ts": "front/vite.config.ts",
+    "front/vitest.config.ts": "front/vitest.config.ts",
     "front/public/robots.txt": "front/public/robots.txt",
     "front/public/_redirects": "front/public/_redirects",
     "front/public/_headers": "front/public/_headers",
