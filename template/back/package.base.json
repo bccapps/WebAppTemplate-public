@@ -49,6 +49,7 @@
     "class-validator": "^0.15.1",
     "compression": "^1.8.2",
     "env-cmd": "^11.0.0",
+    "express": "^5.2.1",
     "fast-xml-parser": "^5.11.1",
     "helmet": "^8.2.0",
     "ioredis": "^5.11.1",
