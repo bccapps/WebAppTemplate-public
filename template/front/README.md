@@ -17,8 +17,7 @@ conservé (jamais clobbé).
 | Identiques | symlink pur | `eslint.config.js`, `tsconfig.json`, `tsconfig.node.json`, `tsconfig.app.json` |
 | Env-injection | symlink + ENV | `vite.config.ts` (ports/hosts/proxy via env), `index.html` (title/favicon), `nginx.conf` (`${BACKEND_UPSTREAM}`) |
 | Template | envsubst / ARG | `Dockerfile` |
-| Skeleton | symlink | `.env.example` |
-| Base + local + merge | `build-package.mjs` | `package.base.json` + `<module>/package.fragment.json` (modules liés) + `package.local.json` → `package.json` |
+| Base + local + merge | `build-package.mjs` | `package.base.json` + `<module>/package.fragment.json` (modules liés) + `package.local.json` → `package.json` ; `.env.example` du gabarit + `env` des `module.json` + `.env.example.local` → `.env.example` |
 
 Artefacts **générés, jamais partagés ni trackés** : `vite.config.js`,
 `vite.config.d.ts`, `*.tsbuildinfo`.

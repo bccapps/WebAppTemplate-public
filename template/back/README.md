@@ -16,13 +16,13 @@ un vrai fichier à cet emplacement (override projet conservé).
 
 | Type | Mécanisme | Exemples |
 |---|---|---|
-| Identiques | symlink pur | `config/Datasource.ts`, `fileLogger.ts`, `test-setup.ts`, `.env.example`, `tsconfig.build.json`, `.dockerignore`, `.gitignore` |
+| Identiques | symlink pur | `config/Datasource.ts`, `fileLogger.ts`, `test-setup.ts`, `tsconfig.build.json`, `.dockerignore`, `.gitignore` |
 | Env-injection | symlink + ENV | `main.ts` (Swagger/body/DB/CORS via env) ; l'essentiel du démarrage HTTP (helmet, CORS, rawBody, ValidationPipe, `HOST`, `TRUST_PROXY`, `RAW_BODY_PATHS`) vit dans `modules_shared/common/bootstrap` (`configureHttpApp`) |
 | Base + extends | `extends` natif TS | `tsconfig.base.json` ← `tsconfig.json` projet |
-| Base + inject | symlink ou local | `nest-cli.base.json` (+ assets proto si besoin) |
+| Identiques (assets) | symlink pur | `nest-cli.json` : copie dans `dist` les `.proto` de tout module lié, 1 à 4 niveaux sous le module (le glob du CLI Nest ne traverse jamais un lien symbolique avec `**`, d'où une entrée par profondeur) ; `watchAssets` désactivé (sinon chaque profondeur vide affiche un avertissement à chaque build) |
 | Dockerfile | symlink | `Dockerfile` (versions des images : en-tête du fichier) |
 | Config jest | symlink (`config-links.json`) | `jest.config.js` (roots = projet + libs, via `scripts/lib-roots.mjs`) ; la clé `jest` de `package.local.json` est fusionnée par-dessus (`scripts/merge-jest.mjs` : objets fusionnés clé à clé — `moduleNameMapper`, `transform` —, tableaux/scalaires remplacés ; `build-package.mjs` retire `jest` du `package.json` généré) |
-| Base + local + merge | `build-package.mjs` | `package.base.json` + `<module>/package.fragment.json` (modules liés) + `package.local.json` → `package.json` |
+| Base + local + merge | `build-package.mjs` | `package.base.json` + `<module>/package.fragment.json` (modules liés) + `package.local.json` → `package.json` ; `.env.example` du gabarit (blocs des modules liés) + `env` de leurs `module.json` + `.env.example.local` → `.env.example` |
 
 Voir `../MUTUALIZATION_PLAN.md` pour le détail et l'avancement des phases.
 

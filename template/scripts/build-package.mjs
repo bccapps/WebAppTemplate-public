@@ -22,6 +22,10 @@
  * A `jest` key is dropped from the result when `<stack>/jest.config.js` exists
  * (jest refuses multiple configurations).
  *
+ * It also generates `<stack>/.env.example` (same model, never edited by hand): the template's
+ * `.env.example` filtered to the linked modules' `# @module` blocks, the `env` of their module.json,
+ * then the project's `<stack>/.env.example.local` (see renderEnvExample in lib/project-engine.mjs).
+ *
  * Invocation — run from the STACK directory (back/ or front/), which is how the
  * package.json `prebuild`/`postinstall` hooks call it:
  *     node ../scripts/build-package.mjs           # stack = basename(cwd)
@@ -39,11 +43,12 @@
  * newline (npm style) and the result is the generated `package.json`.
  */
 
-import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'fs';
 import path from 'path';
 import process from 'process';
 import { fileURLToPath } from 'url';
 import { readSharedModules, resolveModule } from './lib-roots.mjs';
+import { loadCatalog, renderEnvExample, resolveModules } from './lib/project-engine.mjs';
 
 const isPlainObject = (v) =>
   v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -150,6 +155,44 @@ export function buildPackage(stack, stackDir) {
   return { pkg: canonicalize(merged), fragments: fragments.map((f) => f.name), conflicts: fragmentConflicts(fragments) };
 }
 
+/**
+ * Content of the generated `<stack>/.env.example`, or null when the template example or the project's
+ * shared-modules.json is missing (the file is then left as it is). Unknown module ids are reported, not fatal.
+ */
+export function buildEnvExample(stack, stackDir) {
+  const template = path.join(stackDir, '.libs', 'apptemplate', stack, '.env.example');
+  const root = path.resolve(stackDir, '..');
+  if (!existsSync(template) || !existsSync(path.join(root, 'shared-modules.json'))) return null;
+  const libs = path.join(stackDir, '.libs');
+  const catalog = loadCatalog({
+    public: path.join(libs, 'vx-public'),
+    private: existsSync(path.join(libs, 'vx-private')) ? path.join(libs, 'vx-private') : null,
+  });
+  const linked = [...new Set([...(readSharedModules(root, 'back') ?? []), ...(readSharedModules(root, 'front') ?? [])])];
+  const resolved = resolveModules(catalog, linked.filter((id) => catalog.byId.has(id)));
+  const localFile = path.join(stackDir, '.env.example.local');
+  const local = existsSync(localFile) ? readFileSync(localFile, 'utf8') : '';
+  return renderEnvExample({ template: readFileSync(template, 'utf8'), catalog, resolved, stack, local });
+}
+
+const lstatSafe = (file) => {
+  try {
+    return lstatSync(file);
+  } catch {
+    return null;
+  }
+};
+
+/** Write `<stack>/.env.example`, replacing the template symlink older projects still have (never write through it). */
+export function writeEnvExample(stack, stackDir) {
+  const text = buildEnvExample(stack, stackDir);
+  if (text === null) return;
+  const file = path.join(stackDir, '.env.example');
+  if (lstatSafe(file)?.isSymbolicLink()) unlinkSync(file);
+  writeFileSync(file, text);
+  console.log(`[build-package] ${stack}/.env.example généré.`);
+}
+
 function main() {
   const stackDir = process.cwd();
   const stack = process.argv[2] || path.basename(stackDir);
@@ -175,6 +218,12 @@ function main() {
   const devCount = Object.keys(result.pkg.devDependencies || {}).length;
   const frag = result.fragments.length ? ` fragments: ${result.fragments.join(', ')};` : ' aucun fragment;';
   console.log(`[build-package] ${stack}/package.json généré (${depCount} deps, ${devCount} devDeps;${frag}).`);
+
+  try {
+    writeEnvExample(stack, stackDir);
+  } catch (error) {
+    console.warn(`[build-package] ⚠ ${stack}/.env.example non régénéré : ${error.message}`);
+  }
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) main();

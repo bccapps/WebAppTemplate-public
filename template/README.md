@@ -215,6 +215,9 @@ plugins (`plugin.ts` / `plugin.tsx`). Questions (Enter = default; each has a CLI
 Files produced: `shared-modules.json`, `project.config.json` (the answers: replay or add a module later),
 `back/.env.dev` + `back/.env.example` and `front/.env.dev` + `front/.env.example` (the `# @module <id>` ... `# @end`
 blocks of the template examples are kept only for the linked modules; `# @module !user` = "when `user` is NOT linked"),
+`.env.example` being generated like `package.json`: `build-package.mjs` rewrites it on every install/build from the
+template example, the `env` of the linked modules' `module.json` and the project's `<stack>/.env.example.local`
+(project-specific variables and notes — the only file to edit), so it follows the template and the module list,
 `back/src/config/defaultConfig.ts`. Inconsistent answers are refused with a message (private module without private access,
 selling without accounts, a module that does not support the chosen database, unknown module...).
 
@@ -317,7 +320,9 @@ invalid identifier. The identifier names the OS data folder of the app: change t
 ### Shared config files
 
 `config-links.json` lists the config files shared from the template (`tsconfig.json`, `viteConfig.ts`, `vitestConfig.ts`, `Dockerfile`, ...), materialized as
-symlinks by `scripts/link-config.mjs`; a project-local real file is left untouched (intentional override). `main.ts` / `main.tsx`
+symlinks by `scripts/link-config.mjs`. Every project uses them as they are: the linker leaves a real file untouched, but a
+project copy is not allowed (it misses every later template fix) — a project need goes into the template, generically
+(e.g. `nest-cli.json` copies the `.proto` files of any linked module). `main.ts` / `main.tsx`
 are project-specific on purpose. Both stacks resolve modules in `bundler` mode, which reads the `exports` of each package:
 a subpath-`exports` package (`pkg/subpath`, e.g. `@base-org/account/node`) needs no `compilerOptions.paths` entry. The back keeps
 `module: commonjs` and `strict: false`; `tsconfig.build.json` sets `rootDir: ./src` so the build still emits `dist/main.js`.

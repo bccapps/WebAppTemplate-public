@@ -4,6 +4,23 @@
   "sourceRoot": "src",
   "compilerOptions": {
     "deleteOutDir": true,
-    "watchAssets": true
+    "assets": [
+      {
+        "include": "modules_shared/*/*.proto",
+        "outDir": "dist"
+      },
+      {
+        "include": "modules_shared/*/*/*.proto",
+        "outDir": "dist"
+      },
+      {
+        "include": "modules_shared/*/*/*/*.proto",
+        "outDir": "dist"
+      },
+      {
+        "include": "modules_shared/*/*/*/*/*.proto",
+        "outDir": "dist"
+      }
+    ]
   }
 }

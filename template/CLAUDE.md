@@ -26,6 +26,8 @@ Rules only; the how-to lives in the READMEs linked from each rule (template `REA
 - **`package.json` is GENERATED — never edit it (MANDATORY)**: `build-package.mjs` merges `package.base.json` (shared) → `package.fragment.json` of each listed shared module → `src/modules/<feature>/package.fragment.json` (app features) → `package.local.json`, and overwrites `<stack>/package.json` on every install/build (direct edits are wiped; a fresh clone installs what is committed).
   - Dependency every/several apps need → `package.base.json` in the front `vx-public` mount. Dependency of one feature → that feature's `package.fragment.json`. `package.local.json` stays minimal: project-specific `scripts`, `overrides`/pins, tooling of project scripts (common scripts come from the base).
   - Then `node .libs/apptemplate/scripts/build-package.mjs <stack> && npm install`, commit `package.json` + `package-lock.json` + the edited source file.
+- **`.env.example` is GENERATED too (MANDATORY)**: `build-package.mjs` writes `<stack>/.env.example` from the template example (blocks of the linked modules) + the `env` of their `module.json` + `<stack>/.env.example.local`; a project-specific variable goes in `.env.example.local`, a module's in its `module.json`.
+- **Template files (MANDATORY)**: every `config-links.json` target stays a symlink (no project copy); a project need goes into the template, generically.
 
 ## 2. Frontend Stack
 
@@ -137,4 +139,4 @@ Feature access control (`hasFeature`, `@RequireFeature`, tiers) only exists with
 - Plans extremely concise; once validated, don't interrupt yourself until everything is done; finish with a synthesis, then open questions or suggestions.
 
 ---
-**Updated:** 2026-10-20 — keep under ~6,000 tokens: rules here, detail in the READMEs/annexes (§7). Getting started: template `README.md`, « Needed Customizations ».
+**Updated:** 2026-10-21 — keep under ~6,000 tokens: rules here, detail in the READMEs/annexes (§7). Getting started: template `README.md`, « Needed Customizations ».

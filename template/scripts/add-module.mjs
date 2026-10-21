@@ -18,19 +18,19 @@
  *   Options: --root <dir> (default: current directory), --no-install, --yes (defaults, no question),
  *            --answer <questionId>=<value> (repeatable), --dry-run
  *
- * It updates shared-modules.json and project.config.json, regenerates the module blocks of
- * back/.env.example and front/.env.example, appends the new variables to the .env.dev files and
+ * It updates shared-modules.json and project.config.json, regenerates back/.env.example and
+ * front/.env.example (generated files, see renderEnvExample), appends the new variables to the .env.dev files and
  * the seeded values to back/src/config/defaultConfig.ts, then re-runs link-shared and build-package.
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  BASE_MODULES, appendModuleEnv, applyEnvValues, buildConfigEntries, buildEnvFromAnswers, dependentsOf,
-  filterEnvExample, linkedIds, loadCatalog, normalizeAnswers, resolveModules, resolveProject, validateAnswers,
+  BASE_MODULES, applyEnvValues, buildConfigEntries, buildEnvFromAnswers, dependentsOf,
+  envExampleBody, linkedIds, loadCatalog, normalizeAnswers, renderEnvExample, resolveModules, resolveProject, validateAnswers,
   withQuestionDefaults,
 } from './lib/project-engine.mjs';
 import { Prompter, askModuleQuestions, csv, selectFunctionalModules } from './lib/wizard.mjs';
@@ -89,23 +89,28 @@ function sh(cmd, args, cwd) {
   if (r.status !== 0) throw new Error(`${cmd} ${args.join(' ')} failed (exit ${r.status})`);
 }
 
-function regenerateEnv(root, stack, resolved, catalog, previousIds) {
-  const nestStack = stack === 'back' ? 'nest' : 'react';
+/** Regenerate `<stack>/.env.example` (generated file, as build-package.mjs does); returns its body for `.env.dev`. */
+function regenerateEnv(root, stack, resolved, catalog) {
   const source = path.join(root, stack, '.libs', 'apptemplate', stack, '.env.example');
   if (!existsSync(source)) return null;
-  const template = readFileSync(source, 'utf8');
-  const render = (ids, perStack) => appendModuleEnv(filterEnvExample(template, ids), catalog, perStack, nestStack);
-  const next = render(resolved.ids, resolved.perStack[nestStack]);
+  const localFile = path.join(root, stack, '.env.example.local');
+  const input = {
+    template: readFileSync(source, 'utf8'), catalog, resolved, stack,
+    local: existsSync(localFile) ? readFileSync(localFile, 'utf8') : '',
+  };
   const file = path.join(root, stack, '.env.example');
-  const previous = existsSync(file) ? readFileSync(file, 'utf8') : null;
-  const before = resolveModules(catalog, previousIds);
-  if (previous === null || previous === render(before.ids, before.perStack[nestStack])) writeFileSync(file, next);
-  else {
-    writeFileSync(`${file}.new`, next);
-    log.warn(`${stack}/.env.example was edited by hand: regenerated version written to ${stack}/.env.example.new`);
-  }
-  return next;
+  if (lstatSafe(file)?.isSymbolicLink()) unlinkSync(file);
+  writeFileSync(file, renderEnvExample(input));
+  return envExampleBody(input);
 }
+
+const lstatSafe = (file) => {
+  try {
+    return lstatSync(file);
+  } catch {
+    return null;
+  }
+};
 
 function updateEnvDev(root, stack, example, values) {
   const dev = path.join(root, stack, '.env.dev');
@@ -178,8 +183,8 @@ export async function main(argv) {
   writeFileSync(configFile, `${JSON.stringify({ ...nextAnswers, resolved: projectResolved.perStack }, null, 2)}\n`);
 
   const values = buildEnvFromAnswers(catalog, nextAnswers, projectResolved.ids);
-  updateEnvDev(root, 'back', regenerateEnv(root, 'back', projectResolved, catalog, linked), values.back);
-  updateEnvDev(root, 'front', regenerateEnv(root, 'front', projectResolved, catalog, linked), values.front);
+  updateEnvDev(root, 'back', regenerateEnv(root, 'back', projectResolved, catalog), values.back);
+  updateEnvDev(root, 'front', regenerateEnv(root, 'front', projectResolved, catalog), values.front);
 
   const defaults = path.join(root, 'back', 'src', 'config', 'defaultConfig.ts');
   if (existsSync(defaults) && !opts.remove) {
