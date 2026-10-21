@@ -304,10 +304,11 @@ dist-ssr
 build
 *.tsbuildinfo
 
-# Env
+# Env (.env.example is generated and committed, like package.json; .env.example.local is its project part)
 .env*
 !.env.example
 *.local
+!.env.example.local
 
 # SQLite database files (DB_ENGINE=sqlite, DB_PATH=data/<project>.db)
 back/data/
