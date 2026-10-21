@@ -7,7 +7,10 @@
     "composite": false,
     "tsBuildInfoFile": null,
     // Same aliases as the app, plus the one of vitestConfig.ts: specs shared with the back import '@jest/globals'.
-    "paths": { "@/*": ["./src/*"], "@jest/globals": ["./node_modules/vitest"] }
+    "paths": { "@/*": ["./src/*"], "@jest/globals": ["./node_modules/vitest"] },
+    // Specs run under Vitest in Node (node:crypto, Buffer). TypeScript 6 no longer loads @types/* by default: without
+    // this, Node types only came in through a dependency of the user module.
+    "types": ["node"]
   },
   "include": ["src"],
   "exclude": ["src/sw.ts"]
