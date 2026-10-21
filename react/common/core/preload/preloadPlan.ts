@@ -23,7 +23,7 @@ export function withPreloadKey<T>(service: T, key: string): T {
 }
 
 /**
- * Merge the core services of the app (`coreServices` in `App.tsx`: remove one there to drop it) with the `preload`
+ * Merge the core services of the app (`coreServices` in `config/coreServices.ts`: remove one there to drop it) with the `preload`
  * entries of the plugins. A key already present wins (first declaration), so a plugin cannot load a service twice.
  */
 export function buildPreloadPlan(coreServices: ReadonlyArray<PreloadEntry>, plugins: ReadonlyArray<AppPlugin>): PreloadPlan {

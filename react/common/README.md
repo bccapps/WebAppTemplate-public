@@ -243,7 +243,7 @@ DOM) et la section `streamGet` de `core/http/HttpService.spec.ts`.
 Both services guard `init()` with a `loaded` flag + a shared in-flight promise:
 a call while a load is already pending piggybacks on it (no second HTTP request), and
 a call after the first load resolves its callback immediately. This matters because an
-app can legitimately call `init()` twice — e.g. `main.tsx`'s `RootGate` loads config to
+app can legitimately call `init()` twice — e.g. the template's `RootGate` (`components/RootGate.tsx`) loads config to
 decide whether to show a landing page, then the `PreloaderGate`/`AppPreloaderGate`
 mounted by `<App/>` loads it again (PERFORMANCE_PLAN.md §1.4). Without this, the second
 `init()` would re-fetch `/configurations`/`/locales` from scratch.
@@ -369,7 +369,7 @@ plugin `user` d'avant) fonctionne tel quel.
   `back/src/config/pluginOptions.ts`). La fabrique valide avec `requirePluginOptions(id, options, ['clé'])` (`PluginOptionsError` :
   « Plugin "<id>" needs options ... (missing: ... ) »). Ex. prévu : `{ user: { walletMode: 'lazy' } }`.
 - **Préchargement** (`core/preload/preloadPlan.ts`) : `buildPreloadPlan(coreServices, plugins)` fusionne les services du cœur
-  (`coreServices` exporté par `App.tsx` du gabarit : l'app en retire un, par exemple `crypt`, en supprimant sa ligne) et les `preload` des
+  (`coreServices` de `config/coreServices.ts` du gabarit : l'app en retire un, par exemple `crypt`, en supprimant sa ligne) et les `preload` des
   plugins (première déclaration d'une clé gagnante) en `{ blocking, background }`. `PreloaderGate` reçoit `services={blocking}` et
   `background={background}` : un service `background` démarre juste après `ConfigurationService` (ou tout de suite sans configuration),
   n'entre pas dans `ready()` ni dans le libellé de chargement, et une erreur de démarrage est journalisée sans toucher les autres.

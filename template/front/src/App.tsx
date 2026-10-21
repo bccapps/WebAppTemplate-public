@@ -15,28 +15,15 @@ import { ThemeShell } from '@/modules_shared/common/theme/ThemeShell';
 import Router from './components/Router';
 import { PreloaderGate } from '@/modules_shared/common/core/preload/PreloaderGate';
 import { PageLayout } from '@/components/PageLayout';
-import { configurationService } from './modules_shared/common/services/ConfigurationService';
-import { cryptService } from '@/modules_shared/common/services/CryptService';
-import { localeService } from '@/modules_shared/common/services/LocaleService';
 import { buildPreloadPlan } from '@/modules_shared/common/core/preload/preloadPlan';
 import { withPluginProviders } from '@/modules_shared/common/plugins/pluginProviders';
-import type { PreloadEntry } from '@/modules_shared/common/plugins/AppPlugin';
 import { BrowserRouter } from 'react-router-dom';
 import { appPlugins } from './plugins';
+import { coreServices } from './config/coreServices';
 
 interface AppProps {
   children?: ReactNode;
 }
-
-/**
- * Services of the core, always loaded (blocking). An app that does not need one removes it here (e.g. `crypt` when it
- * does not use transport encryption); plugins add theirs through `preload` (`mode: 'background'` = not awaited).
- */
-export const coreServices: PreloadEntry[] = [
-  { key: 'ConfigurationService', service: configurationService },
-  { key: 'CryptService', service: cryptService },
-  { key: 'LocaleService', service: localeService },
-];
 
 const preloadPlan = buildPreloadPlan(coreServices, appPlugins);
 

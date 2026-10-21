@@ -13,7 +13,7 @@ import { useLocation } from 'react-router-dom';
 import { useTheme } from '@mui/material/styles';
 import { Header } from './Header';
 import { AppSidebar } from './AppSidebar';
-import { resolvedRoutes } from './Router';
+import { resolvedRoutes } from './routes';
 import { layoutForPath } from '@/modules_shared/common/plugins/routeLayout';
 
 import '@/modules_shared/common/styles/theme_default.css';

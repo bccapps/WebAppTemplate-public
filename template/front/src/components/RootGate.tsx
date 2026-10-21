@@ -1,0 +1,54 @@
+/**
+ * VXFramework
+ *
+ * Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
+ * SPDX-License-Identifier: MIT
+ *
+ * Licensed under the MIT License. See LICENSE in the project root.
+ */
+
+import { useEffect, useState } from 'react'
+import App from '../App'
+import LandingPage from './landingpage/LandingPage'
+import { configurationService } from '@/modules_shared/common/services/ConfigurationService'
+
+type ShellState = 'landing' | 'app'
+
+/** Landing page (`useLandingPage` config, on `/`) or the app. */
+export default function RootGate() {
+  const useLandingPage = configurationService.get('useLandingPage') === true
+  const [state, setState] = useState<ShellState>(() =>
+    useLandingPage && window.location.pathname === '/' ? 'landing' : 'app',
+  )
+
+  useEffect(() => {
+    if (!useLandingPage) {
+      return
+    }
+    const handlePopState = () => {
+      setState(window.location.pathname === '/' ? 'landing' : 'app')
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [useLandingPage])
+
+  const handleLaunch = () => {
+    if (!useLandingPage) {
+      return
+    }
+    if (window.location.pathname !== '/app') {
+      window.history.pushState({}, '', '/app')
+    }
+    setState('app')
+  }
+
+  if (!useLandingPage) {
+    return <App />
+  }
+
+  if (state === 'app') {
+    return <App />
+  }
+
+  return <LandingPage onLaunch={handleLaunch} />
+}

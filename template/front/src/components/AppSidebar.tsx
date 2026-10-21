@@ -46,7 +46,7 @@ const navSections = mergeMenuSections(appNavMenu, ...appPlugins.map((p) => p.nav
 const adminSections = mergeMenuSections(appAdminMenu, ...appPlugins.map((p) => p.adminMenu));
 
 /** Sections shown to the current visitor on a layout; the sidebar is not rendered when this is empty. */
-export function useSidebarSections(layout: AppSidebarProps['layout']): MenuSection[] {
+function useSidebarSections(layout: AppSidebarProps['layout']): MenuSection[] {
   const ctx = useMenuContext();
   const nav = resolveMenu(navSections, ctx);
   return layout === 'admin' ? [...nav, ...resolveMenu(adminSections, ctx, { adminOnly: true })] : nav;

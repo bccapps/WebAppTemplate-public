@@ -24,7 +24,7 @@ export class ConfigurationService {
   public preloadKey = 'ConfigurationService';
   /**
    * Guards against re-fetching `/configurations` when `init()` is called more
-   * than once — e.g. `main.tsx`'s `RootGate` loads it to decide whether to show
+   * than once — e.g. the template's `RootGate` (`components/RootGate.tsx`) loads it to decide whether to show
    * the waitlist landing page, then `AppPreloaderGate` loads it again once
    * `<App/>` mounts (PERFORMANCE_PLAN.md §1.4). Set once the first load has
    * applied its data to AppSession.
