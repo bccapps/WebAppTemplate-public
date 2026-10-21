@@ -177,7 +177,7 @@ export class CryptService {
         this.toArrayBuffer(ciphertext),
       );
     } catch (error) {
-      throw new Error('[CryptService] Unable to decrypt storage payload.');
+      throw new Error('[CryptService] Unable to decrypt storage payload.', { cause: error });
     }
     const plaintext = this.decoder.decode(new Uint8Array(plaintextBytes));
     const parsed = JSON.parse(plaintext);
@@ -353,7 +353,7 @@ export class CryptService {
         this.toArrayBuffer(ciphertextWithTag),
       );
     } catch (error) {
-      throw new Error('[CryptService] Unable to decrypt transport payload.');
+      throw new Error('[CryptService] Unable to decrypt transport payload.', { cause: error });
     }
 
     let plaintextBuffer: Uint8Array = new Uint8Array(plaintextBytes);

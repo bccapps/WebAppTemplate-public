@@ -114,7 +114,7 @@ export async function backupSqliteIfVersionChanged(dbPath: string, version: stri
     return { status: 'backed-up', path: destination };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    if (options.required) throw new Error(`[DB] SQLite backup failed and DB_BACKUP_REQUIRED=true: ${reason}`);
+    if (options.required) throw new Error(`[DB] SQLite backup failed and DB_BACKUP_REQUIRED=true: ${reason}`, { cause: error });
     console.error(`[DB] SQLite backup before schema update FAILED (boot continues): ${reason}`);
     return { status: 'failed', reason };
   }

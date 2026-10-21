@@ -58,7 +58,7 @@ const logger = new Logger('throttledFetch');
 
 const fetchTransport = (init: RequestInit = {}): ThrottledFetchTransport => async (url, signal) => {
   const response = await fetch(url, { ...init, signal, headers: { Accept: 'application/json', ...(init.headers as Record<string, string> | undefined) } });
-  let body: unknown = null;
+  let body: unknown;
   try { body = await response.json() as unknown; } catch { body = null; }
   return { status: response.status, body, retryAfter: response.headers?.get('retry-after') ?? null };
 };

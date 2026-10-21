@@ -23,7 +23,7 @@ import { Entity } from 'typeorm';
 @Entity({ name: 'guard_event_feed' })
 class GuardEventFeedEntity extends EventFeedEntityBase {}
 
-const EXPECTED: Array<[string, Function, Record<string, string>]> = [
+const EXPECTED: Array<[string, new (...args: never[]) => object, Record<string, string>]> = [
   ['EventFeedEntityBase', GuardEventFeedEntity, { payload: 'jsonb', createdAt: 'timestamptz' }],
   ['CookieConsentEntity', CookieConsentEntity, { categories: 'jsonb', createdAt: 'timestamptz' }],
   ['ThemeEntity', ThemeEntity, { createdAt: 'timestamptz', updatedAt: 'timestamptz' }],

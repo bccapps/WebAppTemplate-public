@@ -204,9 +204,10 @@ export class ModuleConfigService {
     switch (field.type) {
       case 'boolean':
         return strValue === 'true' || strValue === '1';
-      case 'number':
+      case 'number': {
         const num = Number(strValue);
         return Number.isFinite(num) ? num : field.defaultValue;
+      }
       case 'json':
         try {
           return JSON.parse(strValue);

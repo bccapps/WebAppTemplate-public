@@ -9,9 +9,11 @@
 
 import * as React from 'react';
 import { I18nLabel } from '../label/I18nLabel';
-export interface IUnauthorizedProps {}
+export type IUnauthorizedProps = Record<string, never>;
 
-export interface IUnauthorizedState {}
+export interface IUnauthorizedState {
+  showForm?: boolean;
+}
 
 export default class Unauthorized extends React.Component<
   IUnauthorizedProps,

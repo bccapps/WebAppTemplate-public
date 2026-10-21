@@ -571,7 +571,7 @@ const normalizeYoutube = (url: string): string | null => {
       }
     }
     return prepared;
-  } catch (err) {
+  } catch {
     return null;
   }
 };

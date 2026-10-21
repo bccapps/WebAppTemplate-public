@@ -14,7 +14,7 @@ export interface IUnavailableProps {
   message?: string;
 }
 
-export interface IUnavailableState {}
+export type IUnavailableState = Record<string, never>;
 
 export class Unavailable extends React.Component<
   IUnavailableProps,

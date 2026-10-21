@@ -21,8 +21,8 @@ type ToastMessageOptions = {
   textParams?: any[] | null
 }
 
-export interface IToastZoneProps {}
-export interface IToastZoneState {}
+export type IToastZoneProps = Record<string, never>;
+export type IToastZoneState = Record<string, never>;
 export class ToastZone extends React.Component<
   IToastZoneProps,
   IToastZoneState

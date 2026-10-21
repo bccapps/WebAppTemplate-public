@@ -15,7 +15,7 @@ export interface ISessionListenerProps {
   children?: React.ReactNode;
 }
 
-export interface ISessionListenerState {}
+export type ISessionListenerState = Record<string, never>;
 
 export class SessionListener extends React.Component<
   ISessionListenerProps,

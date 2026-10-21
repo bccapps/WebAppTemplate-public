@@ -18,7 +18,7 @@ import { VoiceAccessEntity } from './entities/VoiceAccessEntity';
 import { UserVoiceAccessEntity } from './entities/UserVoiceAccessEntity';
 import { VoiceProviderCatalogEntity } from './entities/VoiceProviderCatalogEntity';
 
-const EXPECTED: Array<[string, Function, Record<string, string>]> = [
+const EXPECTED: Array<[string, new (...args: never[]) => object, Record<string, string>]> = [
   ['VoiceProviderCatalogEntity', VoiceProviderCatalogEntity, { createdAt: 'timestamptz' }],
   ['VoiceAccessEntity', VoiceAccessEntity, { providerConfig: 'jsonb', createdAt: 'timestamptz', updatedAt: 'timestamptz' }],
   ['UserVoiceAccessEntity', UserVoiceAccessEntity, { providerConfig: 'jsonb', createdAt: 'timestamptz', updatedAt: 'timestamptz' }],

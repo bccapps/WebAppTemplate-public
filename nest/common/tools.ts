@@ -27,7 +27,7 @@ export class Utils {
   }
 
   static customSort2(a: any, b: any, criteria1: string, criteria2: string) {
-    a[criteria1] > b[criteria1]
+    return a[criteria1] > b[criteria1]
       ? 1
       : a[criteria1] === b[criteria1]
       ? a[criteria2] > b[criteria2]
@@ -36,7 +36,7 @@ export class Utils {
       : -1;
   }
   static customSort(a: any, b: any, criteria1: string) {
-    a[criteria1] > b[criteria1] ? 1 : -1;
+    return a[criteria1] > b[criteria1] ? 1 : -1;
   }
 
   static getShortDate(date: Date) {

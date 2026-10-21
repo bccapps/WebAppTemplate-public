@@ -85,7 +85,7 @@ class I18n extends EventObject {
    * @returns
    */
   public getLangs = (): string[] => {
-    let ret: string[] = [];
+    let ret: string[];
     if (this.availableLangs && this.availableLangs.trim().length > 0) {
       ret = this.availableLangs
         .split(',')

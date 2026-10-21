@@ -37,6 +37,9 @@ export default tseslint.config(
       'react-refresh': reactRefresh,
     },
     rules: {
+      // Same convention as the back config: a leading underscore marks an intentionally unused binding (interface
+      // parameters, rest-sibling omission).
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       // The two classic hooks rules only: the v7 `recommended` preset also turns on the React Compiler rules at error level.
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',

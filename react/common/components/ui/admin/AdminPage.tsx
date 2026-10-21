@@ -115,7 +115,6 @@ const AdminPageContent: React.FC = () => {
   const [globalSaving, setGlobalSaving] = React.useState(false);
   const [globalError, setGlobalError] = React.useState<string | null>(null);
   const [globalSuccess, setGlobalSuccess] = React.useState(false);
-  const [moduleConfigKeys, setModuleConfigKeys] = React.useState<Set<string>>(new Set());
 
   const sortRows = React.useCallback((rows: ConfigRow[]) => [...rows].sort((a, b) => a.name.localeCompare(b.name)), []);
 
@@ -181,7 +180,6 @@ const AdminPageContent: React.FC = () => {
           managedKeys.add(field.key);
         }
       }
-      setModuleConfigKeys(managedKeys);
 
       const data = await httpResultToPromise<any[]>(httpService.get(getConfigEndpoint()));
       // Filter out keys managed by module configs — they have their own admin sections

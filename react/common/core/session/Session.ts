@@ -62,7 +62,7 @@ export default class Session extends EventObject {
       } else {
         localStorage.setItem(storageKey, json ?? JSON.stringify(value));
       }
-    } catch (e) {
+    } catch {
       // ignore storage errors
     }
     this.dispatchEvent(key, { key, value });
@@ -88,7 +88,7 @@ export default class Session extends EventObject {
         this.map[key] = parsed;
         return parsed;
       }
-    } catch (e) {
+    } catch {
       // ignore parse/storage errors
     }
     return null;
