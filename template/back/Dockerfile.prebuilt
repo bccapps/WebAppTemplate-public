@@ -1,0 +1,62 @@
+# =============================================================================
+# VXFramework
+#
+# Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License. See LICENSE in the project root.
+# =============================================================================
+#
+# Prebuilt back Dockerfile — used by scripts/deploy-full.sh when the back was compiled locally (the usual path): it is
+# copied over the staged back/Dockerfile with .dockerignore.prebuilt, so the remote only installs the prod deps and
+# packages the runtime. back/Dockerfile stays the full build (fallback when the local build fails, local Docker runs).
+# Never copied into a project: every project deploys with this file.
+#
+# glibc-based (not alpine/musl): some npm deps ship prebuilt Linux .so binaries linked against glibc (e.g.
+# zklighter-sdk's signer) that musl can't load even with the gcompat shim. Must match back/Dockerfile's runtime base.
+#
+# Caching rules — keep in sync with back/Dockerfile:
+#   1. no `--mount=type=bind,source=.` around npm ci (it folds the whole context into the cache key, so every dist
+#      change re-runs a 739 MB install)
+#   2. node_modules copied BEFORE dist (stable layers first, volatile last)
+#   3. node major = back/Dockerfile's (24: ships npm 11, see the note there)
+#
+# Context (.dockerignore.prebuilt is a whitelist): package*.json, *.tgz, *.crt, dist, and the top-level `_*` entries
+# staged by deploy-full.sh (_prebuilt_locales) or by a project's BACK_BUILD_HOOK (which appends its own COPY lines).
+FROM node:24-bookworm-slim AS prod-deps
+WORKDIR /app
+# *.tgz: local tarball deps (`file:` in package.json). BuildKit tolerates a wildcard
+# matching nothing, so this is a no-op for projects without tarball deps.
+COPY package*.json *.tgz ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --omit=dev
+
+FROM node:24-bookworm-slim
+WORKDIR /app
+ENV NODE_ENV=production
+
+# wget: used by the compose healthcheck (CMD-SHELL wget ...). Alpine's busybox has it
+# built in; Debian slim images don't ship it by default.
+# ca-certificates: TLS verification for outbound HTTPS calls made by native Go binaries
+# (e.g. zklighter-sdk's signer) — Debian slim doesn't ship the CA bundle either.
+# git: keep in sync with back/Dockerfile (apps that host or run git themselves, e.g. AgentHub).
+RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates git && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --chown=node:node --from=prod-deps /app/node_modules ./node_modules
+COPY --chown=node:node package.json ./
+COPY --chown=node:node *.crt ./
+RUN rm -f .no-cert.crt
+
+ARG APP_RUNTIME_DIR=.cache
+RUN mkdir -p "/app/${APP_RUNTIME_DIR}" && chown -R node:node "/app/${APP_RUNTIME_DIR}"
+
+# Persistent data dir for DB_ENGINE=sqlite (the compose files mount the sqlite_data volume here), owned by node.
+RUN mkdir -p /data && chown node:node /data
+
+COPY --chown=node:node _prebuilt_locales/app ./src/locales
+COPY --chown=node:node _prebuilt_locales/modules/src/ ./src/
+COPY --chown=node:node dist ./dist
+
+USER node
+CMD ["node", "dist/main.js"]

@@ -41,14 +41,17 @@ Requires `back/.env` (production).
 |---|---|
 | `--no-update-common` (or `SKIP_UPDATE_COMMON=1`) | Skip the library sync (used by Agent Hub's deploy button; never forwarded to `deploy-full.sh`) |
 | `--target=all\|back\|front` | What to deploy |
-| `--migrate` | Run DB migrations first (Postgres; refused for SQLite) |
+| `--migrate` | Run DB migrations first (Postgres; refused for SQLite); also forces the pre-deploy dump |
+| `--force-db-backup` | Self-hosted Postgres: dump even when the last one is younger than `DEPLOY_DB_BACKUP_MIN_AGE_HOURS` |
 | `--no-auto-rollback` | On failure keep the failed state (exit 1, maintenance stays ON) instead of rolling back |
+
+Deploy settings (`back/.env`, or the environment): `DEPLOY_DB_BACKUP_KEEP` (2: backups kept on each host and locally), `DEPLOY_DB_BACKUP_MIN_AGE_HOURS` (24: at most one Postgres dump per period, `0` = every deploy), `DEPLOY_DB_BACKUP_DOWNLOAD` (`0`: no local copy), `DEPLOY_SSH_MUX` (`0`: one SSH connection per call, as before).
 
 Every deploy keeps the previous version on each host, so it can be undone:
 
 - **Revision**: `DEPLOY_REVISION` (env var, else `git rev-parse --short HEAD`, plus `-dirty` when the work tree has changes) is injected into the back env and returned as `revision` by `GET /api/v1/health` (`null` when the back was not deployed by the script).
 - **Images**: before building, `<image>:latest` is tagged `:previous` (back image `${PROJECT_NAME}_back`, front image `<compose project>-front`); the remote `.env` is copied to `.env.previous`; after a successful switch `REMOTE_APP_DIR/.deploy/current.json` (`revision`, `environment`, `date`, `dbBackup`) replaces `previous.json`.
-- **Database backup**, taken once the old back is stopped and before `up` (no writer): **SQLite** → a copy of the file in the volume, `/data/backups/<project>-pre-<revision>-<UTC time>.db` (last 5 kept); **self-hosted Postgres** → `./backups/<project>_pre-<revision>_<time>.sql.gz`, only with `--migrate` or `DB_SCHEMA_MODE=sync` (the dump is taken by the deploy, i.e. after `run.sh`'s migration step: use `./scripts/backup-db.sh` first for a pre-migration copy; no automatic restore, the restore command is printed); **cloud DB** (supabase, neon...) → warning only. A failed backup aborts the deploy (and rolls back).
+- **Database backup** (`scripts/lib/deploy-versions.sh`): **SQLite** → at every switch, once the old back is stopped and before `up` (no writer), a copy of the file in the volume, `/data/backups/<project>-pre-<revision>-<UTC time>.db` (the automatic rollback restores it); a failure aborts and rolls back. **Self-hosted Postgres** → only with `--migrate`, `--force-db-backup` or `DB_SCHEMA_MODE=sync`, taken right after the image build **while the old back still serves** (outside the maintenance window: `pg_dump` reads a consistent snapshot, writes made between the dump and the switch are not in it) with `pg_dump --format=custom` inside the `db` container, written **on the server** in `<REMOTE_APP_DIR>/backups/<project>_pre-<revision>_<UTC time>.dump`; at most one per `DEPLOY_DB_BACKUP_MIN_AGE_HOURS` (a more recent dump is reused and recorded), `db` is never stopped for it; a failure stops the deploy before the switch (exit 1, the running version untouched). It is taken after `run.sh`'s migration step: use `./scripts/backup-db.sh` first for a pre-migration copy; no automatic restore, the `pg_restore` command is printed. **Cloud DB** (supabase, neon...) → warning only. `DEPLOY_DB_BACKUP_KEEP` backups are kept on each host, and the newest one is copied at the end of the deploy (after every switch) to `./backups/deploy-<environment>/` (`.dump`, SQLite `.db.tar` with its `-wal`/`-shm`), at most once per `DEPLOY_DB_BACKUP_MIN_AGE_HOURS` unless forced, same count kept.
 - **Automatic rollback** (default): when the new back is not healthy within 180 s, or any command fails after maintenance mode was enabled, every host switched in this run goes back (`previous` → `latest`, `.env.previous`, `up -d` without build, wait healthy, maintenance off). The SQLite backup of this run is restored too (the new back never served traffic). A front container that does not stay up rolls back the front hosts only (the healthy new back is kept, no data restore). Without a previous image (first deploy) there is nothing to roll back to.
 - **Manual rollback**: `./scripts/run.sh rollback <preprod|prod> [--restore-db] [--target=all|back|front]` swaps `latest` ↔ `previous`, `.env` ↔ `.env.previous` and `current.json` ↔ `previous.json` (running it twice rolls forward again), with maintenance on/off around the restart. It never syncs libraries, builds or updates submodules, and refuses (exit 1, nothing changed) when a host has no `:previous` image. `--restore-db` (SQLite only) first restores the backup recorded in the current `current.json` (writes made since that deploy are lost); with Postgres/cloud it only warns. The front on Cloudflare Pages is not handled (use the Cloudflare dashboard).
 
@@ -57,6 +60,8 @@ Every deploy keeps the previous version on each host, so it can be undone:
 **`BACK_WORKER=on|off`** (`back/.env`, default `on`; also `true|false|1|0`, anything else is refused before any host is touched). With `off` there is no `back-worker`: it is not built nor started, an existing container is stopped and removed by the switch (`==> [BACK:<host>] back-worker disabled (BACK_WORKER=off): removed if present`), and `back` becomes a single process with `NODE_ROLE=all` (API + background work: crons gated on `InstanceRoleService.isWorker()` keep running). The compose files read `NODE_ROLE: ${BACK_NODE_ROLE:-api}`; `deploy-full.sh` exports `BACK_NODE_ROLE=all` into the environment of every `docker compose` call (rollbacks included, from the local `back/.env`) and leaves it unset otherwise.
 
 Exit codes of a deploy: `0` ok · `3` failed, previous version restored · `4` failed, rollback failed or impossible (maintenance may still be ON) · `1` any other failure (before the switch, or `--no-auto-rollback`). `rollback`: `0` done, `1` refused/failed.
+
+**Switch order and speed.** Everything that does not need the old version stopped runs while it serves: libraries, local builds, upload, image build on the server, Postgres dump. Only then maintenance mode is enabled, `back` and `back-worker` (and `vmagent`) are stopped, the new ones started; `db` and a colocated Redis are never stopped (`up -d` recreates them only when their configuration changed), back-lb is reloaded before maintenance is lifted. Containers holding a fixed name are removed only when they belong to another compose project (renamed host/project), never the running ones. The front is replaced by `up -d` in one step (no stop beforehand). All SSH, scp and `docker --context` calls of a deploy share one connection per host (`scripts/lib/ssh-mux.sh`, ControlMaster). After `update_common.sh`, `deploy-full.sh` does not fetch the library submodules again (`DEPLOY_LIBS_SYNCED=1`, only a missing one is initialised). Every phase is timed (`scripts/lib/deploy-timing.sh`): one `==> [TIME] <phase>: <duration>` line each (local npm install and build per stack, server image build, Postgres dump, new back boot, maintenance window, front switch, local backup copy, plus `update_common.sh` and migrations measured by `run.sh`) and a summary with the total at exit, also on failure.
 
 Progress markers (`==> ` lines parsed by Agent Hub): `[BACK:<host>] Tagging current images as previous`, `[BACK:<host>] Backing up database`, `[BACK|FRONT:<host>] Rolling back to previous version` / `Rolled back to previous version` / `Rollback failed`, then `Deployment failed, previous version restored` (3), `Deployment failed, rollback failed` (4) or `Rollback completed`. The logic lives in `scripts/lib/deploy-versions.sh`; tests: `node --test scripts/deploy-versions.test.mjs` (stub executables, no host is contacted).
 
@@ -104,8 +109,12 @@ Progress markers (`==> ` lines parsed by Agent Hub): `[BACK:<host>] Tagging curr
 
 | File | Purpose |
 |------|---------|
-| `back/Dockerfile` | Lean, cloud-ready (multi-stage, no PM2, env at runtime) |
-| `back/Dockerfile.selfhosted` | Self-hosted / VPS (PM2, baked .env) |
+| `back/Dockerfile` | Full multi-stage build (deps, `nest build`, runtime; env at runtime), built by both compose files |
+| `back/Dockerfile.prebuilt` + `back/.dockerignore.prebuilt` | Used by `deploy-full.sh` when the back was compiled locally (the usual path): prod deps + runtime only, whitelist context (`package*.json`, `*.tgz`, `*.crt`, `dist`, top-level `_*` staged entries) |
+| `front/Dockerfile` | Full build (Vite) then nginx |
+| `front/Dockerfile.prebuilt` + `front/.dockerignore.prebuilt` | Used by `deploy-full.sh` after a local front build: nginx + `dist` only |
+
+Every project builds from these files: `back/Dockerfile`, `back/.dockerignore`, `front/Dockerfile` and `front/nginx.conf` are links from `config-links.json`, the `*.prebuilt` files are read from the template by `deploy-full.sh` and never copied into a project. `deploy-full.sh` refuses to deploy when one of the linked Docker files is a project copy or points elsewhere (`node scripts/link-config.mjs --check --only=<target>,...`; without `--only`, every shared config file). A `back/Dockerfile.selfhosted` left in a project is unused (both compose files build `Dockerfile`).
 
 `front/nginx.conf` is shared (linked from the template). An app that needs its own `location` blocks (a streaming gateway, large request bodies, long timeouts) writes them in a real file `front/nginx.locations.conf`: `deploy-full.sh` splices it at the `# @app-locations` marker, before the generic `/api/` block (`scripts/merge-nginx-locations.mjs`). Never replace the shared `nginx.conf` for that.
 
@@ -305,7 +314,7 @@ invalid identifier. The identifier names the OS data folder of the app: change t
 | `scripts/add-desktop.mjs [--name <text>] [--identifier <id>] [--dry-run]` | Add the desktop shell (Tauri) to an existing project (see « Desktop application ») |
 | `scripts/update_common.sh [--push-only\|--pull-only]` | For each mounted library: switch to `main` (mounts default to a detached HEAD), commit local changes of the back mount, fetch, rebase on `origin/main`, push; then the same on the front mount (it rebases on what back just pushed); both end on the same SHA; the parent repo gets a `chore: bump <lib>` commit. Then symlinks, root `CLAUDE.md` imports / `AGENTS.md`, `package.json` regeneration (also with `--pull-only`), `npm install` and an auto-commit when something changed. `git push` the parent afterwards. Refuses a legacy app (run the migration first) |
 | `scripts/migrate-to-webapptemplate.sh` | One-shot, idempotent migration of a legacy app (`nestcommon`/`reactcommon`/`apptemplate` submodules). Does not commit |
-| `scripts/deploy-full.sh` | Deploys with the **latest `main`** of the libraries (`git submodule update --init --remote`), not the refs pinned by the app commit |
+| `scripts/deploy-full.sh` | Deploys with the **latest `main`** of the libraries, not the refs pinned by the app commit: `git submodule update --init --remote`, skipped when `run.sh` just ran `update_common.sh` (same result) |
 
 ## Project layout and agent docs
 
@@ -320,7 +329,7 @@ invalid identifier. The identifier names the OS data folder of the app: change t
 ### Shared config files
 
 `config-links.json` lists the config files shared from the template (`tsconfig.json`, `viteConfig.ts`, `vitestConfig.ts`, `Dockerfile`, ...), materialized as
-symlinks by `scripts/link-config.mjs`. Every project uses them as they are: the linker leaves a real file untouched, but a
+symlinks by `scripts/link-config.mjs` (`--check` reports deviations, read-only, exit 1). Every project uses them as they are: the linker leaves a real file untouched, but a
 project copy is not allowed (it misses every later template fix) — a project need goes into the template, generically
 (e.g. `nest-cli.json` copies the `.proto` files of any linked module). `main.ts` / `main.tsx`
 are project-specific on purpose. Both stacks resolve modules in `bundler` mode, which reads the `exports` of each package:

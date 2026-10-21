@@ -31,6 +31,7 @@
 
 DV_AUTO_ROLLBACK="${DEPLOY_AUTO_ROLLBACK:-1}"
 DV_MIGRATE="${DV_MIGRATE:-0}"
+DV_FORCE_DB_BACKUP="${DV_FORCE_DB_BACKUP:-0}"
 DV_ARMED=0
 DV_SCOPE="all"                 # roll back every switched host ("all") or only the front hosts ("front")
 DV_DB_BACKUP=""                # reference of the backup taken for the current host in this run
@@ -145,6 +146,15 @@ dv_tag_previous() {
   fi
 }
 
+# Undo of the build when a deploy stops BEFORE the switch (e.g. a failed pre-switch backup): `latest` goes back to the
+# image still running, so the next deploy's dv_tag_previous keeps the right rollback target. No-op on a first deploy.
+dv_restore_latest_tag() {
+  local image="$1"
+  [[ "${DV_TAGGED:-0}" == "1" ]] || return 0
+  dv_docker tag "${image}:previous" "${image}:latest" \
+    || warn "[$(dv_tag)] Could not re-tag ${image}:previous as latest — check the tags before the next deploy"
+}
+
 # Remote `.env` -> `.env.previous` (before the upload overwrites it). Best effort.
 dv_save_env_previous() {
   dv_ssh "if [ -f '${DV_REMOTE_DIR}/.env' ]; then cp -p '${DV_REMOTE_DIR}/.env' '${DV_REMOTE_DIR}/.env.previous'; fi" \
@@ -183,21 +193,52 @@ dv_any_back_image() {
 dv_sqlite_volume() { printf '%s_sqlite_data' "${DV_PROJECT}"; }
 dv_sqlite_file()   { printf '/data/%s.db' "${PROJECT_NAME}"; }
 
-# Backs up the database of the current back host. Sets DV_DB_BACKUP. Returns 1 when a backup that should exist failed.
-#   SQLite   : copy of the DB file inside the volume to /data/backups/<name>-pre-<revision>-<UTC ts>.db (keep 5)
-#   Postgres : self-hosted `db` service only, and only when migrations run (--migrate) or DB_SCHEMA_MODE=sync
+# Database backups. Kept per host (DEPLOY_DB_BACKUP_KEEP, default 2, read from back/.env at call time) and copied to
+# ./backups/deploy-<environment>/ at the end of the deploy (dv_download_backups, same count kept locally).
+#   SQLite   : at the switch (old back stopped, nothing writes), copy of the file inside the volume to
+#              /data/backups/<project>-pre-<revision>-<UTC ts>.db — every deploy: the automatic rollback restores it.
+#   Postgres : self-hosted `db` service, only with --migrate, --force-db-backup or DB_SCHEMA_MODE=sync. BEFORE the switch,
+#              while the old back still serves (pg_dump reads a consistent snapshot; writes made between the dump and the
+#              switch are not in it), into <remote app dir>/backups/<project>_pre-<revision>_<UTC ts>.dump on the server
+#              (custom format, compressed in the container, written by the server's shell: the dump itself never
+#              crosses the network, only the end-of-deploy local copy does). At most one per
+#              DEPLOY_DB_BACKUP_MIN_AGE_HOURS (default 24, 0 = every deploy): a more recent dump is reused, unless
+#              --migrate or --force-db-backup.
 #   other    : cloud/supabase/neon -> warning only
-dv_backup_db() {
+DV_DL_IDX=()                   # local copies queued for the end of the deploy: registry index ...
+DV_DL_REF=()                   # ... and remote reference of the backup
+
+# Non-negative integer setting from the environment (back/.env is sourced with `set -a`), else the default.
+dv_int_setting() {
+  local value="${!1:-}"
+  if [[ "${value}" =~ ^[0-9]+$ ]]; then printf '%s' "${value}"; else printf '%s' "$2"; fi
+}
+
+dv_backup_keep() { local k; k="$(dv_int_setting DEPLOY_DB_BACKUP_KEEP 2)"; [[ "${k}" -ge 1 ]] || k=1; printf '%s' "${k}"; }
+
+dv_backup_forced() { [[ "${DV_MIGRATE}" == "1" || "${DV_FORCE_DB_BACKUP:-0}" == "1" ]]; }
+
+# Before the switch (old version still serving): Postgres dump, cloud warning; nothing for SQLite. Sets DV_DB_BACKUP.
+# Returns 1 when a backup that should exist failed.
+dv_backup_db_before_switch() {
   local revision="$1"
   DV_DB_BACKUP=""
+  [[ "${IS_SQLITE_DB:-0}" -ne 1 ]] || return 0
   echo "==> [BACK:${DV_HOST}] Backing up database"
-  if [[ "${IS_SQLITE_DB:-0}" -eq 1 ]]; then
-    dv_backup_sqlite "${revision}"
-  elif [[ "${IS_SELF_HOSTED_DB:-0}" -eq 1 ]]; then
+  if [[ "${IS_SELF_HOSTED_DB:-0}" -eq 1 ]]; then
     dv_backup_postgres "${revision}"
   else
     warn "[BACK:${DV_HOST}] Cloud database (DB_ENGINE=${DB_ENGINE_VALUE:-?}): no automatic backup — rely on the provider's backups/PITR; rollback will NOT restore data"
   fi
+}
+
+# At the switch (old back stopped, new one not started): SQLite copy; nothing for the other engines. Sets DV_DB_BACKUP.
+dv_backup_db_at_switch() {
+  local revision="$1"
+  DV_DB_BACKUP=""
+  [[ "${IS_SQLITE_DB:-0}" -eq 1 ]] || return 0
+  echo "==> [BACK:${DV_HOST}] Backing up database"
+  dv_backup_sqlite "${revision}"
 }
 
 dv_backup_sqlite() {
@@ -211,16 +252,16 @@ dv_backup_sqlite() {
   name="${PROJECT_NAME}-pre-$(dv_safe_name "${revision}")-$(date -u +%Y%m%dT%H%M%SZ).db"
   out="$(dv_docker run --rm --entrypoint sh -v "${vol}:/data" "${image}" -c '
     set -e
-    db="$1"; name="$2"; dir=/data/backups
+    db="$1"; name="$2"; keep="$3"; dir=/data/backups
     if [ ! -f "$db" ]; then echo NO_DB; exit 0; fi
     mkdir -p "$dir"
     cp -p "$db" "$dir/$name"
     if [ -f "$db-wal" ]; then cp -p "$db-wal" "$dir/$name-wal"; fi
     if [ -f "$db-shm" ]; then cp -p "$db-shm" "$dir/$name-shm"; fi
     if [ ! -s "$dir/$name" ]; then echo EMPTY_BACKUP; exit 1; fi
-    ls -1t "$dir"/*-pre-*.db 2>/dev/null | tail -n +6 | while read -r f; do rm -f "$f" "$f-wal" "$f-shm"; done
+    ls -1t "$dir"/*-pre-*.db 2>/dev/null | tail -n +$((keep + 1)) | while read -r f; do rm -f "$f" "$f-wal" "$f-shm"; done
     echo BACKUP_OK
-  ' sh "$(dv_sqlite_file)" "${name}")" || { err "[BACK:${DV_HOST}] SQLite backup failed"; return 1; }
+  ' sh "$(dv_sqlite_file)" "${name}" "$(dv_backup_keep)")" || { err "[BACK:${DV_HOST}] SQLite backup failed"; return 1; }
   if [[ "${out}" == *BACKUP_OK* ]]; then
     DV_DB_BACKUP="/data/backups/${name}"
     echo "==> [BACK:${DV_HOST}] SQLite backup: ${DV_DB_BACKUP} (volume ${vol})"
@@ -229,33 +270,122 @@ dv_backup_sqlite() {
   fi
 }
 
+# Newest dump of this project on the server younger than DEPLOY_DB_BACKUP_MIN_AGE_HOURS (empty when none / disabled).
+dv_recent_postgres_dump() {
+  local dir="$1" min_age
+  min_age="$(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 24)"
+  [[ "${min_age}" -gt 0 ]] || return 0
+  dv_ssh "find '${dir}' -maxdepth 1 -name '${PROJECT_NAME}_pre-*.dump' -mmin -$((min_age * 60)) -exec ls -1t {} + 2>/dev/null | head -n 1" 2>/dev/null || true
+}
+
 dv_backup_postgres() {
-  local revision="$1" schema_mode ctr file waited=0
+  local revision="$1" schema_mode ctr dir name recent waited=0
   schema_mode="$(printf '%s' "${DB_SCHEMA_MODE:-}" | tr '[:upper:]' '[:lower:]')"
-  if [[ "${DV_MIGRATE}" != "1" && "${schema_mode}" != "sync" ]]; then
+  if ! dv_backup_forced && [[ "${schema_mode}" != "sync" ]]; then
     echo "==> [BACK:${DV_HOST}] Postgres: no migration and no schema sync in this deploy — pre-deploy dump skipped (use ./scripts/backup-db.sh for a manual one)"
     return 0
   fi
+  dir="${DV_REMOTE_DIR}/backups"
+  if ! dv_backup_forced; then
+    recent="$(dv_recent_postgres_dump "${dir}")"
+    if [[ -n "${recent}" ]]; then
+      DV_DB_BACKUP="${recent}"
+      echo "==> [BACK:${DV_HOST}] Postgres: the last pre-deploy dump is less than $(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 24) h old (${recent}) — no new dump (--force-db-backup forces one)"
+      return 0
+    fi
+  fi
   ctr="${PROJECT_NAME}_postgres"
-  # `db` was stopped with the old services: bring it back (data volume untouched), no writer is connected.
-  dv_compose up -d db || { err "[BACK:${DV_HOST}] Could not start the db service for the backup"; return 1; }
-  while ! dv_docker exec "${ctr}" pg_isready -q >/dev/null 2>&1; do
-    sleep 1
-    waited=$((waited + 1))
-    if [[ ${waited} -ge 60 ]]; then err "[BACK:${DV_HOST}] Postgres not ready after 60s — cannot back up"; return 1; fi
-  done
-  mkdir -p ./backups
-  file="./backups/${PROJECT_NAME}_pre-$(dv_safe_name "${revision}")_$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
-  if ! dv_docker exec "${ctr}" pg_dump --username="${DB_USER:-postgres}" --dbname="${DB_NAME:-postgres}" \
-      --clean --no-owner --no-privileges --if-exists | gzip -c > "${file}"; then
-    rm -f "${file}"
+  if [[ "$(dv_docker inspect -f '{{.State.Running}}' "${ctr}" 2>/dev/null || true)" != "true" ]]; then
+    if ! dv_docker inspect "${ctr}" >/dev/null 2>&1; then
+      echo "==> [BACK:${DV_HOST}] No Postgres container (${ctr}) yet — first deploy, nothing to back up"
+      return 0
+    fi
+    # Stopped (data volume untouched): start it for the dump; `up` keeps it running afterwards.
+    dv_compose up -d db || { err "[BACK:${DV_HOST}] Could not start the db service for the backup"; return 1; }
+    while ! dv_docker exec "${ctr}" pg_isready -q >/dev/null 2>&1; do
+      sleep 1
+      waited=$((waited + 1))
+      if [[ ${waited} -ge 60 ]]; then err "[BACK:${DV_HOST}] Postgres not ready after 60s — cannot back up"; return 1; fi
+    done
+  fi
+  name="${PROJECT_NAME}_pre-$(dv_safe_name "${revision}")_$(date -u +%Y%m%dT%H%M%SZ).dump"
+  echo "==> [BACK:${DV_HOST}] Postgres: dumping on the server to ${dir}/${name} (the current version keeps serving)"
+  if ! dv_ssh "mkdir -p '${dir}' && docker exec '${ctr}' pg_dump --username='${DB_USER:-postgres}' --dbname='${DB_NAME:-postgres}' --format=custom --compress=1 --no-owner --no-privileges > '${dir}/${name}.part' && mv -f '${dir}/${name}.part' '${dir}/${name}'"; then
+    dv_ssh "rm -f '${dir}/${name}.part'" >/dev/null 2>&1 || true
     err "[BACK:${DV_HOST}] pg_dump failed"
     return 1
   fi
-  DV_DB_BACKUP="${file}"
-  echo "==> [BACK:${DV_HOST}] Postgres dump: ${file}"
-  echo "==> [BACK:${DV_HOST}] No automatic restore for Postgres. To restore manually:"
-  echo "    gunzip -c ${file} | DOCKER_SSH_COMMAND='${DV_DOCKER_SSH}' docker --context ${DV_CONTEXT} exec -i ${ctr} psql -U ${DB_USER:-postgres} -d ${DB_NAME:-postgres}"
+  dv_ssh "ls -1t '${dir}'/${PROJECT_NAME}_pre-*.dump 2>/dev/null | tail -n +$(( $(dv_backup_keep) + 1 )) | while read -r f; do rm -f \"\$f\"; done" \
+    || warn "[BACK:${DV_HOST}] Could not prune the old dumps in ${dir}"
+  DV_DB_BACKUP="${dir}/${name}"
+  echo "==> [BACK:${DV_HOST}] Postgres dump: ${DV_DB_BACKUP} (last $(dv_backup_keep) kept on the server)"
+  echo "==> [BACK:${DV_HOST}] No automatic restore for Postgres. To restore manually (on the server):"
+  echo "    ssh ${DV_SSH_OPTS[*]} ${DV_SSH_TARGET} \"docker exec -i ${ctr} pg_restore --clean --if-exists --no-owner --no-privileges -U ${DB_USER:-postgres} -d ${DB_NAME:-postgres} < ${DV_DB_BACKUP}\""
+}
+
+# ---------------------------------------------------------------------------
+# Local copies of the backups (end of the deploy, outside the switch)
+# ---------------------------------------------------------------------------
+dv_local_backup_dir() { printf './backups/deploy-%s' "$(dv_environment_name)"; }
+
+# Queues the backup <ref> of the host at registry index <idx> for dv_download_backups.
+dv_queue_backup_download() {
+  [[ -n "$2" ]] || return 0
+  DV_DL_IDX+=("$1")
+  DV_DL_REF+=("$2")
+}
+
+# Copies one queued backup to <dest> (SQLite: tar of the file and its -wal/-shm companions). Returns 1 on failure.
+dv_fetch_backup() {
+  local ref="$1" dest="$2"
+  if [[ "${IS_SQLITE_DB:-0}" -eq 1 ]]; then
+    dv_docker run --rm --entrypoint sh -v "$(dv_sqlite_volume):/data" "$(dv_any_back_image)" -c '
+      cd "$(dirname "$1")" && n="$(basename "$1")" && tar -cf - "$n" $(ls "$n-wal" "$n-shm" 2>/dev/null)
+    ' sh "${ref}" > "${dest}"
+  else
+    scp "${DV_SCP_OPTS[@]}" "${DV_SSH_TARGET}:${ref}" "${dest}" >/dev/null
+  fi
+}
+
+# End of the deploy: copies each queued backup to ./backups/deploy-<environment>/ unless that file is already there or,
+# without --migrate / --force-db-backup, a local copy younger than DEPLOY_DB_BACKUP_MIN_AGE_HOURS exists; keeps the
+# newest DEPLOY_DB_BACKUP_KEEP. DEPLOY_DB_BACKUP_DOWNLOAD=0 disables it. Never fails the deploy (warnings only).
+dv_download_backups() {
+  [[ ${#DV_DL_IDX[@]} -gt 0 ]] || return 0
+  if [[ "${DEPLOY_DB_BACKUP_DOWNLOAD:-1}" == "0" ]]; then
+    echo "==> Local copy of the database backups disabled (DEPLOY_DB_BACKUP_DOWNLOAD=0)"
+    return 0
+  fi
+  local i dir pattern dest min_age recent
+  dir="$(dv_local_backup_dir)"
+  min_age="$(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 24)"
+  mkdir -p "${dir}"
+  for ((i = 0; i < ${#DV_DL_IDX[@]}; i++)); do
+    dv_load_record "${DV_DL_IDX[i]}"
+    if [[ "${IS_SQLITE_DB:-0}" -eq 1 ]]; then pattern="${PROJECT_NAME}-pre-*.db.tar"; dest="${dir}/$(basename "${DV_DL_REF[i]}").tar"
+    else pattern="${PROJECT_NAME}_pre-*.dump"; dest="${dir}/$(basename "${DV_DL_REF[i]}")"; fi
+    if [[ -f "${dest}" ]]; then
+      echo "==> [BACK:${DV_HOST}] Database backup already copied locally (${dest})"
+      continue
+    fi
+    if ! dv_backup_forced && [[ "${min_age}" -gt 0 ]]; then
+      recent="$(find "${dir}" -maxdepth 1 -name "${pattern}" -mmin -$((min_age * 60)) 2>/dev/null | head -n 1)"
+      if [[ -n "${recent}" ]]; then
+        echo "==> [BACK:${DV_HOST}] A local backup copy younger than ${min_age} h exists (${recent}) — not copied again"
+        continue
+      fi
+    fi
+    echo "==> [BACK:${DV_HOST}] Copying the database backup to ${dest}"
+    if ! dv_fetch_backup "${DV_DL_REF[i]}" "${dest}.part" || [[ ! -s "${dest}.part" ]]; then
+      rm -f "${dest}.part"
+      warn "[BACK:${DV_HOST}] Could not copy ${DV_DL_REF[i]} locally — it stays on the server"
+      continue
+    fi
+    mv -f "${dest}.part" "${dest}"
+    # shellcheck disable=SC2012 # names are generated (no spaces/newlines)
+    ls -1t "${dir}"/${pattern} 2>/dev/null | tail -n +$(( $(dv_backup_keep) + 1 )) | while read -r f; do rm -f "${f}"; done
+    echo "==> [BACK:${DV_HOST}] Local copy: ${dest} (last $(dv_backup_keep) kept in ${dir})"
+  done
 }
 
 # Restores a SQLite backup (volume path /data/backups/...) over the live file. The back must be stopped.
@@ -380,8 +510,9 @@ dv_rollback_back() {
     echo "==> [BACK:${DV_HOST}] Rollback failed"
     return 1
   }
-  disable_back_maintenance "${DV_CONTEXT}" "${DV_DOCKER_SSH}" "${DV_HOST}"
+  # Reload BEFORE lifting maintenance: nginx resolves `back` at (re)load, the first requests must reach the new container.
   dv_compose exec -T back-lb nginx -s reload >/dev/null 2>&1 || true
+  disable_back_maintenance "${DV_CONTEXT}" "${DV_DOCKER_SSH}" "${DV_HOST}"
   echo "==> [BACK:${DV_HOST}] Rolled back to previous version"
 }
 

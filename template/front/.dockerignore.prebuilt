@@ -1,0 +1,16 @@
+# =============================================================================
+# VXFramework
+#
+# Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License. See LICENSE in the project root.
+# =============================================================================
+#
+# Whitelist context of Dockerfile.prebuilt (written as the staged front/.dockerignore by scripts/deploy-full.sh when
+# the front was built locally): only the processed nginx.conf and dist reach the remote daemon, never src/, public/
+# or the resolved .libs/.
+*
+!Dockerfile
+!nginx.conf
+!dist

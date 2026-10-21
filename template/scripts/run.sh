@@ -528,14 +528,40 @@ split_deploy_args() {
   done
 }
 
-# Syncs the shared libraries (commit + push) unless --no-update-common / SKIP_UPDATE_COMMON=1.
+# Phases measured here are handed to deploy-full.sh, which prints them in its timing summary (lib/deploy-timing.sh).
+export DEPLOY_STARTED_AT="${DEPLOY_STARTED_AT:-$(date +%s)}"
+
+# Appends "<label>=<seconds since <start>>" to DEPLOY_TIMINGS (exported for deploy-full.sh).
+record_deploy_timing() {
+  export DEPLOY_TIMINGS="${DEPLOY_TIMINGS:+${DEPLOY_TIMINGS};}$1=$(( $(date +%s) - $2 ))"
+}
+
+# Syncs the shared libraries (commit + push) unless --no-update-common / SKIP_UPDATE_COMMON=1. After a clean sync the
+# library mounts sit on origin/main: DEPLOY_LIBS_SYNCED=1 tells deploy-full.sh not to fetch them a second time.
 maybe_update_common() {
   if [[ "${SKIP_UPDATE_COMMON}" == "1" ]]; then
     info "Skipping shared library sync (--no-update-common)"
     return 0
   fi
   info "Syncing shared libraries..."
-  "${SCRIPT_DIR}/update_common.sh" || warn "Common library sync had issues — continuing anyway"
+  local t0
+  t0="$(date +%s)"
+  if "${SCRIPT_DIR}/update_common.sh"; then
+    export DEPLOY_LIBS_SYNCED=1
+  else
+    warn "Common library sync had issues — continuing anyway"
+  fi
+  record_deploy_timing "update_common.sh (library sync)" "${t0}"
+}
+
+# Runs migrate-db.sh (args: env file, label) and records its duration.
+run_deploy_migrations() {
+  local t0
+  t0="$(date +%s)"
+  info "Running database migrations ($2)..."
+  BACK_ENV_FILE="$1" "${SCRIPT_DIR}/migrate-db.sh" \
+    || { err "Migration failed — aborting deployment"; exit 1; }
+  record_deploy_timing "migrations (migrate-db.sh)" "${t0}"
 }
 
 # ============================================================
@@ -563,9 +589,7 @@ cmd_preprod() {
   if [[ "$*" == *"--target=front"* || ! -f "${SCRIPT_DIR}/migrate-db.sh" ]]; then
     :
   elif migrations_enabled_for_target "${back_env}" "$@"; then
-    info "Running database migrations (preprod: ${back_env})..."
-    BACK_ENV_FILE="${back_env}" "${SCRIPT_DIR}/migrate-db.sh" \
-      || { err "Migration failed — aborting deployment"; exit 1; }
+    run_deploy_migrations "${back_env}" "preprod: ${back_env}"
   else
     info "Skipping database migrations (pass --migrate to run them; also auto-skipped if DB_SCHEMA_MODE=sync in ${back_env})."
   fi
@@ -591,9 +615,7 @@ cmd_prod() {
   if [[ "$*" == *"--target=front"* || ! -f "${SCRIPT_DIR}/migrate-db.sh" ]]; then
     :
   elif migrations_enabled_for_target "./back/.env" "$@"; then
-    info "Running database migrations (prod: ./back/.env)..."
-    "${SCRIPT_DIR}/migrate-db.sh" \
-      || { err "Migration failed — aborting deployment"; exit 1; }
+    run_deploy_migrations "./back/.env" "prod: ./back/.env"
   else
     info "Skipping database migrations (pass --migrate to run them; also auto-skipped if DB_SCHEMA_MODE=sync in ./back/.env)."
   fi

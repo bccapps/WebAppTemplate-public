@@ -10,14 +10,15 @@
 // End-to-end tests of run.sh / deploy-full.sh / lib/deploy-versions.sh against STUB executables (docker, ssh, scp, rsync,
 // git, npm...) put first on PATH: nothing ever reaches a real host. Every stub appends its argv to $STUB_LOG; image tags are
 // files in $STUB_STATE (content = fake image id) so retag/swap logic can be checked; env vars drive the outcomes
-// (STUB_BACK_HEALTH=bad, STUB_ROLLBACK_UNHEALTHY=1, STUB_FRONT_FAIL=1, STUB_RUN_FAIL=1, STUB_WORKER_FAIL=new...).
+// (STUB_BACK_HEALTH=bad, STUB_ROLLBACK_UNHEALTHY=1, STUB_FRONT_FAIL=1, STUB_RUN_FAIL=1, STUB_WORKER_FAIL=new,
+// STUB_PG=absent, STUB_PGDUMP_FAIL=1, STUB_RECENT_DUMP=<path>, STUB_PS_LINES=<docker ps -a lines>, STUB_GIT_TOP=<dir>...).
 //
 // Run: node --test scripts/deploy-versions.test.mjs   (needs bash and python3)
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
-  chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync,
+  chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -42,12 +43,17 @@ case "$cmd" in
   tag) [ -f "$(img "$1")" ] || exit 1; cp "$(img "$1")" "$(img "$2")" ;;
   rmi) rm -f "$(img "$1")" ;;
   build) while [ $# -gt 0 ]; do if [ "$1" = --tag ]; then echo base > "$(img "$2")"; fi; shift; done; cat > /dev/null ;;
-  inspect) case "$1" in *_back_lb) [ "\${STUB_LB:-1}" != 0 ]; exit $? ;; esac; exit 1 ;;
-  ps) case "$*" in *"-q -f"*) echo cid123 ;; esac ;;
+  inspect)
+    case "$*" in
+      *_back_lb*) [ "\${STUB_LB:-1}" != 0 ]; exit $? ;;
+      *_postgres*) [ "\${STUB_PG:-running}" = running ] || exit 1; case "$*" in *State.Running*) echo true ;; esac; exit 0 ;;
+    esac
+    exit 1 ;;
+  ps) case "$*" in *"-q -f"*) echo cid123 ;; *"--format"*) printf '%b' "\${STUB_PS_LINES:-}" ;; esac ;;
   volume) if [ "\${1:-}" = inspect ]; then [ -f "$S/vol_$2" ]; exit $?; fi ;;
   run)
     if [ -n "\${STUB_RUN_FAIL:-}" ]; then exit 1; fi
-    case "$*" in *RESTORE_OK*) echo RESTORE_OK ;; *BACKUP_OK*) echo BACKUP_OK ;; esac ;;
+    case "$*" in *RESTORE_OK*) echo RESTORE_OK ;; *BACKUP_OK*) echo BACKUP_OK ;; *"tar -cf"*) echo TARDATA ;; esac ;;
   exec) case "$*" in *pg_dump*) echo "-- pg dump" ;; esac ;;
   compose)
     proj=""; dir=""
@@ -96,6 +102,8 @@ case "$cmd" in
   'printf %s "$HOME"') printf %s /home/deploy ;;
   *"cat '"*current.json*) if [ -n "\${STUB_CURRENT_JSON:-}" ]; then cat "$STUB_CURRENT_JSON"; fi ;;
   *"cat > current.json"*) echo "STATE_JSON: $(cat)" >> "$STUB_LOG" ;;
+  *pg_dump*) if [ -n "\${STUB_PGDUMP_FAIL:-}" ]; then exit 1; fi ;;
+  *"-mmin"*) if [ -n "\${STUB_RECENT_DUMP:-}" ]; then echo "$STUB_RECENT_DUMP"; fi ;;
 esac
 exit 0
 `,
@@ -121,7 +129,8 @@ exit 0
   git: `#!/usr/bin/env bash
 echo "git $*" >> "$STUB_LOG"
 case "$*" in
-  *show-toplevel*) exit 1 ;;
+  *show-toplevel*) if [ -n "\${STUB_GIT_TOP:-}" ]; then echo "$STUB_GIT_TOP"; else exit 1; fi ;;
+  *--get-regexp*) echo "submodule.back/.libs/vx-public.path back/.libs/vx-public" ;;
   *"rev-parse --short HEAD"*) echo "\${STUB_GIT_REV:-abc1234}" ;;
   *"status --porcelain"*) if [ -n "\${STUB_GIT_DIRTY:-}" ]; then echo " M file"; fi ;;
 esac
@@ -428,10 +437,11 @@ test('deploy: cloud database -> warning, no backup; Postgres dumps only with --m
 
     r = pg.run(['prod', '--no-update-common', '--migrate', '--target=back']);
     assert.equal(r.status, 0, r.out);
-    const dumps = readdirSync(path.join(pg.root, 'backups'));
-    assert.equal(dumps.length, 1);
-    assert.match(dumps[0], /^testapp_pre-abc1234_\d{8}T\d{6}Z\.sql\.gz$/);
+    const dumps = readdirSync(path.join(pg.root, 'backups/deploy-prod'));
+    assert.equal(dumps.length, 1, 'local copy of the server dump');
+    assert.match(dumps[0], /^testapp_pre-abc1234_\d{8}T\d{6}Z\.dump$/);
     assert.match(strip(r.out), /No automatic restore for Postgres/);
+    assert.match(strip(r.out), /pg_restore --clean --if-exists/);
   } finally { pg.cleanup(); }
 });
 
@@ -445,8 +455,9 @@ test('deploy: colocated Redis and self-hosted Postgres keep the internal-hostnam
     assert.ok(lines.includes('ENV_SNAPSHOT: DB_HOST=db'));
     assert.ok(lines.includes('ENV_SNAPSHOT: DB_PORT=5432'));
     assert.ok(lines.includes('ENV_SNAPSHOT: SERVER_IP=10.0.0.1'));
-    assert.ok(indexOfLine(lines, /compose .* rm -sf back back-worker db redis$/) >= 0, 'stop list includes db and redis');
-    assert.ok(indexOfLine(lines, /compose .* up -d back back-lb db redis$/) >= 0, 'up list includes db and redis');
+    assert.ok(indexOfLine(lines, /compose .* rm -sf back back-worker$/) >= 0, 'db and redis are never stopped by a switch');
+    assert.equal(indexOfLine(lines, /compose .* rm -sf .*\b(db|redis)\b/), -1);
+    assert.ok(indexOfLine(lines, /compose .* up -d back back-lb db redis$/) >= 0, 'up list includes db and redis (recreated only if changed)');
   } finally { p.cleanup(); }
 });
 
@@ -699,8 +710,247 @@ test('manual rollback follows BACK_WORKER (on: worker after health; off: NODE_RO
   }
 });
 
+// ---------------------------------------------------------------------------
+// Deploy speed: database backups, switch order, Docker context, timing, SSH reuse, library sync
+// ---------------------------------------------------------------------------
+const MAINT_ON = /touch \/etc\/nginx\/maintenance\.flag/;
+const PG_DUMP = /^ssh .*docker exec 'testapp_postgres' pg_dump .*--format=custom/;
+
+test('Postgres (sync): dump on the server BEFORE maintenance while the old back serves, db never stopped, local copy', () => {
+  const p = deployedProject({ engine: 'postgres', extraBackEnv: 'DB_SCHEMA_MODE=sync' });
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back']);
+    assert.equal(r.status, 0, r.out);
+    const lines = p.logLines();
+    const build = indexOfLine(lines, /^docker .*compose .* build /);
+    const dump = indexOfLine(lines, PG_DUMP);
+    const maintOn = indexOfLine(lines, MAINT_ON);
+    const stop = indexOfLine(lines, /compose .* rm -sf back back-worker$/);
+    assert.ok(build >= 0 && dump > build, 'dump after the build');
+    assert.ok(maintOn > dump && stop > maintOn, 'dump before maintenance and before the old back stops');
+    assert.match(lines[dump], /> '\/srv\/testapp\/back\/backups\/testapp_pre-abc1234_\d{8}T\d{6}Z\.dump\.part'/, 'written on the server');
+    assert.ok(indexOfLine(lines, /^ssh .*ls -1t '\/srv\/testapp\/back\/backups'\/testapp_pre-\*\.dump .*tail -n \+3/) > dump, 'server keeps 2');
+    assert.equal(indexOfLine(lines, /compose .* up -d db$/), -1, 'running db not restarted for the dump');
+    const state = JSON.parse(lines.find((l) => l.startsWith('STATE_JSON: ')).slice('STATE_JSON: '.length));
+    assert.match(state.dbBackup, /^\/srv\/testapp\/back\/backups\/testapp_pre-abc1234_\d{8}T\d{6}Z\.dump$/);
+    const scp = indexOfLine(lines, /^scp .*deploy@10\.0\.0\.1:\/srv\/testapp\/back\/backups\/testapp_pre-abc1234_.*\.dump /);
+    assert.ok(scp > indexOfLine(lines, MAINT_OFF), 'local copy after maintenance is lifted');
+    assert.equal(readdirSync(path.join(p.root, 'backups/deploy-prod')).length, 1);
+  } finally { p.cleanup(); }
+});
+
+test('Postgres: a dump younger than DEPLOY_DB_BACKUP_MIN_AGE_HOURS is reused; --force-db-backup and --migrate dump anyway', () => {
+  const recent = '/srv/testapp/back/backups/testapp_pre-old1234_20261021T080000Z.dump';
+  const p = deployedProject({ engine: 'postgres', extraBackEnv: 'DB_SCHEMA_MODE=sync' });
+  try {
+    let r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_RECENT_DUMP: recent });
+    assert.equal(r.status, 0, r.out);
+    assert.match(strip(r.out), /less than 24 h old .*no new dump/);
+    let lines = p.logLines();
+    assert.ok(indexOfLine(lines, /^ssh .*-mmin -1440 /) >= 0, '24 h by default');
+    assert.equal(indexOfLine(lines, PG_DUMP), -1);
+    const state = JSON.parse(lines.find((l) => l.startsWith('STATE_JSON: ')).slice('STATE_JSON: '.length));
+    assert.equal(state.dbBackup, recent, 'the reused dump is the recorded safety net');
+
+    for (const flag of ['--force-db-backup', '--migrate']) {
+      writeFileSync(p.log, '');
+      r = p.run(['prod', '--no-update-common', flag, '--target=back'], { STUB_RECENT_DUMP: recent });
+      assert.equal(r.status, 0, `${flag}: ${r.out}`);
+      lines = p.logLines();
+      assert.equal(indexOfLine(lines, /-mmin/), -1, `${flag}: age not even checked`);
+      assert.ok(indexOfLine(lines, PG_DUMP) >= 0, `${flag}: dumped`);
+    }
+
+    writeFileSync(p.log, '');
+    r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_RECENT_DUMP: recent, DEPLOY_DB_BACKUP_MIN_AGE_HOURS: '0' });
+    assert.equal(r.status, 0, r.out);
+    assert.ok(indexOfLine(p.logLines(), PG_DUMP) >= 0, 'MIN_AGE 0 = every deploy');
+  } finally { p.cleanup(); }
+});
+
+test('Postgres: a failed dump stops the deploy BEFORE the switch (exit 1, no maintenance, latest re-tagged)', () => {
+  const p = deployedProject({ engine: 'postgres', extraBackEnv: 'DB_SCHEMA_MODE=sync' });
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_PGDUMP_FAIL: '1' });
+    assert.equal(r.status, 1, r.out);
+    assert.match(strip(r.out), /deploy stopped before the switch/);
+    const lines = p.logLines();
+    assert.equal(indexOfLine(lines, MAINT_ON), -1);
+    assert.equal(indexOfLine(lines, /compose .* (rm -sf|up -d) /), -1, 'nothing stopped or started');
+    assert.equal(p.image('testapp_back:latest'), 'v1', 'latest points again at the running version');
+    assert.ok(indexOfLine(lines, /^ssh .*rm -f '\/srv\/testapp\/back\/backups\/.*\.dump\.part'/) >= 0, 'partial dump removed');
+  } finally { p.cleanup(); }
+});
+
+test('Postgres: no db container yet (first deploy) -> no dump, deploy goes on', () => {
+  const p = deployedProject({ engine: 'postgres', extraBackEnv: 'DB_SCHEMA_MODE=sync' });
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_PG: 'absent' });
+    assert.equal(r.status, 0, r.out);
+    assert.match(strip(r.out), /No Postgres container \(testapp_postgres\) yet/);
+    assert.equal(indexOfLine(p.logLines(), PG_DUMP), -1);
+  } finally { p.cleanup(); }
+});
+
+test('backups: 2 kept by default on the volume (SQLite) and locally; a recent local copy is not downloaded again', () => {
+  const p = deployedProject();
+  const local = path.join(p.root, 'backups/deploy-prod');
+  mkdirSync(local, { recursive: true });
+  const old = Date.now() / 1000 - 3 * 86400;
+  for (const [i, name] of ['testapp-pre-a-20261001T000000Z.db.tar', 'testapp-pre-b-20261002T000000Z.db.tar', 'other-pre-c.db.tar'].entries()) {
+    writeFileSync(path.join(local, name), 'x');
+    utimesSync(path.join(local, name), old + i, old + i);
+  }
+  try {
+    let r = p.run(['prod', '--no-update-common', '--target=back']);
+    assert.equal(r.status, 0, r.out);
+    const lines = p.logLines();
+    const backup = lines.find((l) => /^docker .* run --rm --entrypoint sh -v .*BACKUP_OK/.test(l));
+    assert.match(backup, / 2$/, 'keep count passed to the volume backup');
+    const files = readdirSync(local).sort();
+    assert.equal(files.length, 3, files.join(','));
+    assert.ok(files.includes('testapp-pre-b-20261002T000000Z.db.tar') && files.includes('other-pre-c.db.tar'), 'oldest of this project pruned, other projects untouched');
+    assert.ok(files.some((f) => /^testapp-pre-abc1234-\d{8}T\d{6}Z\.db\.tar$/.test(f)));
+
+    writeFileSync(p.log, '');
+    r = p.run(['prod', '--no-update-common', '--target=back']);
+    assert.equal(r.status, 0, r.out);
+    assert.match(strip(r.out), /local backup copy younger than 24 h exists/);
+    assert.equal(indexOfLine(p.logLines(), /tar -cf/), -1);
+
+    r = p.run(['prod', '--no-update-common', '--target=back'], { DEPLOY_DB_BACKUP_DOWNLOAD: '0' });
+    assert.match(strip(r.out), /Local copy of the database backups disabled/);
+  } finally { p.cleanup(); }
+});
+
+test('switch: only containers of ANOTHER compose project are removed (never the running ones of this project)', () => {
+  const p = deployedProject();
+  const lines = [
+    `id1 testapp_front ${BACK_PROJECT}`,
+    `id2 testapp_redis ${BACK_PROJECT}`,
+    'id3 testapp_redis oldname-back-x',
+    'id4 something testapp-back-oldhost',
+    'id5 unrelated otherapp',
+  ].join('\\n');
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_PS_LINES: lines });
+    assert.equal(r.status, 0, r.out);
+    const log = p.logLines();
+    assert.ok(indexOfLine(log, /^docker .* rm -f id3$/) >= 0, 'fixed name held by another project');
+    assert.ok(indexOfLine(log, /^docker .* rm -f id4$/) >= 0, 'older back project name of this app');
+    for (const id of ['id1', 'id2', 'id5']) assert.equal(indexOfLine(log, new RegExp(`rm -f ${id}$`)), -1, id);
+    assert.equal(log.filter((l) => /^docker .* ps -a --format /.test(l)).length, 1, 'one docker ps for the whole scan');
+  } finally { p.cleanup(); }
+});
+
+test('front: recreated in place by `up -d` (no stop/down beforehand); dedicated host gets --remove-orphans', () => {
+  const p = makeProject();
+  p.seedImage(`${FRONT_PROJECT}-front:latest`, 'f1');
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=front']);
+    assert.equal(r.status, 0, r.out);
+    const lines = p.logLines();
+    assert.equal(indexOfLine(lines, /compose .* (rm -sf front|down)/), -1);
+    assert.ok(indexOfLine(lines, /compose .* up -d --remove-orphans front$/) >= 0);
+  } finally { p.cleanup(); }
+});
+
+test('prebuilt stacks ship the template Dockerfile.prebuilt + whitelist .dockerignore (no src/.libs in the context)', () => {
+  const p = deployedProject();
+  const template = path.dirname(SCRIPTS_DIR);
+  try {
+    const r = p.run(['prod', '--no-update-common'], { KEEP_BUILD_CONTEXT: '1' });
+    assert.equal(r.status, 0, r.out);
+    const ctx = strip(r.out).match(/Build context staged at (\S+)/)[1];
+    for (const stack of ['back', 'front']) {
+      assert.equal(readFileSync(path.join(ctx, stack, 'Dockerfile'), 'utf8'), readFileSync(path.join(template, stack, 'Dockerfile.prebuilt'), 'utf8'), stack);
+      const ignore = readFileSync(path.join(ctx, stack, '.dockerignore'), 'utf8');
+      assert.equal(ignore, readFileSync(path.join(template, stack, '.dockerignore.prebuilt'), 'utf8'), stack);
+      assert.match(ignore, /^\*$/m, `${stack}: whitelist`);
+    }
+    assert.equal(existsSync(path.join(ctx, 'back', 'Dockerfile.selfhosted')), false, 'one Dockerfile name for both compose files');
+  } finally { p.cleanup(); }
+});
+
+test('timing: [TIME] lines and a summary including run.sh phases (also on failure)', () => {
+  const p = deployedProject();
+  try {
+    let r = p.run(['prod', '--target=back']);
+    assert.equal(r.status, 0, r.out);
+    let out = strip(r.out);
+    assert.match(out, /^==> \[TIME\] back 10\.0\.0\.1: image build on the server .*: \d+s$/m);
+    assert.match(out, /^==> \[TIME\] back 10\.0\.0\.1: new back started and healthy \(up \+ boot\): \d+s$/m);
+    assert.match(out, /^==> \[TIME\] back 10\.0\.0\.1: maintenance window \(requests answered 503\): \d+s$/m);
+    assert.match(out, /^==> \[TIME\] back: build \(local, nest build\): \d+s$/m);
+    assert.match(out, /^==> \[TIME\] Summary$/m);
+    assert.match(out, /^ {4}update_common\.sh \(library sync\) +\d+s$/m, 'run.sh phase imported');
+    assert.match(out, /^ {4}total +\d+s$/m);
+
+    p.seedImage('testapp_back:latest', 'v1'); // the run above made `new` the running version: restore a sane v1
+    r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_BACK_HEALTH: 'bad' });
+    assert.equal(r.status, 3, r.out);
+    assert.match(strip(r.out), /^==> \[TIME\] Summary$/m, 'summary printed on failure too');
+  } finally { p.cleanup(); }
+});
+
+test('ssh reuse: ssh/scp go through ControlMaster wrappers (DEPLOY_SSH_MUX=0 disables them), socket dir removed', () => {
+  const p = deployedProject();
+  try {
+    let r = p.run(['prod', '--no-update-common', '--target=back']);
+    assert.equal(r.status, 0, r.out);
+    let lines = p.logLines();
+    const sshLines = lines.filter((l) => /^(ssh|scp) /.test(l));
+    assert.ok(sshLines.length > 0 && sshLines.every((l) => /-o ControlMaster=auto -o ControlPath=\/tmp\/vxmux\.\w+\/%C -o ControlPersist=120/.test(l)), sshLines[0]);
+    const dir = sshLines[0].match(/ControlPath=(\/tmp\/vxmux\.\w+)\//)[1];
+    assert.equal(existsSync(dir), false, 'socket dir cleaned at exit');
+
+    writeFileSync(p.log, '');
+    r = p.run(['prod', '--no-update-common', '--target=back'], { DEPLOY_SSH_MUX: '0' });
+    assert.equal(r.status, 0, r.out);
+    lines = p.logLines();
+    assert.equal(lines.filter((l) => /ControlMaster/.test(l)).length, 0);
+  } finally { p.cleanup(); }
+});
+
+test('library sync: after update_common.sh the submodules are not fetched again (only a missing one is initialised)', () => {
+  const p = deployedProject();
+  write(path.join(p.root, '.gitmodules'), '[submodule "back/.libs/vx-public"]\n');
+  write(path.join(p.root, 'back/.libs/vx-public/.git'), 'gitdir: x\n');
+  try {
+    let r = p.run(['prod', '--target=back'], { STUB_GIT_TOP: p.root });
+    assert.equal(r.status, 0, r.out);
+    assert.equal(indexOfLine(p.logLines(), /^git .*submodule update/), -1, 'synced by update_common: no second fetch');
+    assert.match(strip(r.out), /submodules \(init only, synced by update_common\)/);
+
+    writeFileSync(p.log, '');
+    rmSync(path.join(p.root, 'back/.libs/vx-public/.git'));
+    r = p.run(['prod', '--target=back'], { STUB_GIT_TOP: p.root });
+    assert.equal(r.status, 0, r.out);
+    assert.ok(indexOfLine(p.logLines(), /^git .*submodule update --init --remote -- back\/\.libs\/vx-public$/) >= 0, 'missing mount initialised');
+
+    writeFileSync(p.log, '');
+    r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_GIT_TOP: p.root });
+    assert.equal(r.status, 0, r.out);
+    assert.ok(indexOfLine(p.logLines(), /^git .*submodule update --init --remote$/) >= 0, 'no sync -> full fetch as before');
+  } finally { p.cleanup(); }
+});
+
+test('homogeneity: a project copy of a shared Docker file stops the deploy before anything is built', () => {
+  const p = deployedProject();
+  const template = path.dirname(SCRIPTS_DIR);
+  mkdirSync(path.join(p.root, 'back/.libs'), { recursive: true });
+  symlinkSync(template, path.join(p.root, 'back/.libs/apptemplate'));
+  writeFileSync(path.join(p.root, 'back/Dockerfile'), 'FROM scratch\n');
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back']);
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /back\/Dockerfile: copie projet/);
+    assert.equal(indexOfLine(p.logLines(), /^(docker|ssh|npm) /), -1, 'nothing built, no host contacted');
+  } finally { p.cleanup(); }
+});
+
 test('portable sed: no BSD-only `sed -i \'\'` left, in-place helpers work and leave no backup file', () => {
-  for (const file of ['deploy-full.sh', 'run.sh', 'lib/deploy-versions.sh']) {
+  for (const file of ['deploy-full.sh', 'run.sh', 'lib/deploy-versions.sh', 'lib/deploy-timing.sh', 'lib/ssh-mux.sh']) {
     assert.doesNotMatch(readFileSync(path.join(SCRIPTS_DIR, file), 'utf8'), /sed -i ''/, file);
   }
   const dir = mkdtempSync(path.join(tmpdir(), 'dv-sed-'));
@@ -724,7 +974,7 @@ dv_env_set "${envFile}" DEPLOY_REVISION def
 });
 
 test('every modified shell script passes bash -n; shellcheck when installed', (t) => {
-  const files = ['run.sh', 'deploy-full.sh', 'lib/deploy-versions.sh'].map((f) => path.join(SCRIPTS_DIR, f));
+  const files = ['run.sh', 'deploy-full.sh', 'lib/deploy-versions.sh', 'lib/deploy-timing.sh', 'lib/ssh-mux.sh'].map((f) => path.join(SCRIPTS_DIR, f));
   for (const f of files) {
     const res = spawnSync('bash', ['-n', f], { encoding: 'utf8' });
     assert.equal(res.status, 0, `${f}: ${res.stderr}`);

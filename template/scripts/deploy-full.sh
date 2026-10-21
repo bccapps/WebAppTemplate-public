@@ -24,7 +24,8 @@ set -euo pipefail
 #   ./scripts/deploy-full.sh --target=front  Deploy front only
 #   ./scripts/deploy-full.sh --no-auto-rollback   Do not roll back automatically when the new back is not healthy
 #                                            (default: roll back, exit 3 = restored, exit 4 = rollback failed)
-#   ./scripts/deploy-full.sh --migrate       Tell the script migrations ran (self-hosted Postgres: dump before `up`)
+#   ./scripts/deploy-full.sh --migrate       Tell the script migrations ran (self-hosted Postgres: always dump)
+#   ./scripts/deploy-full.sh --force-db-backup   Self-hosted Postgres: dump even when the last one is recent
 #   ./scripts/deploy-full.sh --rollback [--restore-db] [--target=...]
 #                                            Swap back to the previous version (no build, no submodule update);
 #                                            normally launched through `./scripts/run.sh rollback <preprod|prod>`
@@ -32,9 +33,15 @@ set -euo pipefail
 #
 # Versioning (lib/deploy-versions.sh): each host keeps `<image>:previous` next to `:latest`, the remote
 # .env as .env.previous and .deploy/current.json|previous.json; DEPLOY_REVISION (env var, else git short sha
-# + -dirty) is injected into the back env and exposed by GET /api/v1/health. The database is backed up before
-# `up` (SQLite: /data/backups on the volume; self-hosted Postgres: ./backups dump, only with --migrate or
-# DB_SCHEMA_MODE=sync). Exit codes: 0 ok, 3 failed + previous version restored, 4 failed + rollback failed.
+# + -dirty) is injected into the back env and exposed by GET /api/v1/health. Database backups (lib/deploy-versions.sh):
+# SQLite: on the volume at every switch; self-hosted Postgres (--migrate or DB_SCHEMA_MODE=sync): a dump on the server
+# while the old back still serves, at most one per DEPLOY_DB_BACKUP_MIN_AGE_HOURS (24); DEPLOY_DB_BACKUP_KEEP (2) kept
+# on the server and in ./backups (local copy at the end of the deploy, DEPLOY_DB_BACKUP_DOWNLOAD=0 to skip).
+# Exit codes: 0 ok, 3 failed + previous version restored, 4 failed + rollback failed.
+#
+# Speed: SSH connections are reused (lib/ssh-mux.sh, DEPLOY_SSH_MUX=0 to disable); every phase is timed
+# (lib/deploy-timing.sh, `==> [TIME]` lines and a summary at exit); after run.sh's library sync
+# (DEPLOY_LIBS_SYNCED=1) the submodules are not fetched a second time.
 #
 # Required env vars (in back/.env):
 #   PROJECT_NAME, REMOTE_USER, REMOTE_SSH_PORT, SSH_KEY_FILE,
@@ -51,6 +58,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# Physical template root (scripts/ is a symlink into front/.libs/apptemplate): back|front/Dockerfile.prebuilt live there.
+TEMPLATE_ROOT="$(dirname "$(dirname "$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")")")"
 source "${SCRIPT_DIR}/lib/db-engine.sh"
 cd "${PROJECT_ROOT}"
 
@@ -65,6 +74,7 @@ RUNNER_ROTATE_CLI=0
 ROLLBACK_MODE=0
 RESTORE_DB=0
 DV_MIGRATE=0
+DV_FORCE_DB_BACKUP=0
 DEPLOY_AUTO_ROLLBACK="${DEPLOY_AUTO_ROLLBACK:-1}"
 for arg in "$@"; do
   case "${arg}" in
@@ -74,6 +84,7 @@ for arg in "$@"; do
     --restore-db) RESTORE_DB=1 ;;
     --no-auto-rollback) DEPLOY_AUTO_ROLLBACK=0 ;;
     --migrate) DV_MIGRATE=1 ;;
+    --force-db-backup) DV_FORCE_DB_BACKUP=1 ;;
   esac
 done
 if [[ "${DEPLOY_TARGET}" != "all" && "${DEPLOY_TARGET}" != "back" && "${DEPLOY_TARGET}" != "front" ]]; then
@@ -120,6 +131,10 @@ success() { printf "${GREEN}==> %s${NC}\n" "$*"; }
 
 # Versioning, database backup and rollback (tag previous, state files, automatic/manual rollback).
 source "${SCRIPT_DIR}/lib/deploy-versions.sh"
+# Phase timing (`==> [TIME]` lines + summary at exit) and SSH connection reuse.
+source "${SCRIPT_DIR}/lib/deploy-timing.sh"
+source "${SCRIPT_DIR}/lib/ssh-mux.sh"
+dt_import
 
 # ======================
 # CONFIGURATION
@@ -717,6 +732,21 @@ require_cmd python3
 if [[ "${ROLLBACK_MODE}" != "1" ]]; then
   require_cmd rsync
   require_cmd git
+  require_cmd node
+fi
+
+# Every ssh / scp / docker call below rides on one SSH connection per host (lib/ssh-mux.sh).
+ssh_mux_enable
+trap 'ssh_mux_close; dt_summary' EXIT   # extended with the build-dir cleanup once those exist (BUILD CONTEXT PREP)
+
+# ======================
+# SHARED DOCKER FILES (homogeneity)
+# ======================
+# Every project builds from the template's Dockerfiles, .dockerignore and nginx.conf (config-links.json): a project
+# copy, or a link to anything else, is refused before anything is built (template CLAUDE.md, « Template files »).
+if [[ "${ROLLBACK_MODE}" != "1" ]]; then
+  node "${SCRIPT_DIR}/link-config.mjs" --check --only=back/Dockerfile,back/.dockerignore,front/Dockerfile,front/nginx.conf "${PROJECT_ROOT}" \
+    || { err "Shared Docker files differ from the template — fix them before deploying (see above)."; exit 1; }
 fi
 
 # ======================
@@ -728,7 +758,28 @@ fi
 # a fresh checkout those submodules are empty → dangling symlinks → the build fails.
 # Idempotent. No-op for projects without .gitmodules.
 # Works for monorepos (one .gitmodules at root) and split back/front repos.
+#
+# DEPLOY_LIBS_SYNCED=1 (exported by run.sh after a successful update_common.sh): the library mounts were just brought
+# to origin/main, so fetching them again is pure network time; only a submodule that is not checked out yet is
+# initialised (update_common.sh skips those).
 
+sync_submodules_of() {
+  local top="$1" path
+  if [[ "${DEPLOY_LIBS_SYNCED:-0}" != "1" ]]; then
+    info "Initialisation des submodules (.libs) — ${top}"
+    git -C "${top}" submodule update --init --remote \
+      || warn "git submodule update a échoué pour ${top} (build risque d'échouer sur modules_shared)."
+    return 0
+  fi
+  while read -r _ path; do
+    [[ -n "${path}" && ! -e "${top}/${path}/.git" ]] || continue
+    info "Initialisation du submodule ${path} — ${top}"
+    git -C "${top}" submodule update --init --remote -- "${path}" \
+      || warn "git submodule update a échoué pour ${top}/${path} (build risque d'échouer sur modules_shared)."
+  done < <(git -C "${top}" config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null || true)
+}
+
+__t0="$(dt_now)"
 __seen_submodule_tops=""
 for __side in back front; do
   [[ "${ROLLBACK_MODE}" != "1" ]] || continue   # rollback never touches the working tree
@@ -737,11 +788,10 @@ for __side in back front; do
   [[ -f "${__top}/.gitmodules" ]] || continue
   case " ${__seen_submodule_tops} " in *" ${__top} "*) continue ;; esac
   __seen_submodule_tops="${__seen_submodule_tops} ${__top}"
-  info "Initialisation des submodules (.libs) — ${__top}"
-  git -C "${__top}" submodule update --init --remote \
-    || warn "git submodule update a échoué pour ${__top} (build risque d'échouer sur modules_shared)."
+  sync_submodules_of "${__top}"
 done
-unset __seen_submodule_tops __side __top
+[[ -z "${__seen_submodule_tops}" ]] || dt_record "submodules ($([[ "${DEPLOY_LIBS_SYNCED:-0}" == "1" ]] && echo "init only, synced by update_common" || echo "fetch --remote"))" "${__t0}"
+unset __seen_submodule_tops __side __top __t0
 
 COMPOSE_FILE_ABS="./${COMPOSE_FILE_PATH}"
 if [[ ! -f "${COMPOSE_FILE_ABS}" ]]; then
@@ -801,7 +851,7 @@ cleanup_back_build() {
     rm -rf "${BACK_BUILD_DIR}"
   fi
 }
-trap 'cleanup_context; cleanup_front_build; cleanup_back_build' EXIT
+trap 'cleanup_context; cleanup_front_build; cleanup_back_build; ssh_mux_close; dt_summary' EXIT
 
 # .cache / logs are runtime artefacts: already excluded by back/.dockerignore, so they never
 # reach an image — but staging them still cost two full local copies per deploy (measured
@@ -938,6 +988,18 @@ prepare_back_build() {
   stage_back_db_cert_if_present "${BACK_BUILD_DIR}"
 }
 
+# Copies the template's prebuilt Dockerfile and whitelist .dockerignore (<stack>/Dockerfile.prebuilt and
+# <stack>/.dockerignore.prebuilt, shared by every project) over the staged build dir of a stack built locally.
+use_prebuilt_docker_files() {
+  local stack="$1" dir="$2" src="${TEMPLATE_ROOT}/$1"
+  if [[ ! -f "${src}/Dockerfile.prebuilt" || ! -f "${src}/.dockerignore.prebuilt" ]]; then
+    warn "[LOCAL] ${src}/Dockerfile.prebuilt or .dockerignore.prebuilt missing — ${stack} will be built on remote"
+    return 1
+  fi
+  cp "${src}/Dockerfile.prebuilt" "${dir}/Dockerfile"
+  cp "${src}/.dockerignore.prebuilt" "${dir}/.dockerignore"
+}
+
 # Builds the front locally (Mac npm cache + local CPU) and rewrites the Dockerfile
 # in FRONT_BUILD_DIR to a minimal prebuilt variant (nginx COPY only).
 # Falls back silently to remote build on any failure.
@@ -958,12 +1020,17 @@ build_front_locally() {
   # no-op when node_modules already matches package-lock.json, so this costs nothing in the
   # common case and only actually installs when something really changed.
   info "[LOCAL] Installing front dependencies..."
+  local t0
+  t0="$(dt_now)"
   (cd front && npm install) || { warn "[LOCAL] Front install failed — building on remote"; return 1; }
+  dt_record "front: npm install (local)" "${t0}"
 
+  t0="$(dt_now)"
   if ! (cd front && npm run build); then
     warn "[LOCAL] Front build failed — building on remote"
     return 1
   fi
+  dt_record "front: build (local, tsc -b + vite)" "${t0}"
 
   # Copy resulting dist into the staged build dir
   rsync -a --delete "./front/dist/" "${FRONT_BUILD_DIR}/dist/"
@@ -981,19 +1048,16 @@ build_front_locally() {
   mv "${FRONT_BUILD_DIR}/nginx.conf.processed" "${FRONT_BUILD_DIR}/nginx.conf"
   info "[LOCAL] nginx.conf: \${NODE_PORT} → ${NODE_PORT}"
 
-  # Replace Dockerfile with a minimal prebuilt version (no npm, no vite on remote).
+  # Replace Dockerfile with the template's prebuilt variant (no npm, no vite on remote) and its whitelist
+  # .dockerignore (only nginx.conf + dist are streamed to the remote daemon).
   # nginx.conf is already processed above — no ARG/envsubst needed at build or runtime.
-  cat > "${FRONT_BUILD_DIR}/Dockerfile" << 'DOCKEREOF'
-FROM nginx:1.30-alpine
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY dist /usr/share/nginx/html
-DOCKEREOF
+  use_prebuilt_docker_files front "${FRONT_BUILD_DIR}" || return 1
 
   success "[LOCAL] Front built locally — remote will only run nginx COPY"
   return 0
 }
 
-# Builds the back locally (Mac npm cache + local CPU) and rewrites Dockerfile.selfhosted
+# Builds the back locally (Mac npm cache + local CPU) and rewrites the Dockerfile
 # in BACK_BUILD_DIR to a minimal prebuilt variant (prod-deps + runtime COPY only).
 # Falls back silently to remote build on any failure.
 build_back_locally() {
@@ -1014,12 +1078,17 @@ build_back_locally() {
   # already matches package-lock.json, so this costs nothing in the common case and only
   # actually installs when something really changed.
   info "[LOCAL] Installing back dependencies..."
+  local t0
+  t0="$(dt_now)"
   (cd back && npm install) || { warn "[LOCAL] Back install failed — building on remote"; return 1; }
+  dt_record "back: npm install (local)" "${t0}"
 
+  t0="$(dt_now)"
   if ! (cd back && npm run build); then
     warn "[LOCAL] Back build failed — building on remote"
     return 1
   fi
+  dt_record "back: build (local, nest build)" "${t0}"
 
   if [[ ! -d "./back/dist" ]]; then
     warn "[LOCAL] Back dist not found after build — building on remote"
@@ -1050,74 +1119,12 @@ build_back_locally() {
   done
   [[ ${_has_crt} -eq 0 ]] && touch "${BACK_BUILD_DIR}/.no-cert.crt"
 
-  # Write the prebuilt variant (builder stage eliminated) over BOTH Dockerfile names:
-  # docker-compose.yml (self-hosted DB) builds `Dockerfile.selfhosted`, while
-  # docker-compose-cloud.yml (cloud DB) builds `Dockerfile`. Writing only the former made
-  # every cloud-DB project (e.g. a Supabase-hosted DB) silently fall back to the full remote
-  # build — npm ci + npm ci --omit=dev + nest build on the server, on every deploy.
-  local _prebuilt_dockerfile
-  _prebuilt_dockerfile=$(cat << 'DOCKEREOF'
-# Prebuilt back Dockerfile — dist compiled locally; remote only installs prod deps.
-# glibc-based (not alpine/musl): some npm deps ship prebuilt Linux .so binaries linked
-# against glibc (e.g. zklighter-sdk's signer) that musl can't load even with the gcompat
-# shim. Must match back/Dockerfile's runtime base.
-#
-# Caching rules — keep in sync with back/Dockerfile:
-#   1. no `--mount=type=bind,source=.` around npm ci (it folds the whole context into the
-#      cache key, so every dist change re-runs a 739 MB install)
-#   2. node_modules copied BEFORE dist (stable layers first, volatile last)
-#   3. node major = back/Dockerfile's (24: ships npm 11, see the note there)
-FROM node:24-bookworm-slim AS prod-deps
-WORKDIR /app
-# *.tgz: local tarball deps (`file:` in package.json). BuildKit tolerates a wildcard
-# matching nothing, so this is a no-op for projects without tarball deps.
-COPY package*.json *.tgz ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --omit=dev
-
-FROM node:24-bookworm-slim
-WORKDIR /app
-ENV NODE_ENV=production
-
-# wget: used by the compose healthcheck (CMD-SHELL wget ...). Alpine's busybox has it
-# built in; Debian slim images don't ship it by default.
-# ca-certificates: TLS verification for outbound HTTPS calls made by native Go binaries
-# (e.g. zklighter-sdk's signer) — Debian slim doesn't ship the CA bundle either.
-# git: keep in sync with back/Dockerfile (apps that host or run git themselves, e.g. AgentHub).
-RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates git && \
-    rm -rf /var/lib/apt/lists/*
-
-COPY --chown=node:node --from=prod-deps /app/node_modules ./node_modules
-COPY --chown=node:node package.json ./
-COPY --chown=node:node *.crt ./
-RUN rm -f .no-cert.crt
-
-ARG APP_RUNTIME_DIR=.cache
-RUN mkdir -p "/app/${APP_RUNTIME_DIR}" && chown -R node:node "/app/${APP_RUNTIME_DIR}"
-
-# Persistent data dir for DB_ENGINE=sqlite (the compose files mount the sqlite_data volume here), owned by node.
-RUN mkdir -p /data && chown node:node /data
-
-COPY --chown=node:node _prebuilt_locales/app ./src/locales
-COPY --chown=node:node _prebuilt_locales/modules/src/ ./src/
-COPY --chown=node:node dist ./dist
-
-USER node
-CMD ["node", "dist/main.js"]
-DOCKEREOF
-)
-  printf '%s\n' "${_prebuilt_dockerfile}" > "${BACK_BUILD_DIR}/Dockerfile.selfhosted"
-  printf '%s\n' "${_prebuilt_dockerfile}" > "${BACK_BUILD_DIR}/Dockerfile"
-
-  # The canonical .dockerignore excludes `dist` — correct for the remote-build path, where
-  # dist is produced inside the builder stage and a stale local copy must not leak into the
-  # context. But the prebuilt path above ships a locally-compiled dist via `COPY dist ./dist`,
-  # so it must be re-included here; otherwise Docker strips dist from the context and the COPY
-  # fails with `"/dist": not found`. Patch only the staged copy (deleted after deploy), never
-  # the repo's symlinked .dockerignore, and only on this prebuilt path.
-  if [[ -f "${BACK_BUILD_DIR}/.dockerignore" ]] && ! grep -qx '!dist' "${BACK_BUILD_DIR}/.dockerignore"; then
-    printf '\n!dist\n' >> "${BACK_BUILD_DIR}/.dockerignore"
-  fi
+  # The template's prebuilt variant (builder stage eliminated) replaces the staged Dockerfile — the one both compose
+  # files build — and its whitelist .dockerignore replaces the canonical one: the canonical file excludes `dist`
+  # (right for the remote build, where dist comes from the builder stage) while the prebuilt image copies the locally
+  # compiled dist, and only package*.json, *.tgz, *.crt, dist and the `_*` staged entries reach the remote daemon
+  # (never src/ nor the resolved .libs). Only the staged copies change, never the project's symlinked files.
+  use_prebuilt_docker_files back "${BACK_BUILD_DIR}" || return 1
 
   # Project-owned post-build hook (opt-in, same pattern as RUNNER_PROVISION_HOOK below): receives
   # BACK_BUILD_DIR and may stage extras into the image context (e.g. a runner install
@@ -1136,22 +1143,27 @@ if [[ "${ROLLBACK_MODE}" != "1" ]]; then
 FRONT_PREBUILT=0
 BACK_PREBUILT=0
 echo "==> [LOCAL] Preparing build context"
+__t0="$(dt_now)"
 if [[ "${DEPLOY_TARGET}" != "back" ]]; then
   # Cloud front builds directly from ./front/ — no need to create a copy
   if [[ "${IS_CLOUD_FRONT}" -eq 0 ]]; then
     prepare_front_build
+    dt_record "front: stage build dir (rsync -aL)" "${__t0}"
     if build_front_locally; then
       FRONT_PREBUILT=1
     fi
   fi
 fi
 if [[ "${DEPLOY_TARGET}" != "front" ]]; then
+  __t0="$(dt_now)"
   prepare_back_build
+  dt_record "back: stage build dir (rsync -aL)" "${__t0}"
   if build_back_locally; then
     BACK_PREBUILT=1
   fi
 fi
 
+__t0="$(dt_now)"
 for dir in "${CONTEXT_DIRS[@]}"; do
   if [[ "${dir}" == "front" && "${DEPLOY_TARGET}" == "back" ]]; then
     continue
@@ -1223,6 +1235,7 @@ if [[ "${DEPLOY_TARGET}" != "front" && -f "scripts/vmagent.yml" ]]; then
   sync_file_into_context "scripts/vmagent.yml" "${BUILD_CONTEXT_DIR}/vmagent.yml"
 fi
 
+dt_record "stage compose context" "${__t0}"
 echo "==> [LOCAL] Build context staged at ${BUILD_CONTEXT_DIR}"
 if [[ "${KEEP_BUILD_CONTEXT}" == "1" ]]; then
   echo "==> KEEP_BUILD_CONTEXT=1: artifacts remain at ${BUILD_CONTEXT_DIR} for inspection"
@@ -1329,8 +1342,11 @@ start_back_worker() {
     up -d --no-build --no-deps back-worker
 }
 
-# Fills BACK_SERVICES_STOP (stopped before a switch) and BACK_SERVICES_UP (started by `up -d`) for a back host.
-# Redis is part of both when it is colocated on this host, so the stop/`up` of the other services never orphans it.
+# Fills BACK_SERVICES_STOP (stopped at the switch) and BACK_SERVICES_UP (started by `up -d`) for a back host.
+# Only the application containers are stopped: db and a colocated Redis keep running through the switch (`up -d`
+# recreates them only when their configuration changed), so a deploy never restarts Postgres (cold cache, extra wait)
+# nor drops the Redis connections for nothing. vmagent (metrics, not on the request path) is restarted at the switch
+# so it always runs the uploaded vmagent.yml.
 compute_back_services() {
   local target_host="$1"
   # back-worker is always stopped/removed by a switch (also when BACK_WORKER=off, to drop an existing container), but
@@ -1338,14 +1354,12 @@ compute_back_services() {
   BACK_SERVICES_STOP=("back" "back-worker")
   BACK_SERVICES_UP=("back" "back-lb")
   if [[ "${IS_SELF_HOSTED_DB}" -eq 1 ]]; then
-    BACK_SERVICES_STOP+=("db")
     BACK_SERVICES_UP+=("db")
   fi
   if [[ -n "${REDIS_HOST_VALUE:-}" ]]; then
     local redis_service_host
     read -r _ redis_service_host <<<"$(parse_host_entry "${REDIS_HOST_VALUE}" "${BACK_REMOTE_USER}")"
     if [[ "${target_host}" == "${redis_service_host}" ]]; then
-      BACK_SERVICES_STOP+=("redis")
       BACK_SERVICES_UP+=("redis")
     fi
   fi
@@ -1353,6 +1367,30 @@ compute_back_services() {
     BACK_SERVICES_STOP+=("vmagent")
     BACK_SERVICES_UP+=("vmagent")
   fi
+}
+
+# Removes the containers that hold one of the given fixed names (`container_name:` of the compose files) or carry an
+# older compose project name of this app's back (`<project>-back-*`, e.g. after a host rename) — but only when they do
+# NOT belong to <project_name>: those would block the fixed names, ports or volumes of the new containers. The current
+# project's own containers are left to `up -d`, which recreates only what changed, so a running db, Redis or front is
+# never killed early. One `docker ps` call (each docker call is an SSH round trip).
+remove_foreign_containers() {
+  local context_name="$1" docker_ssh_command="$2" project_name="$3" tag="$4"
+  shift 4
+  local id name proj wanted remove back_prefix
+  back_prefix="$(printf '%s-back-' "${COMPOSE_PROJECT_NAME}" | tr '[:upper:]' '[:lower:]')"
+  while read -r id name proj; do
+    [[ -n "${id}" && "${proj}" != "${project_name}" ]] || continue
+    remove=0
+    if [[ -n "${proj}" && "${proj}" == "${back_prefix}"* ]]; then remove=1; fi
+    for wanted in "$@"; do
+      if [[ "${name}" == "${wanted}" ]]; then remove=1; fi
+    done
+    [[ "${remove}" -eq 1 ]] || continue
+    echo "==> [${tag}] Removing leftover container ${name} (compose project '${proj:-none}')"
+    DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" rm -f "${id}" >/dev/null 2>&1 || true
+  done < <(DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" \
+    ps -a --format '{{.ID}} {{.Names}} {{.Label "com.docker.compose.project"}}' 2>/dev/null || true)
 }
 
 # In-place `sed` that works with BSD (macOS) and GNU sed (the empty-suffix form of -i is BSD-only, the bare form GNU-only). The backup suffix
@@ -1428,6 +1466,8 @@ deploy_back_host() {
     scp_opts+=("-i" "${key_path}")
   fi
 
+  local t0 t_switch db_backup
+  t0="$(dt_now)"
   echo "==> [BACK:${target_host}] Testing SSH connectivity"
   ssh "${ssh_opts[@]}" -o BatchMode=yes -o ConnectTimeout=10 "${ssh_target}" "echo SSH_OK" >/dev/null
 
@@ -1455,31 +1495,54 @@ deploy_back_host() {
 
   # Keep the running version as `previous` BEFORE the build overwrites `latest` (rollback target).
   dv_tag_previous "$(dv_back_image)"
+  dt_record "back ${target_host}: prepare (ssh, env upload, docker context, tag previous)" "${t0}"
 
   # back-worker shares the back image (no build section of its own): nothing to build for it when it is off.
   local -a BACK_BUILD_SERVICES=("back")
   if [[ "${BACK_WORKER_ENABLED}" -eq 1 ]]; then BACK_BUILD_SERVICES+=("back-worker"); fi
 
   echo "==> [BACK:${target_host}] Building service"
+  t0="$(dt_now)"
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
     --project-directory "${BUILD_CONTEXT_DIR}" \
     --project-name "${project_name}" \
     build ${NO_CACHE_FLAG} "${BACK_BUILD_SERVICES[@]}"
+  dt_record "back ${target_host}: image build on the server (context upload + prod deps + layers)" "${t0}"
+
+  # Self-hosted Postgres dump (cloud DB: warning) while the CURRENT version still serves: outside the maintenance
+  # window. A failure stops the deploy before anything was switched (the running version is untouched).
+  t0="$(dt_now)"
+  if ! dv_backup_db_before_switch "${DEPLOY_REVISION}"; then
+    err "[BACK:${target_host}] Database backup failed — deploy stopped before the switch, the current version keeps running"
+    dv_restore_latest_tag "$(dv_back_image)"
+    exit 1
+  fi
+  db_backup="${DV_DB_BACKUP}"
+  if [[ "${IS_SELF_HOSTED_DB}" -eq 1 ]]; then dt_record "back ${target_host}: Postgres backup (old version serving)" "${t0}"; fi
+
+  # Per-host env patches (internal service names, SERVER_IP) on the staged back/.env — local file edits, done before
+  # the maintenance window; the public env is restored after the switch so subsequent hosts start from it.
+  cp "${BUILD_CONTEXT_DIR}/back/.env" "${BUILD_CONTEXT_DIR}/back/.env.bak"
+  patch_back_env_for_host "${BUILD_CONTEXT_DIR}/back/.env" "${target_host}"
+  compute_back_services "${target_host}"
+  if [[ -n "${PROMETHEUS_REMOTE_WRITE_URLS:-}" ]]; then
+    echo "==> [BACK:${target_host}] vmagent will push to: ${PROMETHEUS_REMOTE_WRITE_URLS}"
+  fi
 
   # From here on the host is "switched": any failure rolls every switched host back (see lib/deploy-versions.sh).
   DV_SCOPE="all"
   dv_register_switched
+  DV_SW_BACKUP[DV_IDX]="${db_backup}"
   dv_arm
 
+  # ---- Switch: everything above ran while the current version kept serving. ----
+  t_switch="$(dt_now)"
   enable_back_maintenance "${context_name}" "${docker_ssh_command}" "${target_host}"
 
-  # Scoped stop (never `down`/`--remove-orphans`, which would also tear down back-lb — the
-  # whole point of enable_back_maintenance above is that back-lb stays up throughout). Mirrors
-  # the same self-hosted-DB / colocated-Redis / metrics conditions as the `back_services` list
-  # built below, just without the side-effecting env patches (not needed to decide what to stop).
-  compute_back_services "${target_host}"
-
-  echo "==> [BACK:${target_host}] Stopping existing services (back-lb kept alive for maintenance mode)"
+  # Scoped stop of the application containers only (never `down`/`--remove-orphans`, which would also tear down
+  # back-lb — the whole point of enable_back_maintenance above is that back-lb stays up throughout; db and Redis keep
+  # running, see compute_back_services).
+  echo "==> [BACK:${target_host}] Stopping existing services (back, back-worker; back-lb, db and Redis keep running)"
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
     --project-directory "${BUILD_CONTEXT_DIR}" \
     --project-name "${project_name}" \
@@ -1489,55 +1552,28 @@ deploy_back_host() {
     echo "==> [BACK:${target_host}] back-worker disabled (BACK_WORKER=off): removed if present"
   fi
 
-  # Remove containers with fixed container_name that may belong to a previous project name.
-  # back_lb is deliberately NOT in this list — see enable_back_maintenance above. Neither is
-  # front on a back-only run (`--target=back`): it belongs to a target this run does not deploy,
-  # and removing a LIVE front to hunt a hypothetical stale one takes the site down until the
-  # next front deploy (observed 2026-10-06). A truly stale front is cleaned by the next
-  # front/all run and breaks nothing for back-only deploys (different ports).
-  local -a leftover_names=("${COMPOSE_PROJECT_NAME}_postgres" "${COMPOSE_PROJECT_NAME}_redis" "${COMPOSE_PROJECT_NAME}_back")
+  # Containers of ANOTHER compose project holding a fixed name the new ones need (project/host renamed). The front
+  # is not hunted on a back-only run (`--target=back`): it belongs to a target this run does not deploy, and removing
+  # a LIVE front takes the site down until the next front deploy (observed 2026-10-06).
+  local -a fixed_names=("${COMPOSE_PROJECT_NAME}_postgres" "${COMPOSE_PROJECT_NAME}_redis" "${COMPOSE_PROJECT_NAME}_back")
   if [[ "${DEPLOY_TARGET}" != "back" ]]; then
-    leftover_names+=("${COMPOSE_PROJECT_NAME}_front")
+    fixed_names+=("${COMPOSE_PROJECT_NAME}_front")
   fi
-  for cname in "${leftover_names[@]}"; do
-    if DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" inspect "${cname}" >/dev/null 2>&1; then
-      echo "==> [BACK:${target_host}] Removing leftover container: ${cname}"
-      DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" rm -f "${cname}" 2>/dev/null || true
-    fi
-  done
+  remove_foreign_containers "${context_name}" "${docker_ssh_command}" "${project_name}" "BACK:${target_host}" "${fixed_names[@]}"
 
-  # Remove stale containers from old project names (same app, hostname was renamed or changed).
-  # docker compose down only cleans the current project; if the project name changed the old
-  # containers keep running and hold ports / volume references.
-  while IFS= read -r cid; do
-    [[ -z "${cid}" ]] && continue
-    local stale_proj
-    stale_proj=$(DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" \
-      inspect "${cid}" --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)
-    if [[ "${stale_proj}" == ${COMPOSE_PROJECT_NAME}-back-* && "${stale_proj}" != "${project_name}" ]]; then
-      echo "==> [BACK:${target_host}] Removing stale container from old project '${stale_proj}': ${cid}"
-      DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" rm -f "${cid}" 2>/dev/null || true
-    fi
-  done < <(DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" ps -aq 2>/dev/null || true)
-
-  # Database backup: the old back is stopped and nothing writes yet (maintenance + no new back), so the copy is consistent.
+  # SQLite copy: the old back is stopped and nothing writes yet (maintenance + no new back), so the copy is consistent.
   # A failed backup aborts (and rolls back): going on without the safety net the deploy promised is not acceptable.
-  if ! dv_backup_db "${DEPLOY_REVISION}"; then
+  if ! dv_backup_db_at_switch "${DEPLOY_REVISION}"; then
     err "[BACK:${target_host}] Database backup failed — aborting"
     dv_abort_with_rollback
   fi
-  DV_SW_BACKUP[DV_IDX]="${DV_DB_BACKUP}"
-
-  if [[ -n "${PROMETHEUS_REMOTE_WRITE_URLS:-}" ]]; then
-    echo "==> [BACK:${target_host}] vmagent will push to: ${PROMETHEUS_REMOTE_WRITE_URLS}"
+  if [[ "${IS_SQLITE_DB}" -eq 1 ]]; then
+    db_backup="${DV_DB_BACKUP}"
+    DV_SW_BACKUP[DV_IDX]="${db_backup}"
   fi
 
-  # Per-host env patches (internal service names, SERVER_IP) on the staged back/.env; the public env is restored after `up`
-  # so subsequent hosts start from it.
-  cp "${BUILD_CONTEXT_DIR}/back/.env" "${BUILD_CONTEXT_DIR}/back/.env.bak"
-  patch_back_env_for_host "${BUILD_CONTEXT_DIR}/back/.env" "${target_host}"
-
   echo "==> [BACK:${target_host}] Deploying service"
+  t0="$(dt_now)"
   VMAGENT_CONFIG_PATH="${remote_dir}/vmagent.yml" \
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
     --project-directory "${BUILD_CONTEXT_DIR}" \
@@ -1548,8 +1584,13 @@ deploy_back_host() {
   # The patched back/.env stays in place until then, so back-worker gets the same per-host env as back.
   local serving=0
   if wait_for_back_healthy "${context_name}" "${docker_ssh_command}" "${project_name}" "${target_host}"; then
+    dt_record "back ${target_host}: new back started and healthy (up + boot)" "${t0}"
+    t0="$(dt_now)"
     if start_back_worker "${context_name}" "${docker_ssh_command}" "${project_name}" "${target_host}" "${remote_dir}/vmagent.yml"; then
       serving=1
+      if [[ "${BACK_WORKER_ENABLED}" -eq 1 ]]; then
+        dt_record "back ${target_host}: back-worker started (not awaited: boots after maintenance is lifted)" "${t0}"
+      fi
     else
       err "[BACK:${target_host}] back-worker did not start."
     fi
@@ -1563,11 +1604,9 @@ deploy_back_host() {
   mv "${BUILD_CONTEXT_DIR}/back/.env.bak" "${BUILD_CONTEXT_DIR}/back/.env"
 
   if [[ "${serving}" -eq 1 ]]; then
-    disable_back_maintenance "${context_name}" "${docker_ssh_command}" "${target_host}"
-    DV_SW_SERVED[DV_IDX]=1
-    # nginx resolves upstream hostnames once at (re)load: after a back recreate the
-    # back-lb keeps proxying the OLD container IP → 502 until reloaded (observed
-    # 2026-10-06: lb 7 days old, back 8 minutes, every request 502). Warn-only: a
+    # nginx resolves upstream hostnames once at (re)load: after a back recreate the back-lb keeps proxying the OLD
+    # container IP → 502 until reloaded (observed 2026-10-06: lb 7 days old, back 8 minutes, every request 502).
+    # Reloaded BEFORE maintenance is lifted so the first requests already reach the new container. Warn-only: a
     # missing/absent back-lb must never red an otherwise good deploy.
     DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
       --project-directory "${BUILD_CONTEXT_DIR}" \
@@ -1575,14 +1614,18 @@ deploy_back_host() {
       exec -T back-lb nginx -s reload 2>/dev/null \
       && echo "==> [BACK:${target_host}] back-lb reloaded (fresh back upstream)" \
       || warn "[BACK:${target_host}] back-lb reload skipped/failed — reload it manually if the public URL 502s"
+    disable_back_maintenance "${context_name}" "${docker_ssh_command}" "${target_host}"
+    dt_record "back ${target_host}: maintenance window (requests answered 503)" "${t_switch}"
+    DV_SW_SERVED[DV_IDX]=1
     # Remote state: current.json -> previous.json, then the new current.json (revision, environment, date, dbBackup).
-    if dv_write_state "${DEPLOY_REVISION}" "${DV_DB_BACKUP}"; then
+    if dv_write_state "${DEPLOY_REVISION}" "${db_backup}"; then
       DV_SW_STATE[DV_IDX]=1
     fi
     dv_disarm
   else
     dv_abort_with_rollback
   fi
+  dv_queue_backup_download "${DV_IDX}" "${db_backup}"
 
   echo "==> [BACK:${target_host}] Status"
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
@@ -1647,12 +1690,10 @@ deploy_redis_host() {
 
   ensure_docker_context "${context_name}" "${ssh_target}" "${ssh_port}"
 
-  # Remove any leftover container with a fixed container_name from a previous project name
-  cname="${COMPOSE_PROJECT_NAME}_redis"
-  if DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" inspect "${cname}" >/dev/null 2>&1; then
-    echo "==> [REDIS:${target_host}] Removing leftover container: ${cname}"
-    DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" rm -f "${cname}" 2>/dev/null || true
-  fi
+  # A container holding the fixed name but belonging to a previous project name is removed; the running Redis of this
+  # project is left to `up -d`, which recreates it only when its configuration changed (no restart, no dropped
+  # connections on an ordinary deploy).
+  remove_foreign_containers "${context_name}" "${docker_ssh_command}" "${project_name}" "REDIS:${target_host}" "${COMPOSE_PROJECT_NAME}_redis"
 
   echo "==> [REDIS:${target_host}] Deploying Redis service"
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
@@ -1703,6 +1744,8 @@ deploy_front_host() {
     scp_opts+=("-i" "${key_path}")
   fi
 
+  local t0
+  t0="$(dt_now)"
   echo "==> [FRONT:${target_host}] Testing SSH connectivity"
   ssh "${ssh_opts[@]}" -o BatchMode=yes -o ConnectTimeout=10 "${ssh_target}" "echo SSH_OK" >/dev/null
 
@@ -1728,12 +1771,15 @@ deploy_front_host() {
 
   # Keep the running front as `previous` BEFORE the build overwrites `latest` (rollback target).
   dv_tag_previous "$(dv_front_image)"
+  dt_record "front ${target_host}: prepare (ssh, env upload, docker context, tag previous)" "${t0}"
 
   echo "==> [FRONT:${target_host}] Building service"
+  t0="$(dt_now)"
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
     --project-directory "${BUILD_CONTEXT_DIR}" \
     --project-name "${project_name}" \
     build ${NO_CACHE_FLAG} front
+  dt_record "front ${target_host}: image build on the server" "${t0}"
 
   # Set to --no-deps in the colocated branch below (see the note there): the front must
   # never reconcile the back service it shares its host with.
@@ -1743,10 +1789,8 @@ deploy_front_host() {
   dv_register_switched
   dv_arm
   if is_back_host_name "${target_host}"; then
-    # Front is colocated with back — only stop the front service to avoid killing back + back-lb.
-    #
-    # --no-deps (used on the `up` below) is REQUIRED for exactly the same reason: `front`
-    # declares `depends_on: {back: {condition: service_healthy}}`, so `up -d front` also
+    # --no-deps is REQUIRED on a host shared with the back: `front` declares
+    # `depends_on: {back: {condition: service_healthy}}`, so `up -d front` also
     # reconciles `back` — and deploy_back_host has by then RESTORED the public back/.env
     # (its DB_PORT patch removed), so compose recomputes a different config hash and
     # RECREATES back. The new container then gets DB_PORT=<public mapped port> instead of
@@ -1757,27 +1801,18 @@ deploy_front_host() {
     # Reproduced and validated locally 2026-09-27: without --no-deps back is recreated,
     # with it back stays intact and front starts.
     front_dep_flags="--no-deps"
-    echo "==> [FRONT:${target_host}] Stopping front service (colocated with back)"
-    DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
-      --project-directory "${BUILD_CONTEXT_DIR}" \
-      --project-name "${project_name}" \
-      rm -sf front 2>/dev/null || true
   else
-    echo "==> [FRONT:${target_host}] Stopping existing services"
-    DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
-      --project-directory "${BUILD_CONTEXT_DIR}" \
-      --project-name "${project_name}" \
-      down --remove-orphans 2>/dev/null || true
+    # Dedicated front host: the project holds only the front, stale services of older compose files go with it.
+    front_dep_flags="--remove-orphans"
   fi
 
-  # Also remove any leftover containers with fixed container_name (from previous deployments with different project names)
-  cname="${COMPOSE_PROJECT_NAME}_front"
-  if DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" inspect "${cname}" >/dev/null 2>&1; then
-    echo "==> [FRONT:${target_host}] Removing leftover container: ${cname}"
-    DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" rm -f "${cname}" 2>/dev/null || true
-  fi
+  # A container of ANOTHER compose project holding the fixed name (project/host renamed) is removed; the running front
+  # of this project is NOT stopped beforehand: `up -d` replaces it by the new image in one step (stop + start), so
+  # the old front serves until the very last moment.
+  remove_foreign_containers "${context_name}" "${docker_ssh_command}" "${project_name}" "FRONT:${target_host}" "${COMPOSE_PROJECT_NAME}_front"
 
   echo "==> [FRONT:${target_host}] Deploying service"
+  t0="$(dt_now)"
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
     --project-directory "${BUILD_CONTEXT_DIR}" \
     --project-name "${project_name}" \
@@ -1788,6 +1823,7 @@ deploy_front_host() {
     dv_abort_with_rollback
   fi
   dv_disarm
+  dt_record "front ${target_host}: switch (recreate + running check)" "${t0}"
 
   echo "==> [FRONT:${target_host}] Status"
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
@@ -1918,8 +1954,19 @@ fi
 
 if [[ "${DEPLOY_TARGET}" != "front" && -n "${REDIS_HOST_VALUE}" ]]; then
   echo "==> Deploying Redis on ${REDIS_HOST_VALUE}"
+  __t0="$(dt_now)"
   deploy_redis_host
+  dt_record "redis ${REDIS_HOST_VALUE}: up (recreated only when changed)" "${__t0}"
 fi
+
+# Local copies of the database backups (lib/deploy-versions.sh): after every switch, outside any maintenance window.
+download_db_backups() {
+  [[ ${#DV_DL_IDX[@]} -gt 0 ]] || return 0
+  local t0
+  t0="$(dt_now)"
+  dv_download_backups
+  dt_record "database backup: local copy" "${t0}"
+}
 
 if [[ "${DEPLOY_TARGET}" != "front" ]]; then
   echo "==> Deploying back services on ${#BACK_HOSTS[@]} host(s)"
@@ -1929,6 +1976,7 @@ if [[ "${DEPLOY_TARGET}" != "front" ]]; then
 fi
 
 if [[ "${DEPLOY_TARGET}" == "back" ]]; then
+  download_db_backups
   echo "==> Deployment completed (back only)"
   exit 0
 fi
@@ -1942,7 +1990,9 @@ if [[ "${IS_CLOUD_FRONT}" -eq 1 ]]; then
 
   if [[ ! -d "./front/node_modules" ]]; then
     echo "==> [CLOUD] Installing front dependencies"
+    __t0="$(dt_now)"
     (cd front && npm install) || { echo "Error: front npm install failed"; exit 1; }
+    dt_record "front: npm install (local)" "${__t0}"
   else
     echo "==> [CLOUD] Reusing existing node_modules"
   fi
@@ -1959,6 +2009,7 @@ if [[ "${IS_CLOUD_FRONT}" -eq 1 ]]; then
   esac
 
   echo "==> [CLOUD] Building front${FRONT_VITE_MODE:+ (vite mode: ${FRONT_VITE_MODE})}"
+  __t0="$(dt_now)"
   (cd front && NODE_OPTIONS="--max-old-space-size=4096" ./node_modules/.bin/vite build ${FRONT_VITE_MODE:+--mode "${FRONT_VITE_MODE}"}) || {
     echo "Error: front build failed"
     exit 1
@@ -1968,6 +2019,7 @@ if [[ "${IS_CLOUD_FRONT}" -eq 1 ]]; then
     echo "Error: front build did not produce dist/ directory."
     exit 1
   fi
+  dt_record "front: build (local, vite)" "${__t0}"
 
   # Load front env to pick up CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_PAGES_BRANCH
   if [[ -f "${FRONT_ENV_FILE}" ]]; then
@@ -1986,7 +2038,9 @@ if [[ "${IS_CLOUD_FRONT}" -eq 1 ]]; then
   CLOUDFLARE_PAGES_BRANCH_VALUE="${CLOUDFLARE_PAGES_BRANCH:-main}"
 
   echo "==> [CLOUD] Deploying to Cloudflare Pages (project: ${CLOUDFLARE_PAGES_PROJECT}, branch: ${CLOUDFLARE_PAGES_BRANCH_VALUE})"
+  __t0="$(dt_now)"
   npx --yes wrangler pages deploy "${FRONT_DIST_DIR}" --project-name="${CLOUDFLARE_PAGES_PROJECT}" --branch="${CLOUDFLARE_PAGES_BRANCH_VALUE}"
+  dt_record "front: Cloudflare Pages upload" "${__t0}"
 
   echo "==> [CLOUD] Front deployed to Cloudflare Pages"
 else
@@ -1997,8 +2051,11 @@ else
 fi
 
 if [[ "${DEPLOY_TARGET}" != "front" ]]; then
+  __t0="$(dt_now)"
   configure_firewall_rules
   apply_firewall_rules
+  dt_record "firewall rules" "${__t0}"
 fi
 
+download_db_backups
 echo "==> Deployment completed"

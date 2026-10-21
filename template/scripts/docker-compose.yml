@@ -42,7 +42,9 @@ services:
     image: ${PROJECT_NAME}_back:latest
     build:
       context: ../back
-      dockerfile: Dockerfile.selfhosted
+      # Same Dockerfile as docker-compose-cloud.yml (the template's, linked by config-links.json; deploy-full.sh swaps
+      # in back/Dockerfile.prebuilt after a local build). No per-project Dockerfile variant.
+      dockerfile: Dockerfile
       # Pre-creates /app/shared (chowned to node:node) in the image at the exact
       # path the shared_directory volume below mounts onto — Docker only inherits
       # that ownership into a volume the FIRST time it's created empty, so this

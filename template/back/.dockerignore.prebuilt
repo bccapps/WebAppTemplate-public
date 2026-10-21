@@ -1,0 +1,21 @@
+# =============================================================================
+# VXFramework
+#
+# Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License. See LICENSE in the project root.
+# =============================================================================
+#
+# Whitelist context of Dockerfile.prebuilt (copied over the staged back/.dockerignore by scripts/deploy-full.sh when
+# the back was compiled locally). Only what the image copies is streamed to the remote daemon: never src/, .libs/ or
+# the resolved shared modules (tens of MB per deploy over the SSH tunnel). A BACK_BUILD_HOOK stages its extras under
+# a top-level `_` name so they pass.
+*
+!Dockerfile
+!package.json
+!package-lock.json
+!*.tgz
+!*.crt
+!dist
+!_*

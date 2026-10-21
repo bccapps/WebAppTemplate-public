@@ -1,0 +1,16 @@
+# =============================================================================
+# VXFramework
+#
+# Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
+# SPDX-License-Identifier: MIT
+#
+# Licensed under the MIT License. See LICENSE in the project root.
+# =============================================================================
+#
+# Prebuilt front Dockerfile — used by scripts/deploy-full.sh when the front was built locally (the usual path): it is
+# copied over the staged front/Dockerfile with .dockerignore.prebuilt. nginx.conf already has ${NODE_PORT} substituted
+# (no build ARG, no runtime envsubst). front/Dockerfile stays the full build (fallback, local Docker runs).
+# Never copied into a project: every project deploys with this file.
+FROM nginx:1.30-alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY dist /usr/share/nginx/html

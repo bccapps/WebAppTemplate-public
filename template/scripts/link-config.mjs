@@ -31,10 +31,18 @@
  * version of a shared file, it simply keeps a real file at that path — the
  * linker detects it, logs "override conservé", and skips it. Only symlinks the
  * linker itself created are (re)managed. Sources absent (submodule not yet
- * initialized) are skipped with a warning.
+ * initialized) are skipped with a warning. A project copy is nevertheless not
+ * allowed (template CLAUDE.md, « Template files »): `--check` reports it.
+ *
+ * CHECK MODE (read-only, exit 1 on a deviation):
+ *     node scripts/link-config.mjs --check [--only=<target>,<target>] [<root>]
+ * A target that is a real file (project copy) or a symlink resolving outside
+ * the template source is a deviation; a missing target or an uninitialized
+ * submodule is only reported. scripts/deploy-full.sh runs it on the Docker
+ * files before every deploy, so every project builds from the same Dockerfiles.
  */
 
-import { mkdir, lstat, readlink, rm, symlink } from 'fs/promises';
+import { mkdir, lstat, readlink, realpath, rm, symlink } from 'fs/promises';
 import { existsSync, readFileSync } from 'fs';
 import path from 'path';
 import process from 'process';
@@ -45,9 +53,12 @@ const __dirname = path.dirname(__filename);
 const TEMPLATE_ROOT = path.resolve(__dirname, '..');
 const MANIFEST_FILE = path.join(TEMPLATE_ROOT, 'config-links.json');
 
-const PROJECT_ROOT = process.argv[2]
-  ? path.resolve(process.argv[2])
-  : process.cwd();
+const ARGS = process.argv.slice(2);
+const CHECK_MODE = ARGS.includes('--check');
+const ONLY_ARG = ARGS.find((arg) => arg.startsWith('--only='));
+const ONLY_TARGETS = ONLY_ARG ? ONLY_ARG.slice('--only='.length).split(',').filter(Boolean) : null;
+const ROOT_ARG = ARGS.find((arg) => !arg.startsWith('--'));
+const PROJECT_ROOT = ROOT_ARG ? path.resolve(ROOT_ARG) : process.cwd();
 
 // In-repo submodule that holds the canonical files, one checkout per stack so
 // each is inside its own Docker build context.
@@ -68,15 +79,46 @@ function loadManifest() {
   return Object.fromEntries(entries);
 }
 
+/**
+ * Absolute target path and canonical source of one manifest entry. Stack = first
+ * path segment of the target (back|front); the canonical file lives in that
+ * stack's in-repo submodule checkout → Docker-context-safe.
+ */
+function resolvePair(srcRel, tgtRel) {
+  const stack = tgtRel.split(path.sep)[0];
+  return {
+    stack,
+    absTgt: path.join(PROJECT_ROOT, tgtRel),
+    absSrc: path.join(PROJECT_ROOT, stack, SUBMODULE_REL, srcRel),
+  };
+}
+
+/**
+ * Read-only status of one entry: 'ok' (symlink resolving to the template source),
+ * 'override' (real file), 'foreign' (symlink resolving elsewhere), 'missing'
+ * (no target) or 'no-source' (submodule not initialized).
+ */
+async function checkOne(srcRel, tgtRel) {
+  const { absTgt, absSrc } = resolvePair(srcRel, tgtRel);
+  if (!existsSync(absSrc)) return 'no-source';
+  let stats;
+  try {
+    stats = await lstat(absTgt);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return 'missing';
+    throw error;
+  }
+  if (!stats.isSymbolicLink()) return 'override';
+  try {
+    return (await realpath(absTgt)) === (await realpath(absSrc)) ? 'ok' : 'foreign';
+  } catch {
+    return 'foreign'; // dangling symlink
+  }
+}
+
 /** Create/refresh one config symlink idempotently. Never clobbers a real file. */
 async function linkOne(srcRel, tgtRel) {
-  const absTgt = path.join(PROJECT_ROOT, tgtRel);
-
-  // Stack = first path segment of the target (back|front); the canonical file
-  // lives in that stack's in-repo submodule checkout → Docker-context-safe.
-  const stack = tgtRel.split(path.sep)[0];
-  const submoduleRoot = path.join(PROJECT_ROOT, stack, SUBMODULE_REL);
-  const absSrc = path.join(submoduleRoot, srcRel);
+  const { stack, absTgt, absSrc } = resolvePair(srcRel, tgtRel);
 
   if (!existsSync(absSrc)) {
     console.warn(
@@ -107,9 +149,38 @@ async function linkOne(srcRel, tgtRel) {
   return 'linked';
 }
 
+/** --check: lists every deviation; exit code 1 when a target is a project copy or a foreign symlink. */
+async function check(pairs) {
+  const selected = ONLY_TARGETS ? pairs.filter(([, tgtRel]) => ONLY_TARGETS.includes(tgtRel)) : pairs;
+  let deviations = 0;
+  for (const [srcRel, tgtRel] of selected) {
+    const status = await checkOne(srcRel, tgtRel);
+    if (status === 'override' || status === 'foreign') {
+      deviations += 1;
+      const what = status === 'override' ? 'copie projet (fichier réel)' : 'lien qui ne pointe pas vers le template';
+      console.error(`[link-config] ✖ ${tgtRel}: ${what} — attendu: lien vers ${tgtRel.split(path.sep)[0]}/${SUBMODULE_REL}/${srcRel}`);
+    } else if (status !== 'ok') {
+      console.warn(`[link-config] ⚠ ${tgtRel}: ${status === 'missing' ? 'absent' : 'source absente (submodule non initialisé ?)'}`);
+    }
+  }
+  if (deviations) {
+    console.error(
+      `[link-config] ${deviations} écart(s) au template. Supprimer la copie puis relancer \`node scripts/link-config.mjs\` ` +
+        '(un besoin projet va dans le template, de façon générique).',
+    );
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`[link-config] ${selected.length} fichier(s) partagé(s) conformes au template → ${PROJECT_ROOT}`);
+}
+
 async function main() {
   const manifest = loadManifest();
   const pairs = Object.entries(manifest);
+  if (CHECK_MODE) {
+    await check(pairs);
+    return;
+  }
   if (!pairs.length) {
     console.log('[link-config] manifeste vide — rien à lier.');
     return;
