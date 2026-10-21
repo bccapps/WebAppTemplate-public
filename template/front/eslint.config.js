@@ -24,7 +24,8 @@ const linkedModuleGlobs = linkedModuleDirs('front', stackDir).map((dir) => `${pa
 export default tseslint.config(
   // ESLint 10 looks a config up from each file's directory: the template's own configs (reached through its real path,
   // not the `apptemplate` link) must never be picked up.
-  { ignores: ['dist', '.libs/**/*.{js,jsx,mjs,cjs}', '.libs/vx-public/template/**', '.libs/apptemplate/**'] },
+  // dev-dist: vite-plugin-pwa's dev service worker output (generated, git-ignored).
+  { ignores: ['dist', 'dev-dist', '.libs/**/*.{js,jsx,mjs,cjs}', '.libs/vx-public/template/**', '.libs/apptemplate/**'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['*.ts', 'src/**/*.{ts,tsx}', ...linkedModuleGlobs],
