@@ -102,7 +102,7 @@ case "$cmd" in
   'printf %s "$HOME"') printf %s /home/deploy ;;
   *"cat '"*current.json*) if [ -n "\${STUB_CURRENT_JSON:-}" ]; then cat "$STUB_CURRENT_JSON"; fi ;;
   *"cat > current.json"*) echo "STATE_JSON: $(cat)" >> "$STUB_LOG" ;;
-  *pg_dump*) if [ -n "\${STUB_PGDUMP_FAIL:-}" ]; then exit 1; fi ;;
+  *pg_dump*) if [ -n "\${STUB_PGDUMP_FAIL:-}" ]; then exit 1; fi; printf 'COMPRESSION=zstd:9\nSIZE=3145728\n' ;;
   *"-mmin"*) if [ -n "\${STUB_RECENT_DUMP:-}" ]; then echo "$STUB_RECENT_DUMP"; fi ;;
 esac
 exit 0
@@ -739,6 +739,58 @@ test('Postgres (sync): dump on the server BEFORE maintenance while the old back 
   } finally { p.cleanup(); }
 });
 
+test('Postgres dump: zstd:9 by default (gzip fallback decided on the server), DEPLOY_DB_BACKUP_COMPRESSION overrides it', () => {
+  const p = deployedProject({ engine: 'postgres', extraBackEnv: 'DB_SCHEMA_MODE=sync' });
+  try {
+    let r = p.run(['prod', '--no-update-common', '--target=back']);
+    assert.equal(r.status, 0, r.out);
+    let dump = p.logLines().find((l) => PG_DUMP.test(l));
+    assert.match(dump, /comp='zstd:9'/);
+    assert.match(dump, /pg_config --configure .*--with-zstd' \|\| comp=gzip:6/, 'fallback when the server lacks zstd');
+    assert.match(dump, /--compress="\$comp"/);
+    assert.match(strip(r.out), /Postgres dump written: zstd:9, 3 MiB/);
+
+    writeFileSync(p.log, '');
+    r = p.run(['prod', '--no-update-common', '--force-db-backup', '--target=back'], { DEPLOY_DB_BACKUP_COMPRESSION: 'gzip:9' });
+    assert.equal(r.status, 0, r.out);
+    dump = p.logLines().find((l) => PG_DUMP.test(l));
+    assert.match(dump, /comp='gzip:9'/);
+  } finally { p.cleanup(); }
+});
+
+test('local npm install: skipped when package.json, package-lock.json and Node are unchanged; DEPLOY_NPM_INSTALL=always forces it', () => {
+  const p = deployedProject();
+  for (const stack of ['back', 'front']) {
+    mkdirSync(path.join(p.root, stack, 'node_modules'), { recursive: true });
+    writeFileSync(path.join(p.root, stack, 'package-lock.json'), '{"lockfileVersion":3}\n');
+  }
+  const installs = () => p.logLines().filter((l) => /^npm install/.test(l)).length;
+  try {
+    let r = p.run(['prod', '--no-update-common']);
+    assert.equal(r.status, 0, r.out);
+    assert.equal(installs(), 2, 'first deploy installs both stacks');
+    assert.ok(p.logLines().includes('npm install --no-audit --no-fund'));
+
+    writeFileSync(p.log, '');
+    r = p.run(['prod', '--no-update-common']);
+    assert.equal(r.status, 0, r.out);
+    assert.equal(installs(), 0, 'nothing changed: no install');
+    assert.match(strip(r.out), /back: package\.json, package-lock\.json and Node unchanged since the last install — npm install skipped/);
+    assert.ok(p.logLines().some((l) => /^npm run build/.test(l)), 'the build still runs');
+
+    writeFileSync(p.log, '');
+    writeFileSync(path.join(p.root, 'back/package-lock.json'), '{"lockfileVersion":3,"changed":true}\n');
+    r = p.run(['prod', '--no-update-common']);
+    assert.equal(r.status, 0, r.out);
+    assert.equal(installs(), 1, 'only the stack whose lock changed');
+
+    writeFileSync(p.log, '');
+    r = p.run(['prod', '--no-update-common'], { DEPLOY_NPM_INSTALL: 'always' });
+    assert.equal(r.status, 0, r.out);
+    assert.equal(installs(), 2);
+  } finally { p.cleanup(); }
+});
+
 test('Postgres: a dump younger than DEPLOY_DB_BACKUP_MIN_AGE_HOURS is reused; --force-db-backup and --migrate dump anyway', () => {
   const recent = '/srv/testapp/back/backups/testapp_pre-old1234_20261021T080000Z.dump';
   const p = deployedProject({ engine: 'postgres', extraBackEnv: 'DB_SCHEMA_MODE=sync' });
@@ -879,8 +931,12 @@ test('timing: [TIME] lines and a summary including run.sh phases (also on failur
     assert.equal(r.status, 0, r.out);
     let out = strip(r.out);
     assert.match(out, /^==> \[TIME\] back 10\.0\.0\.1: image build on the server .*: \d+s$/m);
-    assert.match(out, /^==> \[TIME\] back 10\.0\.0\.1: new back started and healthy \(up \+ boot\): \d+s$/m);
-    assert.match(out, /^==> \[TIME\] back 10\.0\.0\.1: maintenance window \(requests answered 503\): \d+s$/m);
+    assert.match(out, /^==> \[TIME\] back 10\.0\.0\.1: {3}new back started and healthy \(up \+ boot\): \d+s$/m);
+    assert.match(out, /^==> \[TIME\] back 10\.0\.0\.1: {3}stop old back back-worker \(graceful shutdown\): \d+s$/m);
+    assert.match(out, /^==> \[TIME\] back 10\.0\.0\.1: {3}leftover containers scan: \d+s$/m);
+    assert.match(out, /^==> \[TIME\] back 10\.0\.0\.1: {3}SQLite backup: \d+s$/m);
+    assert.match(out, /^==> \[TIME\] back 10\.0\.0\.1: {3}back-lb reload \+ maintenance off: \d+s$/m);
+    assert.match(out, /^==> \[TIME\] back 10\.0\.0\.1: maintenance window total \(requests answered 503\): \d+s$/m);
     assert.match(out, /^==> \[TIME\] back: build \(local, nest build\): \d+s$/m);
     assert.match(out, /^==> \[TIME\] Summary$/m);
     assert.match(out, /^ {4}update_common\.sh \(library sync\) +\d+s$/m, 'run.sh phase imported');

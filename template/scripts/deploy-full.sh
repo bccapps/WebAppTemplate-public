@@ -988,6 +988,32 @@ prepare_back_build() {
   stage_back_db_cert_if_present "${BACK_BUILD_DIR}"
 }
 
+# Local `npm install` of a stack, skipped when nothing it depends on changed since the last install made here: a no-op
+# install still costs 5-15 s per stack and per deploy. package.json is regenerated first (build-package.mjs, normally
+# run by `prebuild`, i.e. AFTER the install), so a dependency added to package.base.json or to a module fragment always
+# reaches node_modules before the build. The stamp (hash of package.json + package-lock.json + Node version) lives in
+# node_modules: deleting node_modules forces an install. DEPLOY_NPM_INSTALL=always installs every time.
+npm_install_if_changed() {
+  local stack="$1" stamp="$1/node_modules/.vx-deploy-install" sum
+  if [[ -f "${stack}/.libs/apptemplate/scripts/build-package.mjs" ]]; then
+    (cd "${stack}" && node .libs/apptemplate/scripts/build-package.mjs "${stack}" >/dev/null) \
+      || { warn "[LOCAL] ${stack}: package.json regeneration failed"; return 1; }
+  fi
+  sum="$(stack_install_hash "${stack}")"
+  if [[ "${DEPLOY_NPM_INSTALL:-auto}" != "always" && -f "${stamp}" && "$(cat "${stamp}")" == "${sum}" ]]; then
+    info "[LOCAL] ${stack}: package.json, package-lock.json and Node unchanged since the last install — npm install skipped"
+    return 0
+  fi
+  (cd "${stack}" && npm install --no-audit --no-fund) || return 1
+  # Hashed again: npm install may have updated package-lock.json.
+  if [[ -d "${stack}/node_modules" ]]; then stack_install_hash "${stack}" > "${stamp}"; fi
+}
+
+stack_install_hash() {
+  { cat "$1/package.json" "$1/package-lock.json" 2>/dev/null; node --version; } \
+    | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+}
+
 # Copies the template's prebuilt Dockerfile and whitelist .dockerignore (<stack>/Dockerfile.prebuilt and
 # <stack>/.dockerignore.prebuilt, shared by every project) over the staged build dir of a stack built locally.
 use_prebuilt_docker_files() {
@@ -1014,16 +1040,13 @@ build_front_locally() {
 
   info "[LOCAL] Building front locally (warm npm cache + local CPU)..."
 
-  # Always run npm install, not just when node_modules is entirely absent — an existing
-  # node_modules can still be STALE relative to package.json (a dependency added to
-  # package.base.json since the last install is silently missing). npm install is fast/a
-  # no-op when node_modules already matches package-lock.json, so this costs nothing in the
-  # common case and only actually installs when something really changed.
+  # Never skipped just because node_modules exists: it can be STALE relative to package.json (see
+  # npm_install_if_changed, which regenerates package.json and compares hashes).
   info "[LOCAL] Installing front dependencies..."
   local t0
   t0="$(dt_now)"
-  (cd front && npm install) || { warn "[LOCAL] Front install failed — building on remote"; return 1; }
-  dt_record "front: npm install (local)" "${t0}"
+  npm_install_if_changed front || { warn "[LOCAL] Front install failed — building on remote"; return 1; }
+  dt_record "front: npm install (local, skipped when unchanged)" "${t0}"
 
   t0="$(dt_now)"
   if ! (cd front && npm run build); then
@@ -1068,20 +1091,15 @@ build_back_locally() {
 
   info "[LOCAL] Building back locally (local CPU + npm cache)..."
 
-  # Always run npm install, not just when node_modules is entirely absent — an existing
-  # node_modules can still be STALE relative to package.json (a dependency added to
-  # package.base.json since the last install is silently missing). Proven live 2026-08-22:
-  # otplib/qrcode were added to package.base.json the day before, node_modules already
-  # existed from an older install so this guard skipped npm install entirely, and `nest
-  # build` failed with "Cannot find module 'otplib'" — a false "build error" that was
-  # actually just a stale local install. npm install is fast/a no-op when node_modules
-  # already matches package-lock.json, so this costs nothing in the common case and only
-  # actually installs when something really changed.
+  # Never skipped just because node_modules exists: it can be STALE relative to package.json. Proven live
+  # 2026-08-22: otplib/qrcode were added to package.base.json the day before, node_modules already existed
+  # from an older install, a guard on its existence skipped npm install and `nest build` failed with "Cannot
+  # find module 'otplib'". npm_install_if_changed regenerates package.json first and compares hashes.
   info "[LOCAL] Installing back dependencies..."
   local t0
   t0="$(dt_now)"
-  (cd back && npm install) || { warn "[LOCAL] Back install failed — building on remote"; return 1; }
-  dt_record "back: npm install (local)" "${t0}"
+  npm_install_if_changed back || { warn "[LOCAL] Back install failed — building on remote"; return 1; }
+  dt_record "back: npm install (local, skipped when unchanged)" "${t0}"
 
   t0="$(dt_now)"
   if ! (cd back && npm run build); then
@@ -1538,16 +1556,20 @@ deploy_back_host() {
   # ---- Switch: everything above ran while the current version kept serving. ----
   t_switch="$(dt_now)"
   enable_back_maintenance "${context_name}" "${docker_ssh_command}" "${target_host}"
+  dt_record "back ${target_host}:   maintenance on" "${t_switch}"
 
   # Scoped stop of the application containers only (never `down`/`--remove-orphans`, which would also tear down
   # back-lb — the whole point of enable_back_maintenance above is that back-lb stays up throughout; db and Redis keep
   # running, see compute_back_services).
   echo "==> [BACK:${target_host}] Stopping existing services (back, back-worker; back-lb, db and Redis keep running)"
+  t0="$(dt_now)"
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
     --project-directory "${BUILD_CONTEXT_DIR}" \
     --project-name "${project_name}" \
     --profile metrics \
     rm -sf "${BACK_SERVICES_STOP[@]}" 2>/dev/null || true
+  # Includes each container's graceful shutdown (SIGTERM, then SIGKILL after the stop timeout, 10 s by default).
+  dt_record "back ${target_host}:   stop old $(printf '%s ' "${BACK_SERVICES_STOP[@]}")(graceful shutdown)" "${t0}"
   if [[ "${BACK_WORKER_ENABLED}" -ne 1 ]]; then
     echo "==> [BACK:${target_host}] back-worker disabled (BACK_WORKER=off): removed if present"
   fi
@@ -1559,10 +1581,13 @@ deploy_back_host() {
   if [[ "${DEPLOY_TARGET}" != "back" ]]; then
     fixed_names+=("${COMPOSE_PROJECT_NAME}_front")
   fi
+  t0="$(dt_now)"
   remove_foreign_containers "${context_name}" "${docker_ssh_command}" "${project_name}" "BACK:${target_host}" "${fixed_names[@]}"
+  dt_record "back ${target_host}:   leftover containers scan" "${t0}"
 
   # SQLite copy: the old back is stopped and nothing writes yet (maintenance + no new back), so the copy is consistent.
   # A failed backup aborts (and rolls back): going on without the safety net the deploy promised is not acceptable.
+  t0="$(dt_now)"
   if ! dv_backup_db_at_switch "${DEPLOY_REVISION}"; then
     err "[BACK:${target_host}] Database backup failed — aborting"
     dv_abort_with_rollback
@@ -1570,6 +1595,7 @@ deploy_back_host() {
   if [[ "${IS_SQLITE_DB}" -eq 1 ]]; then
     db_backup="${DV_DB_BACKUP}"
     DV_SW_BACKUP[DV_IDX]="${db_backup}"
+    dt_record "back ${target_host}:   SQLite backup" "${t0}"
   fi
 
   echo "==> [BACK:${target_host}] Deploying service"
@@ -1584,12 +1610,12 @@ deploy_back_host() {
   # The patched back/.env stays in place until then, so back-worker gets the same per-host env as back.
   local serving=0
   if wait_for_back_healthy "${context_name}" "${docker_ssh_command}" "${project_name}" "${target_host}"; then
-    dt_record "back ${target_host}: new back started and healthy (up + boot)" "${t0}"
+    dt_record "back ${target_host}:   new back started and healthy (up + boot)" "${t0}"
     t0="$(dt_now)"
     if start_back_worker "${context_name}" "${docker_ssh_command}" "${project_name}" "${target_host}" "${remote_dir}/vmagent.yml"; then
       serving=1
       if [[ "${BACK_WORKER_ENABLED}" -eq 1 ]]; then
-        dt_record "back ${target_host}: back-worker started (not awaited: boots after maintenance is lifted)" "${t0}"
+        dt_record "back ${target_host}:   back-worker started (not awaited: boots after maintenance is lifted)" "${t0}"
       fi
     else
       err "[BACK:${target_host}] back-worker did not start."
@@ -1604,6 +1630,7 @@ deploy_back_host() {
   mv "${BUILD_CONTEXT_DIR}/back/.env.bak" "${BUILD_CONTEXT_DIR}/back/.env"
 
   if [[ "${serving}" -eq 1 ]]; then
+    t0="$(dt_now)"
     # nginx resolves upstream hostnames once at (re)load: after a back recreate the back-lb keeps proxying the OLD
     # container IP → 502 until reloaded (observed 2026-10-06: lb 7 days old, back 8 minutes, every request 502).
     # Reloaded BEFORE maintenance is lifted so the first requests already reach the new container. Warn-only: a
@@ -1615,7 +1642,8 @@ deploy_back_host() {
       && echo "==> [BACK:${target_host}] back-lb reloaded (fresh back upstream)" \
       || warn "[BACK:${target_host}] back-lb reload skipped/failed — reload it manually if the public URL 502s"
     disable_back_maintenance "${context_name}" "${docker_ssh_command}" "${target_host}"
-    dt_record "back ${target_host}: maintenance window (requests answered 503)" "${t_switch}"
+    dt_record "back ${target_host}:   back-lb reload + maintenance off" "${t0}"
+    dt_record "back ${target_host}: maintenance window total (requests answered 503)" "${t_switch}"
     DV_SW_SERVED[DV_IDX]=1
     # Remote state: current.json -> previous.json, then the new current.json (revision, environment, date, dbBackup).
     if dv_write_state "${DEPLOY_REVISION}" "${db_backup}"; then
@@ -1988,14 +2016,12 @@ if [[ "${IS_CLOUD_FRONT}" -eq 1 ]]; then
   # Build directly from ./front/ to reuse existing node_modules (avoids full reinstall)
   FRONT_DIST_DIR="./front/dist"
 
-  if [[ ! -d "./front/node_modules" ]]; then
-    echo "==> [CLOUD] Installing front dependencies"
-    __t0="$(dt_now)"
-    (cd front && npm install) || { echo "Error: front npm install failed"; exit 1; }
-    dt_record "front: npm install (local)" "${__t0}"
-  else
-    echo "==> [CLOUD] Reusing existing node_modules"
-  fi
+  # Installs only when package.json / package-lock.json / Node changed (npm_install_if_changed): a mere existence
+  # check of node_modules would build with a stale install.
+  echo "==> [CLOUD] Installing front dependencies"
+  __t0="$(dt_now)"
+  npm_install_if_changed front || { echo "Error: front npm install failed"; exit 1; }
+  dt_record "front: npm install (local, skipped when unchanged)" "${__t0}"
 
   check_build_memory 1024
 

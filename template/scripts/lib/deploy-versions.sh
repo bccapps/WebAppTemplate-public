@@ -278,8 +278,29 @@ dv_recent_postgres_dump() {
   dv_ssh "find '${dir}' -maxdepth 1 -name '${PROJECT_NAME}_pre-*.dump' -mmin -$((min_age * 60)) -exec ls -1t {} + 2>/dev/null | head -n 1" 2>/dev/null || true
 }
 
+# Compression of the Postgres dump: DEPLOY_DB_BACKUP_COMPRESSION, a pg_dump --compress value (`zstd:<level>`,
+# `gzip:<level>`, `lz4`, `none`), default zstd:9 — at the level of the old gzip:1 in speed, markedly smaller, so the
+# local copy transfers less. An invalid value falls back to the default with a warning.
+dv_dump_compression() {
+  local value="${DEPLOY_DB_BACKUP_COMPRESSION:-zstd:9}"
+  if [[ ! "${value}" =~ ^(zstd|gzip|lz4|none)(:[0-9]+)?$ ]]; then
+    warn "DEPLOY_DB_BACKUP_COMPRESSION='${value}' is not valid (zstd:<level>, gzip:<level>, lz4, none) — using zstd:9" >&2
+    value="zstd:9"
+  fi
+  printf '%s' "${value}"
+}
+
+# Prints the compression actually used and the size of the dump from the remote shell's COMPRESSION=/SIZE= lines.
+dv_report_dump() {
+  local used size
+  used="$(sed -n 's/^COMPRESSION=//p' <<<"$1" | head -n 1)"
+  size="$(sed -n 's/^SIZE=[[:space:]]*//p' <<<"$1" | head -n 1)"
+  [[ -n "${used}" || -n "${size}" ]] || return 0
+  echo "==> [BACK:${DV_HOST}] Postgres dump written: ${used:-?}, $([[ "${size}" =~ ^[0-9]+$ ]] && echo "$((size / 1048576)) MiB" || echo "size ?")"
+}
+
 dv_backup_postgres() {
-  local revision="$1" schema_mode ctr dir name recent waited=0
+  local revision="$1" schema_mode ctr dir name recent compression out waited=0
   schema_mode="$(printf '%s' "${DB_SCHEMA_MODE:-}" | tr '[:upper:]' '[:lower:]')"
   if ! dv_backup_forced && [[ "${schema_mode}" != "sync" ]]; then
     echo "==> [BACK:${DV_HOST}] Postgres: no migration and no schema sync in this deploy — pre-deploy dump skipped (use ./scripts/backup-db.sh for a manual one)"
@@ -309,12 +330,16 @@ dv_backup_postgres() {
     done
   fi
   name="${PROJECT_NAME}_pre-$(dv_safe_name "${revision}")_$(date -u +%Y%m%dT%H%M%SZ).dump"
-  echo "==> [BACK:${DV_HOST}] Postgres: dumping on the server to ${dir}/${name} (the current version keeps serving)"
-  if ! dv_ssh "mkdir -p '${dir}' && docker exec '${ctr}' pg_dump --username='${DB_USER:-postgres}' --dbname='${DB_NAME:-postgres}' --format=custom --compress=1 --no-owner --no-privileges > '${dir}/${name}.part' && mv -f '${dir}/${name}.part' '${dir}/${name}'"; then
+  compression="$(dv_dump_compression)"
+  echo "==> [BACK:${DV_HOST}] Postgres: dumping on the server to ${dir}/${name} (${compression}; the current version keeps serving)"
+  # zstd needs a server built --with-zstd (postgres:17-alpine is): otherwise gzip:6, decided on the server in the same
+  # SSH call. The remote shell prints the method actually used and the size of the dump.
+  if ! out="$(dv_ssh "mkdir -p '${dir}' && comp='${compression}' && { case \"\$comp\" in zstd*) docker exec '${ctr}' sh -c 'pg_config --configure 2>/dev/null | grep -q -- --with-zstd' || comp=gzip:6 ;; esac; } && echo \"COMPRESSION=\$comp\" && docker exec '${ctr}' pg_dump --username='${DB_USER:-postgres}' --dbname='${DB_NAME:-postgres}' --format=custom --compress=\"\$comp\" --no-owner --no-privileges > '${dir}/${name}.part' && mv -f '${dir}/${name}.part' '${dir}/${name}' && echo \"SIZE=\$(wc -c < '${dir}/${name}')\"")"; then
     dv_ssh "rm -f '${dir}/${name}.part'" >/dev/null 2>&1 || true
     err "[BACK:${DV_HOST}] pg_dump failed"
     return 1
   fi
+  dv_report_dump "${out}"
   dv_ssh "ls -1t '${dir}'/${PROJECT_NAME}_pre-*.dump 2>/dev/null | tail -n +$(( $(dv_backup_keep) + 1 )) | while read -r f; do rm -f \"\$f\"; done" \
     || warn "[BACK:${DV_HOST}] Could not prune the old dumps in ${dir}"
   DV_DB_BACKUP="${dir}/${name}"
