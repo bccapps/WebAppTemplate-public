@@ -15,7 +15,7 @@
     "migrate:prod": "npm run build && DOTENV_CONFIG_PATH=.env NODE_OPTIONS='-r dotenv-expand/config -r dotenv/config' npx typeorm -d dist/config/Datasource.js migration:run",
     "update:libs": "git submodule update --remote --merge .libs/vx-public .libs/vx-private && node .libs/apptemplate/scripts/link-shared.mjs back",
     "lint": "eslint .",
-    "typecheck:specs": "tsc -p tsconfig.spec.json",
+    "typecheck:specs": "node .libs/apptemplate/scripts/typecheck-specs.mjs back",
     "lint-fix": "eslint . --fix",
     "i18n:check": "node .libs/apptemplate/scripts/check-i18n.mjs --check",
     "i18n:audit": "node .libs/apptemplate/scripts/check-i18n.mjs",
