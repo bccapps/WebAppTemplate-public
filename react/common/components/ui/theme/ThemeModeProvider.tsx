@@ -124,3 +124,8 @@ export function ThemeModeProvider({ children }: { children: React.ReactNode }) {
     </ThemeModeContext.Provider>
   );
 }
+
+// Compat: TradeKong and Papang still import the hook from here on their pushed branches (deploys take the latest
+// library main). Remove once they import it from ThemeModeContext.
+// eslint-disable-next-line react-refresh/only-export-components
+export { useThemeMode } from './ThemeModeContext';
