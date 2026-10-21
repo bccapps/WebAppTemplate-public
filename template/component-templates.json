@@ -11,6 +11,8 @@
     "front/src/components/Title.tsx": "front/src/components/Title.tsx",
     "front/src/components/Footer.tsx": "front/src/components/Footer.tsx",
     "front/src/components/Router.tsx": "front/src/components/Router.tsx",
+    "front/src/components/routes.tsx": "front/src/components/routes.tsx",
+    "front/src/components/RootGate.tsx": "front/src/components/RootGate.tsx",
     "front/src/components/Header.tsx": "front/src/components/Header.tsx",
     "front/src/components/PageLayout.tsx": "front/src/components/PageLayout.tsx",
     "front/src/components/AppSidebar.tsx": "front/src/components/AppSidebar.tsx",
@@ -30,6 +32,7 @@
     "front/src/config/configApis.ts": "front/src/config/configApis.ts",
     "front/src/config/navigation.ts": "front/src/config/navigation.ts",
     "front/src/config/pluginRoutes.ts": "front/src/config/pluginRoutes.ts",
+    "front/src/config/coreServices.ts": "front/src/config/coreServices.ts",
     "front/src/config/pluginOptions.ts": "front/src/config/pluginOptions.ts",
     "front/src/config/config.ts": "front/src/config/config.ts"
   },
