@@ -1,0 +1,8 @@
+{
+  // Type-checks the specs (`npm run typecheck:specs`): ts-jest only transpiles them, so a spec type error never
+  // fails a test run. Same options as tsconfig.json, specs and e2e included, nothing emitted.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["src/**/*", "test/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

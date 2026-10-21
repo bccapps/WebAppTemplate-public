@@ -12,6 +12,7 @@
     "update:libs": "git submodule update --remote --merge .libs/vx-public .libs/vx-private && node .libs/apptemplate/scripts/link-shared.mjs front",
     "predev": "node .libs/apptemplate/scripts/link-shared.mjs front",
     "lint": "eslint .",
+    "typecheck:specs": "tsc -p tsconfig.spec.json",
     "i18n:check": "node .libs/apptemplate/scripts/check-i18n.mjs --check",
     "i18n:audit": "node .libs/apptemplate/scripts/check-i18n.mjs",
     "preview": "vite preview",

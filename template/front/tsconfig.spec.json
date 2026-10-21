@@ -1,0 +1,8 @@
+{
+  // Type-checks the specs (`npm run typecheck:specs`): Vitest only transpiles them, and tsconfig.app.json leaves them
+  // out of `tsc -b`. Same options as the app, specs included, nothing emitted.
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": { "noEmit": true, "composite": false, "tsBuildInfoFile": null },
+  "include": ["src"],
+  "exclude": ["src/sw.ts"]
+}

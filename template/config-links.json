@@ -5,6 +5,7 @@
   "back/test-setup.ts": "back/src/test-setup.ts",
   "back/tsconfig.json": "back/tsconfig.json",
   "back/tsconfig.build.json": "back/tsconfig.build.json",
+  "back/tsconfig.spec.json": "back/tsconfig.spec.json",
   "back/jest.config.js": "back/jest.config.js",
   "back/.npmrc": "back/.npmrc",
   "back/eslint.config.mjs": "back/eslint.config.mjs",
@@ -19,5 +20,6 @@
   "front/eslint.config.js": "front/eslint.config.js",
   "front/tsconfig.json": "front/tsconfig.json",
   "front/tsconfig.node.json": "front/tsconfig.node.json",
-  "front/tsconfig.app.json": "front/tsconfig.app.json"
+  "front/tsconfig.app.json": "front/tsconfig.app.json",
+  "front/tsconfig.spec.json": "front/tsconfig.spec.json"
 }

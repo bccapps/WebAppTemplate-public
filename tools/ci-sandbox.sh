@@ -219,6 +219,11 @@ fi
     " )
 rm -f "${APP}/back/ds-check.ts"
 
+for stack in back front; do
+  info "${stack}: type-check the specs (ts-jest / Vitest only transpile them)"
+  ( cd "${APP}/${stack}" && npm run typecheck:specs )
+done
+
 if [[ "${SKIP_TESTS:-0}" != "1" ]]; then
   info "back: jest"
   ( cd "${APP}/back" && npx jest --maxWorkers=2 )

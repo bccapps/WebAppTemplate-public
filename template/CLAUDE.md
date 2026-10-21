@@ -116,7 +116,7 @@ Feature access control (`hasFeature`, `@RequireFeature`, tiers) only exists with
 ## 8. Run Script & Verification Loop
 
 - **Launch script (MANDATORY)**: `./run.sh` or `./scripts/run.sh` (no parallel `start.sh`) really starts the app, with OS autodetection (macOS, Linux, Windows; Android emulator for an Android app), updated with any change to how the app starts. Extra dev processes go in `scripts-local/dev-services.sh` (`DEV_SERVICES_HOOK`), never in a fork of `run.sh`. Dev-only values in `back/.env.dev`, never `back/.env` (shipped to production).
-- **Verification loop, measured**: while iterating, the cheap type-check/lint + the specs you touched; before committing, the full suite and `npm run i18n:check` once. Record the measured durations (command, date) in the project notes of the root `CLAUDE.md` (table skeleton: template `README.md`, « Verification loop »); re-measure when off by ~2×; a slow suite is a signal to investigate.
+- **Verification loop, measured**: while iterating, the cheap type-check/lint + the specs you touched; before committing, the full suite, `npm run typecheck:specs` (ts-jest and Vitest never type-check the specs) and `npm run i18n:check` once. Record the measured durations (command, date) in the project notes of the root `CLAUDE.md` (table skeleton: template `README.md`, « Verification loop »); re-measure when off by ~2×; a slow suite is a signal to investigate.
 - **Front Vitest**: `front/vitest.config.ts` = `createVitestConfig()` (template, `preserveSymlinks: true`); never a Vitest config of your own without it.
 
 ## 9. Repo Map
