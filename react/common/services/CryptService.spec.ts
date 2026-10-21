@@ -75,7 +75,7 @@ describe('CryptService (front) — transport decrypt + decompression (PERFORMANC
 
   beforeEach(async () => {
     rawKey = randomBytes(32);
-    cryptoKey = await crypto.subtle.importKey('raw', rawKey, 'AES-GCM', false, ['decrypt']);
+    cryptoKey = await crypto.subtle.importKey('raw', new Uint8Array(rawKey), 'AES-GCM', false, ['decrypt']);
   });
 
   it('decrypts and inflates a v2 payload deflated by Node zlib — the real inter-implementation round trip', async () => {
