@@ -7,6 +7,6 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { useVisualThemeContext } from '../VisualThemeContext'
+import { useVisualThemeContext } from '../useVisualThemeContext'
 
 export { useVisualThemeContext as useVisualTheme }

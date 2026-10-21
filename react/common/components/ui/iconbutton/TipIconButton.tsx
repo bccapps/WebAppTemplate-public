@@ -14,7 +14,7 @@ import type { IconButtonProps } from '@mui/material';
 import { i18n } from '../../../core/i18n/I18n';
 import { useI18nVersion } from '../../../hooks/useI18nVersion';
 import { HelpBody } from '../help/HelpBody';
-import { helpTooltipSlotProps } from '../help/InfoTip';
+import { helpTooltipSlotProps } from '../help/helpTooltip';
 import type { TipSide } from '../help/InfoTip';
 import { Kbd } from '../kbd/Kbd';
 import { tipIconButtonSx } from './tipIconButtonStyle';

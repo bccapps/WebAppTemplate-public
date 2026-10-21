@@ -30,7 +30,9 @@ function normalizeKeys(keys: ReadonlyArray<string> = []): string[] {
  */
 export function useSessionKeys(keys: ReadonlyArray<string> = []): void {
   const [, setVersion] = useState(0);
-  const normalizedKeys = useMemo(() => normalizeKeys(keys), [JSON.stringify(keys)]);
+  // Callers pass a fresh array literal on every render: subscribe again only when its content changes.
+  const keysKey = JSON.stringify(normalizeKeys(keys));
+  const normalizedKeys = useMemo(() => JSON.parse(keysKey) as string[], [keysKey]);
 
   useEffect(() => {
     if (normalizedKeys.length === 0) {

@@ -11,7 +11,7 @@ import '../../../styles/tokens.css';
 import { useCallback, useEffect, useState } from 'react';
 import { IconButton, Menu, MenuItem, Tooltip, ListItemIcon, ListItemText } from '@mui/material';
 import LanguageIcon from '@mui/icons-material/Language';
-import { useThemeMode } from '../theme/ThemeModeProvider';
+import { useThemeMode } from '../theme/ThemeModeContext';
 import CheckIcon from '@mui/icons-material/Check';
 import { i18n } from '../../../core/i18n/I18n';
 import { localeService } from '../../../services/LocaleService';

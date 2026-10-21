@@ -13,28 +13,11 @@ import HelpOutlinedIcon from '@mui/icons-material/HelpOutlined';
 import { i18n } from '../../../core/i18n/I18n';
 import { useI18nVersion } from '../../../hooks/useI18nVersion';
 import { HelpBody } from './HelpBody';
+import { helpTooltipSlotProps } from './helpTooltip';
 import { infoTipAriaLabel, resolveHelp } from './helpText';
 import type { Help } from './helpText';
 
 export type TipSide = 'top' | 'bottom' | 'left' | 'right';
-
-/** Props of the tooltip surface shared by the help components (readable, wraps long explanations). */
-export const helpTooltipSlotProps = {
-  tooltip: {
-    sx: {
-      bgcolor: 'background.paper',
-      color: 'text.primary',
-      border: 1,
-      borderColor: 'divider',
-      boxShadow: 6,
-      fontSize: 12,
-      lineHeight: 1.5,
-      maxWidth: 'min(19rem, calc(100vw - 24px))',
-      px: 1.5,
-      py: 1.25,
-    },
-  },
-} as const;
 
 /**
  * Discreet "?" button next to a label. The tooltip opens on hover, on keyboard focus and on tap/click, and closes on

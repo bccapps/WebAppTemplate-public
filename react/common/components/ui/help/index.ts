@@ -8,7 +8,8 @@
  */
 
 export { HelpBody } from './HelpBody';
-export { InfoTip, helpTooltipSlotProps } from './InfoTip';
+export { InfoTip } from './InfoTip';
+export { helpTooltipSlotProps } from './helpTooltip';
 export type { TipSide } from './InfoTip';
 export { LabelWithTip } from './LabelWithTip';
 export { infoTipAriaLabel, resolveHelp, resolveText } from './helpText';

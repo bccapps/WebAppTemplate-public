@@ -7,19 +7,11 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ThemeDefinition } from './types'
 import { visualThemeService } from './VisualThemeService'
 import { themeRegistry } from './themes'
-
-export type VisualThemeContextValue = {
-  activeTheme: ThemeDefinition
-  availableThemes: ThemeDefinition[]
-  setTheme: (id: string) => void
-  isEnabled: boolean
-}
-
-const VisualThemeContext = createContext<VisualThemeContextValue | undefined>(undefined)
+import { VisualThemeContext, type VisualThemeContextValue } from './useVisualThemeContext'
 
 export function VisualThemeProvider({ children }: { children: React.ReactNode }) {
   const [active, setActive] = useState<ThemeDefinition>(() => {
@@ -50,10 +42,4 @@ export function VisualThemeProvider({ children }: { children: React.ReactNode })
   )
 
   return <VisualThemeContext.Provider value={value}>{children}</VisualThemeContext.Provider>
-}
-
-export function useVisualThemeContext(): VisualThemeContextValue {
-  const ctx = useContext(VisualThemeContext)
-  if (!ctx) throw new Error('useVisualThemeContext must be used within VisualThemeProvider')
-  return ctx
 }

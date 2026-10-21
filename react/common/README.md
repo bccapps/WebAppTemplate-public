@@ -591,7 +591,8 @@ common/theme/                      # Infrastructure partagée
   tokens.css                      # Contrat de jetons = valeurs du thème `default` (:where(:root[data-theme='default']), jamais prioritaires)
   themeImages.ts                  # Registry d'images : clés → URL avec fallback
   VisualThemeService.ts           # Service singleton : applique data-theme, persiste en localStorage
-  VisualThemeContext.tsx          # React context + VisualThemeProvider
+  VisualThemeContext.tsx          # VisualThemeProvider
+  useVisualThemeContext.ts        # React context + useVisualThemeContext()
   ThemeShell.tsx                  # Dispatcher shell (standard → StandardShell, terminal → TerminalShell)
   hooks/
     useVisualTheme.ts             # { activeTheme, availableThemes, setTheme, isEnabled }
@@ -708,7 +709,7 @@ VisualThemeProvider doit être à l'intérieur de `PreloaderGate` (après le cha
 
 ### Palette MUI pilotée par CSS (`ThemeModeProvider`)
 
-`ThemeModeProvider` construit le thème MUI à partir de variables CSS lues (valeurs résolues) sur `document.documentElement`, recalculées à chaque changement de mode :
+`ThemeModeProvider` (mode clair/sombre lu par `useThemeMode()`, `components/ui/theme/ThemeModeContext.ts`) construit le thème MUI à partir de variables CSS lues (valeurs résolues) sur `document.documentElement`, recalculées à chaque changement de mode :
 
 | Palette MUI | Variable CSS | Si absente |
 |---|---|---|

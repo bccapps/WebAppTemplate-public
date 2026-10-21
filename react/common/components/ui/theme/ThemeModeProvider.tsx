@@ -7,22 +7,11 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createTheme } from '@mui/material/styles';
 import { CssBaseline, ThemeProvider } from '@mui/material';
 import { configurationService } from '../../../services/ConfigurationService';
-
-type ThemeMode = 'light' | 'dark';
-
-interface ThemeModeContextValue {
-  mode: ThemeMode;
-  toggleMode: () => void;
-  setMode: (mode: ThemeMode) => void;
-  themeCode: string;
-  setThemeCode: (code: string) => void;
-}
-
-const ThemeModeContext = createContext<ThemeModeContextValue | undefined>(undefined);
+import { ThemeModeContext, type ThemeMode } from './ThemeModeContext';
 
 const getCssVar = (name: string, fallback: string): string => {
   if (typeof document === 'undefined') return fallback;
@@ -135,13 +124,3 @@ export function ThemeModeProvider({ children }: { children: React.ReactNode }) {
     </ThemeModeContext.Provider>
   );
 }
-
-export function useThemeMode() {
-  const ctx = useContext(ThemeModeContext);
-  if (!ctx) {
-    throw new Error('useThemeMode must be used within ThemeModeProvider');
-  }
-  return ctx;
-}
-
-

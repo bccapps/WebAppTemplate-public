@@ -12,7 +12,7 @@ import { useState, useEffect } from 'react';
 import { Box, FormControl, IconButton, MenuItem, Select, Switch, Tooltip } from '@mui/material';
 import DarkModeIcon from '@mui/icons-material/DarkMode';
 import LightModeIcon from '@mui/icons-material/LightMode';
-import { useThemeMode } from './ThemeModeProvider';
+import { useThemeMode } from './ThemeModeContext';
 import { I18nLabel } from '../label/I18nLabel';
 import { i18n } from '../../../core/i18n/I18n';
 import { themeService, ThemeDto } from '../../../services/ThemeService';

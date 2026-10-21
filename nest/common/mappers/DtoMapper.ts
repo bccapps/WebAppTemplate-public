@@ -32,7 +32,7 @@ export class DtoMapper {
    * @param entities
    * @returns
    */
-  mapFromEntity(entity: any) {
+  mapFromEntity(_entity: any) {
     throw 'mapFromEntity function Must to be implemented';
   }
 }

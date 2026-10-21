@@ -7,7 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { HttpStatus, HttpException } from '@nestjs/common';
+import { HttpException } from '@nestjs/common';
 
 export class AppException extends HttpException {
   code: string;

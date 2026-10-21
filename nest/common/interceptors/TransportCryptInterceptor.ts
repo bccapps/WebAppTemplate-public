@@ -15,7 +15,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request, Response } from 'express';
-import { from, Observable, of } from 'rxjs';
+import { from, Observable } from 'rxjs';
 import { concatMap, switchMap } from 'rxjs/operators';
 import {
   DEFAULT_TRANSPORT_DEFLATE_THRESHOLD_BYTES,
