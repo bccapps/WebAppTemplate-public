@@ -208,7 +208,7 @@ if [[ -n "${PROMETHEUS_REMOTE_WRITE_URLS}" ]]; then
   export PROMETHEUS_REMOTE_WRITE_URLS PROMETHEUS_BASIC_AUTH_USER PROMETHEUS_BASIC_AUTH_PASSWORD
 fi
 # Layer cache is safe because Dockerfiles copy package.json before source.
-# Set FORCE_REBUILD=1 to bypass layer cache (e.g. after a base-image upgrade).
+# Set FORCE_REBUILD=1 to bypass layer cache. Base images are always refreshed (build --pull), so a Node security release is picked up.
 FORCE_REBUILD="${FORCE_REBUILD:-0}"
 NO_CACHE_FLAG=""
 [[ "${FORCE_REBUILD}" == "1" ]] && NO_CACHE_FLAG="--no-cache"
@@ -1524,7 +1524,7 @@ deploy_back_host() {
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
     --project-directory "${BUILD_CONTEXT_DIR}" \
     --project-name "${project_name}" \
-    build ${NO_CACHE_FLAG} "${BACK_BUILD_SERVICES[@]}"
+    build --pull ${NO_CACHE_FLAG} "${BACK_BUILD_SERVICES[@]}"
   dt_record "back ${target_host}: image build on the server (context upload + prod deps + layers)" "${t0}"
 
   # Self-hosted Postgres dump (cloud DB: warning) while the CURRENT version still serves: outside the maintenance
@@ -1806,7 +1806,7 @@ deploy_front_host() {
   DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
     --project-directory "${BUILD_CONTEXT_DIR}" \
     --project-name "${project_name}" \
-    build ${NO_CACHE_FLAG} front
+    build --pull ${NO_CACHE_FLAG} front
   dt_record "front ${target_host}: image build on the server" "${t0}"
 
   # Set to --no-deps in the colocated branch below (see the note there): the front must
