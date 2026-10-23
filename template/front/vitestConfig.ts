@@ -56,6 +56,8 @@ export function createVitestConfig(opts: VitestConfigOptions = {}): UserConfig {
       include: opts.include ?? ['src/**/*.spec.ts'],
       setupFiles: opts.setupFiles,
       globals: false,
+      // Memory: half the cores at most (the default takes them all, next to the other sessions and apps of the machine).
+      maxWorkers: '50%',
     },
   }) as UserConfig
 }

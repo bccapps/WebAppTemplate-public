@@ -351,6 +351,13 @@ when they drift by more than ~2×:
 | `cd front && npx vitest run <file>` | one front spec | _to measure_ |
 | `npm run i18n:check` | missing locale keys | _to measure_ |
 
+Memory (2026-10-23: a full back run with Jest's default 13 workers on a 14-core, 36 GB Mac grew to ~25 GB, next to a browser and IDEs,
+and the machine froze until a watchdog panic): `back/jest.config.js` and `createVitestConfig()` cap the workers at half the cores
+(`maxWorkers: '50%'`) and Jest restarts a worker whose heap passed 1 GB between two files (`workerIdleMemoryLimit`; with
+`--experimental-vm-modules` Node keeps every test file's context alive in its worker). A project overrides them only downwards
+(`--maxWorkers=2` for an agent's targeted run). Before a full suite or a build, look at the memory and at the heavy processes already
+running (`memory_pressure -Q`, `sysctl vm.swapusage`, `ps -axo pid,rss,etime,command -m | head`), and run one heavy job at a time.
+
 A slow suite is a signal: look for real timers or vendored directories scanned by the analyzer before accepting it. The embedded
 Node of the desktop app is pinned in `scripts/desktop/lib.mjs` (latest 24.x published at least two weeks ago).
 

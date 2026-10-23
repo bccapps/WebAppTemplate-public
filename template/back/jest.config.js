@@ -43,6 +43,10 @@ module.exports = async () => {
     roots: ['<rootDir>', ...libDirs],
     moduleNameMapper: { '^src/(.*)$': '<rootDir>/$1' },
     setupFiles: ['<rootDir>/test-setup.ts'],
+    // Memory: with `--experimental-vm-modules` Node keeps every test file's context alive in its worker; Jest's default (cores - 1
+    // workers, never restarted) took a 36 GB machine down on 2026-10-23. Half the cores, and a worker past 1 GB is restarted between files.
+    maxWorkers: '50%',
+    workerIdleMemoryLimit: '1GB',
     // vx-private specs import vx-public modules by relative path: see scripts/jest-resolver.cjs
     resolver: path.join(__dirname, '..', 'scripts', 'jest-resolver.cjs'),
   };
