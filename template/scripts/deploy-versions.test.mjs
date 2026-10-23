@@ -18,7 +18,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
-  chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync,
+  chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -569,7 +569,7 @@ test('deploy BACK_WORKER on (default): up without back-worker, health wait, then
     assert.match(out, /^==> \[BACK:10\.0\.0\.1\] Starting back-worker \(after back is healthy\)$/m);
     assert.doesNotMatch(out, /back-worker disabled/);
     const lines = p.logLines();
-    const build = indexOfLine(lines, /^docker .*compose .* build back back-worker$/);
+    const build = indexOfLine(lines, /^docker .*compose .* build --pull back back-worker$/);
     const up = indexOfLine(lines, /^docker .*compose .* up -d back back-lb$/);
     const health = indexOfLine(lines, HEALTH_WAIT, up);
     const worker = indexOfLine(lines, WORKER_START);
@@ -594,7 +594,7 @@ test('deploy BACK_WORKER=off: only back built, back-worker removed not started, 
       assert.match(strip(r.stdout), /^==> \[BACK:10\.0\.0\.1\] back-worker disabled \(BACK_WORKER=off\): removed if present$/m);
       assert.doesNotMatch(strip(r.stdout), /Starting back-worker/);
       const lines = p.logLines();
-      assert.ok(indexOfLine(lines, /^docker .*compose .* build back$/) >= 0, 'only back built');
+      assert.ok(indexOfLine(lines, /^docker .*compose .* build --pull back$/) >= 0, 'only back built');
       assert.equal(indexOfLine(lines, /compose .* build .*back-worker/), -1);
       assert.ok(indexOfLine(lines, /compose .* rm -sf back back-worker$/) >= 0, 'existing worker removed by the switch');
       assert.equal(indexOfLine(lines, /compose .* up .*back-worker/), -1, 'back-worker never started');
@@ -862,7 +862,10 @@ test('backups: 2 kept by default on the volume (SQLite) and locally; a recent lo
     const files = readdirSync(local).sort();
     assert.equal(files.length, 3, files.join(','));
     assert.ok(files.includes('testapp-pre-b-20261002T000000Z.db.tar') && files.includes('other-pre-c.db.tar'), 'oldest of this project pruned, other projects untouched');
-    assert.ok(files.some((f) => /^testapp-pre-abc1234-\d{8}T\d{6}Z\.db\.tar$/.test(f)));
+    const copy = files.find((f) => /^testapp-pre-abc1234-\d{8}T\d{6}Z\.db\.tar$/.test(f));
+    assert.ok(copy);
+    // a fast second run may land in the same second (same backup name): rename the fresh copy so the age rule is hit
+    renameSync(path.join(local, copy), path.join(local, 'testapp-pre-abc1234-20000101T000000Z.db.tar'));
 
     writeFileSync(p.log, '');
     r = p.run(['prod', '--no-update-common', '--target=back']);
