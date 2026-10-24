@@ -108,9 +108,16 @@ fi
 #                                 rotate the runner token even when the runner exists
 #                                 (default policy lives in the hook: create if missing,
 #                                 rotate only if offline).
+#   RUNNER_PROVISION_ORDER=after  when the hook runs on a back host: `after` (default) once the
+#                                 new back is healthy; `before` = before this host's new back is
+#                                 deployed, through the back still serving there — for a runner
+#                                 that works with the previous hub, so the new hub never sees an
+#                                 old runner. No back serving yet (first deploy) or any hook failure
+#                                 ⇒ the hook runs again `after`, as by default.
 RUNNER_PROVISION="${RUNNER_PROVISION:-0}"
 RUNNER_PROVISION_HOOK="${RUNNER_PROVISION_HOOK:-./runner/scripts/provision-hub-runner.sh}"
 RUNNER_ROTATE="${RUNNER_ROTATE:-${RUNNER_ROTATE_CLI:-0}}"
+RUNNER_PROVISION_ORDER="${RUNNER_PROVISION_ORDER:-after}"
 
 # ── Back post-build hook (opt-in, per-project) ───────────────────────────────
 # Same pattern as RUNNER_PROVISION_HOOK above: after a local back build, the
@@ -1465,6 +1472,20 @@ patch_back_env_for_host() {
   echo "==> [BACK:${target_host}] SERVER_IP set to ${target_host}"
 }
 
+# Runs the project's runner provisioning hook for one back host (RUNNER_PROVISION above), `$5` = the
+# phase (`before` / `after`, exported as RUNNER_PROVISION_PHASE). Warn-only: returns the hook's status,
+# never fails the deploy. A missing hook is said once and counts as done.
+run_runner_provision_hook() {
+  local ssh_target="$1" ssh_port="$2" key_path="$3" target_host="$4" phase="$5"
+  if [[ ! -x "${RUNNER_PROVISION_HOOK}" ]]; then
+    info "[BACK:${target_host}] RUNNER_PROVISION=1 but hook '${RUNNER_PROVISION_HOOK}' not found/executable — skipping runner auto-provisioning"
+    return 0
+  fi
+  RUNNER_SSH_TARGET="${ssh_target}" RUNNER_SSH_PORT="${ssh_port}" RUNNER_SSH_KEY="${key_path}" \
+  RUNNER_TARGET_HOST="${target_host}" RUNNER_ROTATE="${RUNNER_ROTATE:-0}" RUNNER_PROVISION_PHASE="${phase}" \
+    "${RUNNER_PROVISION_HOOK}"
+}
+
 deploy_back_host() {
   local entry="$1"
   read -r target_user target_host <<<"$(parse_host_entry "${entry}" "${BACK_REMOTE_USER}")"
@@ -1496,6 +1517,19 @@ deploy_back_host() {
 
   echo "==> [BACK:${target_host}] Preparing remote directory (${remote_dir})"
   ssh "${ssh_opts[@]}" "${ssh_target}" "mkdir -p '${remote_dir}'"
+
+  # Runner auto-provisioning BEFORE this host's new back (RUNNER_PROVISION_ORDER=before): the back still
+  # serving there answers the hook; on a failure (no back yet, unreachable API…) it runs again once the
+  # new back is healthy, below.
+  local runner_provisioned=0
+  if [[ "${RUNNER_PROVISION:-0}" == "1" && "${RUNNER_PROVISION_ORDER:-after}" == "before" ]]; then
+    echo "==> [BACK:${target_host}] Runner auto-provisioning before the new back (RUNNER_PROVISION_ORDER=before)"
+    if run_runner_provision_hook "${ssh_target}" "${ssh_port}" "${key_path}" "${target_host}" before; then
+      runner_provisioned=1
+    else
+      warn "[BACK:${target_host}] Runner auto-provisioning before the back failed — retried once the new back is healthy"
+    fi
+  fi
 
   dv_use_host BACK "${target_host}" "${ssh_target}" "${ssh_port}" "${key_path}" "${context_name}" "${project_name}" "${remote_dir}"
   dv_save_env_previous
@@ -1679,15 +1713,10 @@ deploy_back_host() {
   # and serving at this point, so the hook can mint/pair the colocated runner's token.
   # Warn-only by design — a pairing failure must never red an otherwise good deploy; the
   # hook prints the manual fallback (« Nouveau runner » page + project's runner installer).
-  if [[ "${RUNNER_PROVISION:-0}" == "1" ]]; then
-    if [[ -x "${RUNNER_PROVISION_HOOK}" ]]; then
-      RUNNER_SSH_TARGET="${ssh_target}" RUNNER_SSH_PORT="${ssh_port}" RUNNER_SSH_KEY="${key_path}" \
-      RUNNER_TARGET_HOST="${target_host}" RUNNER_ROTATE="${RUNNER_ROTATE:-0}" \
-        "${RUNNER_PROVISION_HOOK}" \
-        || warn "[BACK:${target_host}] Runner auto-provisioning failed — pair manually (see hook output above)"
-    else
-      info "[BACK:${target_host}] RUNNER_PROVISION=1 but hook '${RUNNER_PROVISION_HOOK}' not found/executable — skipping runner auto-provisioning"
-    fi
+  # Skipped when it already ran before the back (RUNNER_PROVISION_ORDER=before).
+  if [[ "${RUNNER_PROVISION:-0}" == "1" && "${runner_provisioned}" -eq 0 ]]; then
+    run_runner_provision_hook "${ssh_target}" "${ssh_port}" "${key_path}" "${target_host}" after \
+      || warn "[BACK:${target_host}] Runner auto-provisioning failed — pair manually (see hook output above)"
   fi
 }
 

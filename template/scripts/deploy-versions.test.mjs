@@ -1046,3 +1046,35 @@ test('every modified shell script passes bash -n; shellcheck when installed', (t
   const res = spawnSync('shellcheck', ['-S', 'error', '-s', 'bash', ...files], { encoding: 'utf8' });
   assert.equal(res.status, 0, res.stdout);
 });
+
+test('runner provisioning: after the healthy back by default; RUNNER_PROVISION_ORDER=before runs it before the new back, again after only when that failed', () => {
+  const hook = `#!/usr/bin/env bash
+echo "hook \${RUNNER_PROVISION_PHASE:-none} \${RUNNER_TARGET_HOST}" >> "$STUB_LOG"
+[ "\${RUNNER_PROVISION_PHASE:-}" = "\${STUB_HOOK_FAIL:-never}" ] && exit 1
+exit 0
+`;
+  const cases = [
+    { order: '', fail: '', phases: ['after'] },
+    { order: 'RUNNER_PROVISION_ORDER=before', fail: '', phases: ['before'] },
+    { order: 'RUNNER_PROVISION_ORDER=before', fail: 'before', phases: ['before', 'after'] },
+  ];
+  for (const c of cases) {
+    const p = deployedProject({ extraBackEnv: `RUNNER_PROVISION=1\nRUNNER_PROVISION_HOOK=./runner-hook.sh\n${c.order}` });
+    write(path.join(p.root, 'runner-hook.sh'), hook, 0o755);
+    try {
+      const r = p.run(['prod', '--no-update-common', '--target=back'], c.fail ? { STUB_HOOK_FAIL: c.fail } : {});
+      assert.equal(r.status, 0, r.out);
+      const lines = p.logLines();
+      assert.deepEqual(lines.filter((l) => l.startsWith('hook ')), c.phases.map((phase) => `hook ${phase} 10.0.0.1`), `${c.order || 'default'} ${c.fail}`);
+      const up = indexOfLine(lines, /^docker .*compose .* up -d back back-lb$/);
+      const health = indexOfLine(lines, HEALTH_WAIT, up);
+      assert.ok(up >= 0 && health > up, 'the back went up then was waited for');
+      for (const phase of c.phases) {
+        const at = lines.indexOf(`hook ${phase} 10.0.0.1`);
+        if (phase === 'before') assert.ok(at >= 0 && at < up, 'the hook ran before the new back went up');
+        else assert.ok(at > health, 'the hook ran once the new back was healthy');
+      }
+      if (c.fail) assert.match(strip(r.out), /Runner auto-provisioning before the back failed — retried once the new back is healthy/);
+    } finally { p.cleanup(); }
+  }
+});
