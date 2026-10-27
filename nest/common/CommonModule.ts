@@ -55,6 +55,7 @@ import { ThemeService } from './services/ThemeService';
 import { TelegramService } from './services/TelegramService';
 import { DiskAlertService } from './services/DiskAlertService';
 import { ImageStorageService } from './services/ImageStorageService';
+import { PrivateStorageService } from './services/PrivateStorageService';
 import { CookieConsentService } from './services/CookieConsentService';
 import { CookieConsentRetentionCronService } from './services/CookieConsentRetentionCronService';
 import { DonationService } from './services/DonationService';
@@ -106,6 +107,7 @@ import ConfigurationEntity from './entities/ConfigurationEntity';
     TelegramService,
     DiskAlertService,
     ImageStorageService,
+    PrivateStorageService,
     CookieConsentService,
     CookieConsentRetentionCronService,
     DonationService,
@@ -156,6 +158,7 @@ import ConfigurationEntity from './entities/ConfigurationEntity';
     TelegramService,
     DiskAlertService,
     ImageStorageService,
+    PrivateStorageService,
     AppExceptionFilter,
     ThrottleRegistry,
   ],

@@ -20,6 +20,11 @@ import type { ModuleConfigSchema } from './types/ModuleConfigSchema';
  * Switching providers never touches already-uploaded files: anything on
  * local disk keeps being served exactly as before by
  * `GET /api/v1/inline-image/:filename`.
+ *
+ * The `common_private_storage_*` fields configure `PrivateStorageService`, the
+ * counterpart for files that must never be public (invoice PDFs, private logos):
+ * a separate, private R2 bucket. Its account/credentials fall back to the public
+ * ones above when left empty.
  */
 export const storageConfigSchema: ModuleConfigSchema = {
   moduleId: 'common',
@@ -85,6 +90,54 @@ export const storageConfigSchema: ModuleConfigSchema = {
       defaultValue: '',
       group: 'storage',
       visibleWhen: { field: 'common_storage_provider', in: ['r2'] },
+    },
+    {
+      key: 'common_private_storage_provider',
+      label: 'common.privateStorage.provider',
+      description: 'common.privateStorage.provider.description',
+      type: 'select',
+      defaultValue: 'local',
+      group: 'storage',
+      options: [
+        { value: 'local', label: 'common.storage.provider.local' },
+        { value: 'r2', label: 'common.storage.provider.r2' },
+      ],
+    },
+    {
+      key: 'common_private_storage_r2_bucket',
+      label: 'common.privateStorage.r2Bucket',
+      description: 'common.privateStorage.r2Bucket.description',
+      type: 'string',
+      defaultValue: '',
+      group: 'storage',
+      visibleWhen: { field: 'common_private_storage_provider', in: ['r2'] },
+    },
+    {
+      key: 'common_private_storage_r2_accountId',
+      label: 'common.privateStorage.r2AccountId',
+      description: 'common.privateStorage.r2AccountId.description',
+      type: 'string',
+      defaultValue: '',
+      group: 'storage',
+      visibleWhen: { field: 'common_private_storage_provider', in: ['r2'] },
+    },
+    {
+      key: 'common_private_storage_r2_accessKeyId',
+      label: 'common.privateStorage.r2AccessKeyId',
+      description: 'common.privateStorage.r2AccessKeyId.description',
+      type: 'string',
+      defaultValue: '',
+      group: 'storage',
+      visibleWhen: { field: 'common_private_storage_provider', in: ['r2'] },
+    },
+    {
+      key: 'common_private_storage_r2_secretAccessKey',
+      label: 'common.privateStorage.r2SecretAccessKey',
+      description: 'common.privateStorage.r2SecretAccessKey.description',
+      type: 'secret',
+      defaultValue: '',
+      group: 'storage',
+      visibleWhen: { field: 'common_private_storage_provider', in: ['r2'] },
     },
   ],
 };
