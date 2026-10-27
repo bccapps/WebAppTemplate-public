@@ -8,15 +8,16 @@
  */
 
 /**
- * Extension points that let the `user` module use capabilities of OPTIONAL
- * sibling modules (`infra`, `commerce`) without importing them.
+ * Extension points that let a module use capabilities of an OPTIONAL module without
+ * importing it: `user` uses `infra` / `commerce`, public modules (`issue-report`)
+ * use `user`.
  *
- * `user` depends on these tokens/interfaces only (they live in `common`, which is
+ * The consumer depends on these tokens/interfaces only (they live in `common`, which is
  * always present). The optional module provides the implementation under the token
  * (`{ provide: TOKEN, useExisting: RealService }`) and exports it from a global
- * scope; `user` injects it with `@Optional() @Inject(TOKEN)` and degrades
- * gracefully when absent. This keeps `user` compilable and bootable when the
- * `commerce` / `infra` folders are not part of the project.
+ * scope; the consumer injects it with `@Optional() @Inject(TOKEN)` and degrades
+ * gracefully when absent. This keeps the consumer compilable and bootable when the
+ * provider's folder is not part of the project.
  */
 
 /** Minimal key/value cache. Provided by `infra` (`CacheService`, Redis, noop without REDIS_URL). */
@@ -61,4 +62,17 @@ export interface HealthContributor {
   /** Key under which the contribution appears in the `checks` object of the response. */
   readonly key: string;
   check(): Promise<HealthContribution> | HealthContribution;
+}
+
+/**
+ * How to reach a user of the app: provided by `user` (`UserContactService`, global scope). Lets a public module
+ * mail a user (e.g. `issue-report`: closure notice of a report) without importing the private `user` module and
+ * without keeping its own copy of the address. Absent => no e-mail; the consumer says so once in the log.
+ */
+export const USER_CONTACT = 'USER_CONTACT';
+export interface UserContactProvider {
+  /** Address of an active account, `null` when there is none (unknown, deactivated or deleted account, empty address). */
+  emailOf(userId: string | number): Promise<string | null>;
+  /** Preferred language of the account (`fr`, `en`…), `null` when unknown. */
+  localeOf?(userId: string | number): Promise<string | null>;
 }
