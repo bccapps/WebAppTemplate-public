@@ -12,6 +12,7 @@ import { I18nLabel } from '@/modules_shared/common/components/ui/label/I18nLabel
 import Unauthorized from '@/modules_shared/common/components/ui/unauthorized/Unauthorized';
 import { sessionAuth } from '@/modules_shared/common/auth/sessionAuth';
 import { i18n } from '@/modules_shared/common/core/i18n/I18n';
+import '../../../styles/tokens.css';
 import '../../../styles/shared_ui.css';
 
 type AdminModule = { default: React.ComponentType };

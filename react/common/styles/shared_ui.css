@@ -192,20 +192,20 @@
 }
 
 .alert--error {
-  border-color: rgba(220, 38, 38, 0.4);
-  background: rgba(220, 38, 38, 0.08);
+  border-color: var(--common-sharedui-alert-error-border);
+  background: var(--common-sharedui-alert-error-bg);
   color: var(--color-danger);
 }
 
 .alert--success {
-  border-color: rgba(22, 163, 74, 0.35);
-  background: rgba(22, 163, 74, 0.1);
+  border-color: var(--common-sharedui-alert-success-border);
+  background: var(--common-sharedui-alert-success-bg);
   color: var(--color-success);
 }
 
 .alert--info {
-  border-color: rgba(249, 115, 22, 0.35);
-  background: rgba(249, 115, 22, 0.12);
+  border-color: var(--common-sharedui-alert-info-border);
+  background: var(--common-sharedui-alert-info-bg);
   color: var(--accent-strong);
 }
 
@@ -276,7 +276,7 @@
 
 .primary-btn {
   background: linear-gradient(130deg, var(--button-gradient-start-light), var(--button-gradient-end-light));
-  color: #0f172a;
+  color: var(--common-sharedui-primary-btn-fg);
   padding: 0.75rem 1.2rem;
   border: none;
   box-shadow: var(--shadow-soft);
@@ -305,13 +305,13 @@
 
 .danger-btn {
   background: var(--color-danger);
-  color: #fff;
+  color: var(--common-sharedui-solid-btn-fg);
   padding: 0.55rem 0.95rem;
 }
 
 .success-btn {
   background: var(--color-success);
-  color: #fff;
+  color: var(--common-sharedui-solid-btn-fg);
   padding: 0.55rem 0.95rem;
 }
 
@@ -463,18 +463,18 @@
 }
 
 .run-history-item.level-success {
-  border-color: rgba(22, 163, 74, 0.4);
-  background: rgba(22, 163, 74, 0.08);
+  border-color: var(--common-sharedui-run-success-border);
+  background: var(--common-sharedui-run-success-bg);
 }
 
 .run-history-item.level-warning {
-  border-color: rgba(245, 158, 11, 0.5);
-  background: rgba(245, 158, 11, 0.12);
+  border-color: var(--common-sharedui-run-warning-border);
+  background: var(--common-sharedui-run-warning-bg);
 }
 
 .run-history-item.level-error {
-  border-color: rgba(220, 38, 38, 0.5);
-  background: rgba(220, 38, 38, 0.1);
+  border-color: var(--common-sharedui-run-error-border);
+  background: var(--common-sharedui-run-error-bg);
 }
 
 .status-pill {
@@ -485,31 +485,31 @@
 }
 
 .status-running {
-  background: rgba(249, 115, 22, 0.16);
+  background: var(--common-sharedui-status-running-bg);
   color: var(--accent-strong);
 }
 
 .status-completed,
 .status-filled {
-  background: rgba(22, 163, 74, 0.16);
+  background: var(--common-sharedui-status-completed-bg);
   color: var(--color-success);
 }
 
 .status-missed {
-  background: rgba(220, 38, 38, 0.12);
+  background: var(--common-sharedui-status-missed-bg);
   color: var(--color-danger);
 }
 
 .status-pending {
-  background: rgba(253, 224, 71, 0.22);
-  color: #b45309;
+  background: var(--common-sharedui-status-pending-bg);
+  color: var(--common-sharedui-status-pending-fg);
 }
 
 .modal-backdrop,
 .loading-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(5, 7, 15, 0.65);
+  background: var(--common-sharedui-backdrop-bg);
   backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
@@ -518,7 +518,7 @@
 }
 
 .loading-overlay {
-  background: rgba(5, 7, 15, 0.75);
+  background: var(--common-sharedui-loading-overlay-bg);
   z-index: 1400;
 }
 
@@ -528,10 +528,10 @@
   gap: 0.75rem;
   padding: 1.5rem 1.75rem;
   background: var(--loading-card-bg);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--common-sharedui-loading-card-border);
   border-radius: 14px;
-  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.35);
-  color: #fff;
+  box-shadow: 0 25px 80px var(--common-sharedui-loading-card-shadow);
+  color: var(--common-sharedui-loading-card-fg);
   min-width: 240px;
   justify-content: center;
 }
@@ -682,18 +682,18 @@
   padding: 0.4rem 1.2rem;
   font-size: 0.85rem;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.8);
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: var(--common-sharedui-loading-cancel-fg);
+  background: var(--common-sharedui-loading-cancel-bg);
+  border: 1px solid var(--common-sharedui-loading-cancel-border);
   border-radius: 8px;
   cursor: pointer;
   transition: background 0.2s, border-color 0.2s;
 }
 
 .loading-cancel-btn:hover {
-  background: rgba(255, 80, 80, 0.2);
-  border-color: rgba(255, 80, 80, 0.4);
-  color: #fff;
+  background: var(--common-sharedui-loading-cancel-hover-bg);
+  border-color: var(--common-sharedui-loading-cancel-hover-border);
+  color: var(--common-sharedui-loading-cancel-hover-fg);
 }
 
 .loading-thinking-phrase {

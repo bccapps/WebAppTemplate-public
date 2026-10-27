@@ -12,6 +12,7 @@ import { I18nLabel } from '@/modules_shared/common/components/ui/label/I18nLabel
 import { AdminTokenGate } from '@/modules_shared/common/components/ui/admin/AdminTokenGate';
 import { i18n } from '@/modules_shared/common/core/i18n/I18n';
 import AdminCommonDashboard from './AdminCommonDashboard';
+import '../../../styles/tokens.css';
 import '../../../styles/shared_ui.css';
 
 /** Same contract as AdminPage: optional `isAvailable()` hides the dashboard at render time. */

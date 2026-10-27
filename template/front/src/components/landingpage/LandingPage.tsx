@@ -8,6 +8,7 @@
  */
 
 import { useCallback } from 'react';
+import '@/modules_shared/common/styles/tokens.css';
 import '@/modules_shared/common/styles/theme_default.css';
 import './LandingPage.css';
 import { HeroVisual } from './HeroVisual';

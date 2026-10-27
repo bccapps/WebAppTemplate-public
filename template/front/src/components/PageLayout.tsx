@@ -16,6 +16,7 @@ import { AppSidebar } from './AppSidebar';
 import { resolvedRoutes } from './routes';
 import { layoutForPath } from '@/modules_shared/common/plugins/routeLayout';
 
+import '@/modules_shared/common/styles/tokens.css';
 import '@/modules_shared/common/styles/theme_default.css';
 import { Footer } from './Footer';
 import { useSessionKeys } from '@/modules_shared/common/hooks/useSessionKeys';

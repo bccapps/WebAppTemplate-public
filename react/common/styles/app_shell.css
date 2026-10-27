@@ -60,7 +60,7 @@ a:hover {
 
 .app-sidenav {
   border-right: 1px solid var(--surface-border-light);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), var(--sidenav-light-end));
+  background: linear-gradient(180deg, var(--common-appshell-sidenav-start-light), var(--sidenav-light-end));
   position: sticky;
   top: 0;
   height: 100vh;
@@ -120,12 +120,12 @@ a:hover {
 
 .hero-chip {
   border: 1px solid var(--surface-border-light);
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--common-appshell-hero-chip-bg-light);
   font-weight: 600;
 }
 
 [data-color-scheme='dark'] .hero-chip {
-  background: rgba(15, 23, 42, 0.7);
+  background: var(--common-appshell-hero-chip-bg-dark);
   border-color: var(--surface-border-dark);
 }
 
@@ -166,13 +166,13 @@ a:hover {
   font-weight: 700;
   font-size: 1.1rem;
   line-height: 1.2;
-  color: #1e1e1e !important;
+  color: var(--common-appshell-block-title-fg-light) !important;
   background-color: var(--accent-light-color);
 }
 
 [data-color-scheme='dark'] .home-block-title,
 [data-color-scheme='dark'] .home-block-title.MuiTypography-root {
-  color: #111 !important;
+  color: var(--common-appshell-block-title-fg-dark) !important;
 }
 
 .nav-badge .MuiBadge-badge {
@@ -182,7 +182,7 @@ a:hover {
   border-radius: 999px;
   padding: 0 4px;
   background: var(--accent-strong);
-  color: #fff;
+  color: var(--common-appshell-nav-badge-fg);
   box-shadow: 0 0 0 2px var(--surface-light);
 }
 
@@ -192,13 +192,13 @@ a:hover {
 
 .mobile-drawer .MuiPaper-root {
   border-right: 1px solid var(--surface-border-light);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9));
+  background: linear-gradient(180deg, var(--common-appshell-drawer-start-light), var(--common-appshell-drawer-end-light));
   backdrop-filter: blur(16px);
 }
 
 [data-color-scheme='dark'] .mobile-drawer .MuiPaper-root {
   border-right: 1px solid var(--surface-border-dark);
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(15, 23, 42, 0.9));
+  background: linear-gradient(180deg, var(--common-appshell-drawer-start-dark), var(--common-appshell-drawer-end-dark));
 }
 
 .mobile-drawer .MuiListItemButton-root.Mui-selected,

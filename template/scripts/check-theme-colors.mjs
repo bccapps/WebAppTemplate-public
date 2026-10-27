@@ -13,14 +13,16 @@
  * module's `styles/tokens.css`) and overridden by the theme, never written in the component.
  *
  * Scans the app's own sources (`front/src`, plus `extraSourceDirs`): `.ts` `.tsx` `.css` `.scss`. The linked shared
- * modules (`src/modules_shared`, symlinks) are the library's and are not scanned.
+ * modules (`src/modules_shared`, symlinks) are the library's: scanned only with `--libs` (their real directories under
+ * `.libs/`, the modules listed in `shared-modules.json`), to check the libraries themselves.
  *
  * A literal is `#rgb` `#rrggbb` `#rrggbbaa`, `rgb()` `rgba()` `hsl()` `hsla()` (a `rgba(var(--x-rgb), .3)` is not one).
  *
  * Never counted:
  *   - token files (`tokens.css`) and the app's theme folder (`front/src/themes/`): the only places for literals
  *   - specs and tests, comments
- *   - the FALLBACK of a `var(--token, <fallback>)`
+ *   - with `--allow-fallbacks` only: the FALLBACK of a `var(--token, <fallback>)` (by default a fallback is a hard-coded
+ *     color too: drop it when the token is always defined, else make the fallback a token)
  *   - a line carrying `theme-colors-ignore`, or following a line that does (data colors: chart series, avatar
  *     palettes, user-picked colors; canvas/pixel-art engines and terminal palettes: use the file or path ignore)
  *   - a file carrying `theme-colors-ignore-file` in its first 40 lines (below the license header)
@@ -29,12 +31,14 @@
  *     node .libs/apptemplate/scripts/check-theme-colors.mjs                     report, exit 0
  *     node .libs/apptemplate/scripts/check-theme-colors.mjs --check             CI: exit 1 on a literal
  *     node .libs/apptemplate/scripts/check-theme-colors.mjs --json              machine-readable output
+ *     node .libs/apptemplate/scripts/check-theme-colors.mjs --libs              also scan the linked shared modules
+ *     node .libs/apptemplate/scripts/check-theme-colors.mjs --allow-fallbacks   do not count the var(--x, <fallback>) fallbacks
  *     node .libs/apptemplate/scripts/check-theme-colors.mjs --update-baseline   record today's counts per file
  *     node .libs/apptemplate/scripts/check-theme-colors.mjs --root DIR          force scan root
  *
  * Optional `.themecolorsrc.json` at the scan root:
  *   { "ignore": ["^front/src/modules/game/engine/"],   // path regexes, relative to the root, `/` separators
- *     "extraSourceDirs": [] }
+ *     "extraSourceDirs": [], "scanLibs": false, "allowFallbacks": false }
  * Optional `.themecolors-baseline.json` (written by --update-baseline): `{ "<file>": <count> }`. With a baseline,
  * `--check` fails only on a file that EXCEEDS its recorded count (adopting the rule in a legacy app: no new literal,
  * the old ones are paid down file by file; lower the numbers by re-running --update-baseline).
@@ -44,6 +48,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync, statSync, writeFil
 import path from 'path';
 import process from 'process';
 import { fileURLToPath } from 'url';
+import { linkedModuleDirs } from './lib-roots.mjs';
 
 const SOURCE_EXT = new Set(['.ts', '.tsx', '.css', '.scss']);
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'dev-dist', 'build', '.git', 'coverage', '.turbo', '.cache']);
@@ -90,10 +95,11 @@ function stripVarFallbacks(text) {
  * Literals of one source: `[{ line, col, text }]`. `ext` is the file extension (`.css`, `.tsx`…).
  * In CSS a `#abc` before a `{` or a `,` is an id selector, not a color.
  */
-export function findLiterals(source, ext) {
+export function findLiterals(source, ext, { allowFallbacks = false } = {}) {
   if (source.split('\n', FILE_MARK_LINES).some((l) => l.includes(IGNORE_FILE_MARK))) return [];
   const rawLines = source.split('\n');
-  const lines = stripVarFallbacks(stripComments(source, ext)).split('\n');
+  const uncommented = stripComments(source, ext);
+  const lines = (allowFallbacks ? stripVarFallbacks(uncommented) : uncommented).split('\n');
   const found = [];
   let depth = 0; // CSS: `{` nesting at the start of the line (a `#abc` outside a block is an id selector)
   lines.forEach((line, idx) => {
@@ -136,10 +142,10 @@ const toPosix = (p) => p.split(path.sep).join('/');
 export function isExempt(rel) {
   const base = path.posix.basename(rel);
   return (
-    base === 'tokens.css' ||
+    /tokens\.css$/i.test(base) ||
+    /(^|\/)themes\/[^/]+\//.test(rel) ||
     /\.(spec|test)\.[cm]?[jt]sx?$/.test(base) ||
     base.endsWith('.d.ts') ||
-    rel.startsWith('front/src/themes/') ||
     /(^|\/)__(tests|mocks|fixtures)__\//.test(rel)
   );
 }
@@ -155,9 +161,10 @@ function walk(dir, onFile) {
 }
 
 /** Audit a project root: `{ files: { <rel>: [{ line, col, text }] }, total }`. */
-export function audit(root, { ignore = [], extraSourceDirs = [] } = {}) {
+export function audit(root, { ignore = [], extraSourceDirs = [], scanLibs = false, allowFallbacks = false } = {}) {
   const ignoreRes = ignore.map((r) => new RegExp(r));
-  const dirs = [path.join(root, 'front/src'), ...extraSourceDirs.map((d) => path.resolve(root, d))].filter(existsSync);
+  const libDirs = scanLibs ? linkedModuleDirs('front', path.join(root, 'front')) : [];
+  const dirs = [path.join(root, 'front/src'), ...extraSourceDirs.map((d) => path.resolve(root, d)), ...libDirs].filter(existsSync);
   const files = {};
   let total = 0;
   for (const dir of dirs) {
@@ -166,7 +173,7 @@ export function audit(root, { ignore = [], extraSourceDirs = [] } = {}) {
       if (!SOURCE_EXT.has(ext)) return;
       const rel = toPosix(path.relative(root, full));
       if (isExempt(rel) || ignoreRes.some((re) => re.test(rel))) return;
-      const hits = findLiterals(readFileSync(full, 'utf8'), ext);
+      const hits = findLiterals(readFileSync(full, 'utf8'), ext, { allowFallbacks });
       if (hits.length) { files[rel] = hits; total += hits.length; }
     });
   }
@@ -199,17 +206,19 @@ Usage (from repo root, or from front/):
   node .libs/apptemplate/scripts/check-theme-colors.mjs                    report, exit 0
   node .libs/apptemplate/scripts/check-theme-colors.mjs --check            CI: exit 1 on a literal (over the baseline if any)
   node .libs/apptemplate/scripts/check-theme-colors.mjs --json             machine-readable output
+  node .libs/apptemplate/scripts/check-theme-colors.mjs --libs             also scan the linked shared modules
+  node .libs/apptemplate/scripts/check-theme-colors.mjs --allow-fallbacks  do not count var(--x, <fallback>) literals
   node .libs/apptemplate/scripts/check-theme-colors.mjs --update-baseline  record the per-file counts
   node .libs/apptemplate/scripts/check-theme-colors.mjs --root D           force scan root
 
-Config: .themecolorsrc.json { "ignore": ["^front/src/…"], "extraSourceDirs": [] }; baseline: .themecolors-baseline.json.
+Config: .themecolorsrc.json { "ignore": ["^front/src/…"], "extraSourceDirs": [], "scanLibs": false, "allowFallbacks": false }; baseline: .themecolors-baseline.json.
 In a source: a line with \`theme-colors-ignore\` (or the line after it) and a file with \`theme-colors-ignore-file\` in its first lines are skipped.`);
     return;
   }
   const root = path.resolve(opt('--root', findRoot(process.cwd())));
   const cfg = readJson(path.join(root, '.themecolorsrc.json'), '.themecolorsrc.json') || {};
   const baselinePath = path.join(root, '.themecolors-baseline.json');
-  const { files, total } = audit(root, cfg);
+  const { files, total } = audit(root, { ...cfg, scanLibs: cfg.scanLibs || has('--libs'), allowFallbacks: cfg.allowFallbacks || has('--allow-fallbacks') });
 
   if (has('--update-baseline')) {
     const counts = Object.fromEntries(Object.entries(files).map(([f, h]) => [f, h.length]).sort(([a], [b]) => a.localeCompare(b)));

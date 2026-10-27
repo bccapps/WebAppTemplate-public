@@ -11,6 +11,8 @@ import type { ThemeDefinition } from '../../theme/types'
 
 // The default look is the token contract: its values apply while `data-theme='default'` (specificity 0, an app palette wins).
 import '../../theme/tokens.css'
+// The shared sheets' tokens (`--common-*`): loaded with the theme system, so every app that imports `shared_ui.css` or `app_shell.css` has them.
+import '../../styles/tokens.css'
 
 const defaultTheme: ThemeDefinition = {
   id: 'default',

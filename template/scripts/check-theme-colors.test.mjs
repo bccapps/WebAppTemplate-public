@@ -14,7 +14,7 @@ import { tmpdir } from 'os';
 import path from 'path';
 import { audit, findLiterals, isExempt, overBaseline } from './check-theme-colors.mjs';
 
-const texts = (src, ext = '.css') => findLiterals(src, ext).map((h) => h.text);
+const texts = (src, ext = '.css') => findLiterals(src, ext, { allowFallbacks: true }).map((h) => h.text);
 
 test('findLiterals: hex and functional colors in a declaration', () => {
   assert.deepEqual(texts('a { color: #fff; background: #1a2b3c; border-color: #1a2b3c80; }'), ['#fff', '#1a2b3c', '#1a2b3c80']);
@@ -27,6 +27,12 @@ test('findLiterals: a token read, a rgba over a channel token and a fallback are
   assert.deepEqual(texts('a { color: var(--a, var(--b, #123456)); }'), []);
   // the fallback is exempt, what follows it on the line is not
   assert.deepEqual(texts('a { background: var(--bg, #000) #fff; }'), ['#fff']);
+});
+
+test('findLiterals: the fallback of a var() counts, unless allowFallbacks', () => {
+  const css = 'a { color: var(--st-error, #f44336); border: 1px solid var(--b, rgba(1,2,3,.2)); }';
+  assert.deepEqual(findLiterals(css, '.css').map((h) => h.text), ['#f44336', 'rgba(']);
+  assert.deepEqual(findLiterals(css, '.css', { allowFallbacks: true }), []);
 });
 
 test('findLiterals: comments, ids, entities and unknown hex lengths are ignored', () => {
@@ -59,6 +65,8 @@ test('isExempt: token files, the app theme folder, specs and declarations', () =
   assert.equal(isExempt('front/src/modules/x/Card.spec.tsx'), true);
   assert.equal(isExempt('front/src/modules/x/Card.test.ts'), true);
   assert.equal(isExempt('front/src/vite-env.d.ts'), true);
+  assert.equal(isExempt('front/.libs/vx-private/react/user/components/ui/account/accountTokens.css'), true);
+  assert.equal(isExempt('front/.libs/vx-public/react/common/themes/default/theme.css'), true);
   assert.equal(isExempt('front/src/modules/x/Card.tsx'), false);
   assert.equal(isExempt('front/src/modules/x/styles/x.css'), false);
 });
@@ -89,4 +97,19 @@ test('audit: scans front/src, skips themes, tokens, symlinked libraries and igno
   const { files, total } = audit(root, { ignore: ['^front/src/modules/engine/'] });
   assert.deepEqual(Object.keys(files), ['front/src/modules/m/Card.tsx']);
   assert.equal(total, 1);
+});
+
+test('audit: --libs scans the real directories of the linked shared modules', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'tcc-libs-'));
+  const put = (rel, body) => {
+    mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    writeFileSync(path.join(root, rel), body);
+  };
+  put('front/src/App.tsx', "export const a = 'var(--x)'");
+  put('front/.libs/vx-public/react/common/Card.tsx', "export const c = '#abcdef'");
+  put('front/.libs/vx-public/react/common/styles/tokens.css', ':where(:root) { --c: #fff; }');
+  put('front/.libs/vx-public/react/other/Skip.tsx', "export const c = '#123456'");
+  put('shared-modules.json', JSON.stringify({ reactcommon: ['common'] }));
+  assert.equal(audit(root, {}).total, 0);
+  assert.deepEqual(Object.keys(audit(root, { scanLibs: true }).files), ['front/.libs/vx-public/react/common/Card.tsx']);
 });

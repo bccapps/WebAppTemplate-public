@@ -463,6 +463,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
             <Box
               component="input"
               type="color"
+              // theme-colors-ignore: <input type="color"> only accepts a resolved #rrggbb value (default of the picker)
               value={editor?.getAttributes('textStyle').color || '#000000'}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                 editor?.chain().focus().setColor(e.target.value).run()
@@ -484,6 +485,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
                 <Box
                   component="input"
                   type="color"
+                  // theme-colors-ignore: <input type="color"> only accepts a resolved #rrggbb value (default of the picker)
                   value={backgroundColor || '#ffffff'}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => onBackgroundColorChange(e.target.value)}
                   sx={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}

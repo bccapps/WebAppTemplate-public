@@ -13,6 +13,12 @@ import { CssBaseline, ThemeProvider } from '@mui/material';
 import { configurationService } from '../../../services/ConfigurationService';
 import { ThemeModeContext, type ThemeMode } from './ThemeModeContext';
 
+// Last-resort palette used only when a CSS variable is absent (no theme loaded yet): MUI needs resolved values.
+const FALLBACK_PRIMARY = '#1fcb7d'; // theme-colors-ignore: JS last-resort default when --accent-strong is not defined
+const FALLBACK_SECONDARY = { dark: '#24d996', light: '#0f794d' }; // theme-colors-ignore: JS last-resort default when --color-primary-strong is not defined
+const FALLBACK_BG = { dark: '#111418', light: '#f2f3f5' }; // theme-colors-ignore: JS last-resort default when --color-bg is not defined
+const FALLBACK_PAPER = { dark: '#181c22', light: '#ffffff' }; // theme-colors-ignore: JS last-resort default when --color-surface is not defined
+
 const getCssVar = (name: string, fallback: string): string => {
   if (typeof document === 'undefined') return fallback;
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
@@ -70,11 +76,11 @@ export function ThemeModeProvider({ children }: { children: React.ReactNode }) {
     return createTheme({
       palette: {
         mode,
-        primary: { main: getCssVar('--accent-strong', '#1fcb7d') },
-        secondary: { main: getCssVar('--color-primary-strong', isDark ? '#24d996' : '#0f794d') },
+        primary: { main: getCssVar('--accent-strong', FALLBACK_PRIMARY) },
+        secondary: { main: getCssVar('--color-primary-strong', isDark ? FALLBACK_SECONDARY.dark : FALLBACK_SECONDARY.light) },
         background: {
-          default: getCssVar('--color-bg', isDark ? '#111418' : '#f2f3f5'),
-          paper: getCssVar('--color-surface', isDark ? '#181c22' : '#ffffff'),
+          default: getCssVar('--color-bg', isDark ? FALLBACK_BG.dark : FALLBACK_BG.light),
+          paper: getCssVar('--color-surface', isDark ? FALLBACK_PAPER.dark : FALLBACK_PAPER.light),
         },
         ...Object.fromEntries(
           Object.entries(definedCssVars({ error: '--color-danger', success: '--color-success', warning: '--color-warning' }))
@@ -87,7 +93,7 @@ export function ThemeModeProvider({ children }: { children: React.ReactNode }) {
         MuiCssBaseline: {
           styleOverrides: {
             body: {
-              backgroundColor: getCssVar('--color-bg', isDark ? '#111418' : '#f2f3f5'),
+              backgroundColor: getCssVar('--color-bg', isDark ? FALLBACK_BG.dark : FALLBACK_BG.light),
             },
           },
         },

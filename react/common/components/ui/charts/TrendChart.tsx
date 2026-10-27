@@ -35,6 +35,7 @@ export interface TrendChartProps {
   height?: number;
 }
 
+// theme-colors-ignore: chart series are data colours (palette of the data, not UI chrome)
 const DEFAULT_COLORS = ['#F4B000', '#3B82F6', '#10B981', '#EF4444'];
 
 /** Shared line chart (chart.js) for evolution over time; one line per series. */

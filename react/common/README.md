@@ -616,15 +616,24 @@ front/src/themes/<id>/            # Thèmes privés de l'app
 
 Un composant partagé ne contient aucune couleur en dur : il lit le contrat de jetons (`theme/tokens.css`, valeurs du thème `default`) ou les jetons de son module, `<module>/styles/tokens.css` (`--<module>-<composant>-<rôle>`, valeurs par défaut en `:where(:root)`, donc surchargeables par n'importe quel thème sans toucher au composant). Pour `common` : `styles/tokens.css` (préfixe `--common-`). Les couleurs qui doivent être des valeurs résolues (canvas, librairies de graphiques, `alpha()` MUI, attributs SVG) ou qui sont des données (séries, avatars, couleurs choisies par l'utilisateur) restent en JS.
 
+Groupes de jetons de `common/styles/tokens.css` ajoutés pour les feuilles partagées et quelques composants :
+- `--common-sharedui-alert-*` (bordure/fond des `.alert--error|success|info`), `--common-sharedui-primary-btn-fg`, `--common-sharedui-solid-btn-fg` : alertes et boutons de `shared_ui.css`.
+- `--common-sharedui-run-*` et `--common-sharedui-status-*` : historique d'exécution (`.run-history-item.level-*`) et pastilles de statut (`.status-*`).
+- `--common-sharedui-backdrop-bg`, `--common-sharedui-loading-overlay-bg`, `--common-sharedui-loading-card-*`, `--common-sharedui-loading-cancel-*` : fond de modale, overlay de chargement, carte et bouton d'annulation.
+- `--common-appshell-*` (paires `-light` / `-dark`, la feuille garde sa séparation `[data-color-scheme='dark']`) : barre latérale, `hero-chip`, titre de bloc d'accueil, pastille de navigation et tiroir mobile de `app_shell.css`.
+- `--common-videoposter-badge-fg`, `--common-videoposter-caption-fg` : texte du badge et de la légende de `VideoPoster`.
+
+Resté en JS avec `theme-colors-ignore` : les couleurs de repli de `ThemeModeProvider` (palette MUI, utilisées seulement si la variable CSS est absente), les séries par défaut de `TrendChart` (données) et les valeurs par défaut des `<input type="color">` de `RichTextEditor` (qui n'accepte que `#rrggbb`).
+
 ### Garde-fou : `npm run theme:check`
 
 La règle « aucune couleur en dur » est vérifiée par `template/scripts/check-theme-colors.mjs` (`npm run theme:check` dans `front/`, `theme:audit` pour lister sans échouer). Il parcourt `front/src` (`.ts`, `.tsx`, `.css`, `.scss` ; les modules partagés de `modules_shared` sont ceux de la librairie, pas parcourus) et signale tout `#hex`, `rgb()`, `rgba()`, `hsl()`, `hsla()` hors :
 - les fichiers de jetons (`tokens.css`), le dossier du thème de l'app (`front/src/themes/`), les specs/tests et les commentaires ;
-- le **repli** d'un `var(--jeton, <repli>)` (le jeton reste la source) ; `rgba(var(--x-rgb), .3)` n'est pas un littéral ;
+- `rgba(var(--x-rgb), .3)` n'est pas un littéral ; en revanche le **repli** d'un `var(--jeton, #fff)` en est un (le supprimer quand le jeton est toujours défini, sinon en faire un jeton) — `--allow-fallbacks` le tolère le temps d'une migration ;
 - une ligne portant `theme-colors-ignore: <raison>` (ou suivant une telle ligne) et un fichier portant `theme-colors-ignore-file: <raison>` dans ses premières lignes : couleurs de **données** (séries, avatars, couleur choisie par l'utilisateur, couleur de marque d'un tiers, palette ANSI d'un terminal) ;
 - les chemins listés dans `.themecolorsrc.json` (`{ "ignore": ["^front/src/modules/jeu/engine/"] }`, regex relatives à la racine) : moteurs canvas/pixel-art dont les couleurs sont du dessin et non du chrome d'UI.
 
-Une app existante qui a déjà des littéraux enregistre l'état courant avec `node .libs/apptemplate/scripts/check-theme-colors.mjs --update-baseline` (`.themecolors-baseline.json`, `{ fichier: nombre }`) : `--check` n'échoue alors que sur un fichier qui **dépasse** son nombre, on rembourse ensuite fichier par fichier en relançant `--update-baseline`. Tests : `scripts/check-theme-colors.test.mjs`.
+Une app existante qui a déjà des littéraux enregistre l'état courant avec `node .libs/apptemplate/scripts/check-theme-colors.mjs --update-baseline` (`.themecolors-baseline.json`, `{ fichier: nombre }`) : `--check` n'échoue alors que sur un fichier qui **dépasse** son nombre, on rembourse ensuite fichier par fichier en relançant `--update-baseline`. `--libs` (ou `"scanLibs": true` dans `.themecolorsrc.json`) vérifie aussi les modules partagés liés (leurs dossiers réels sous `.libs/`) : à activer dans un projet qui édite les librairies. Tests : `scripts/check-theme-colors.test.mjs`.
 
 Pour une couleur dont une API JS a besoin déjà résolue (canvas, graphiques, xterm), lire le jeton à l'exécution (`getComputedStyle(document.documentElement).getPropertyValue('--jeton')`) et relire au changement de thème ou de mode, plutôt que d'écrire le littéral.
 

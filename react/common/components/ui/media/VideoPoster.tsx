@@ -81,7 +81,7 @@ export function VideoPoster({ src, poster, width, height, durationSeconds, capti
         )}
       </Box>
       {!showVideo && (
-        <Box sx={{ position: 'absolute', right: 8, bottom: 8, display: 'flex', alignItems: 'center', gap: 0.5, px: 0.75, py: 0.25, borderRadius: 1, bgcolor: 'var(--common-videoposter-badge-bg)', color: '#fff', pointerEvents: 'none' }}>
+        <Box sx={{ position: 'absolute', right: 8, bottom: 8, display: 'flex', alignItems: 'center', gap: 0.5, px: 0.75, py: 0.25, borderRadius: 1, bgcolor: 'var(--common-videoposter-badge-bg)', color: 'var(--common-videoposter-badge-fg)', pointerEvents: 'none' }}>
           <PlayArrowIcon sx={{ fontSize: 12 }} />
           <Typography variant="caption" sx={{ fontFamily: 'monospace', fontSize: 10, lineHeight: 1.4 }}>
             {durationSeconds ? formatClock(durationSeconds) : i18n.get('common.ui.media.poster.video')}
@@ -90,7 +90,7 @@ export function VideoPoster({ src, poster, width, height, durationSeconds, capti
       )}
       {overlay}
       {caption && (
-        <Box className="vp-caption" sx={{ position: 'absolute', insetInline: 0, bottom: 0, px: 1.5, pb: 1.25, pt: 4, opacity: 0, transition: 'opacity .15s', pointerEvents: 'none', background: 'linear-gradient(to top, var(--common-videoposter-caption-gradient), transparent)', color: '#fff' }}>
+        <Box className="vp-caption" sx={{ position: 'absolute', insetInline: 0, bottom: 0, px: 1.5, pb: 1.25, pt: 4, opacity: 0, transition: 'opacity .15s', pointerEvents: 'none', background: 'linear-gradient(to top, var(--common-videoposter-caption-gradient), transparent)', color: 'var(--common-videoposter-caption-fg)' }}>
           <Typography variant="caption" sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.3 }}>
             {caption}
           </Typography>

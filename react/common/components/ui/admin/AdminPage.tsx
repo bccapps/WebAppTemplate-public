@@ -16,6 +16,7 @@ import { configurationService } from '@/modules_shared/common/services/Configura
 import { HttpResult } from '@/modules_shared/common/core/http/HttpResult';
 import { i18n } from '@/modules_shared/common/core/i18n/I18n';
 import { moduleConfigService } from '@/modules_shared/common/services/ModuleConfigService';
+import '../../../styles/tokens.css';
 import '../../../styles/shared_ui.css';
 
 type ConfigRow = {

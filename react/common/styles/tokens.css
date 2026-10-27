@@ -87,4 +87,55 @@
   --common-toast-warning: var(--metric-orange, #fbbf24);
   --common-toast-info: var(--accent, #38bdf8);
   --common-toast-shadow: rgba(0, 0, 0, 0.55);
+
+  /* VideoPoster (text colours) */
+  --common-videoposter-badge-fg: #fff;
+  --common-videoposter-caption-fg: #fff;
+
+  /* shared_ui.css: alerts, buttons, run history, status pills */
+  --common-sharedui-alert-error-border: rgba(220, 38, 38, 0.4);
+  --common-sharedui-alert-error-bg: rgba(220, 38, 38, 0.08);
+  --common-sharedui-alert-success-border: rgba(22, 163, 74, 0.35);
+  --common-sharedui-alert-success-bg: rgba(22, 163, 74, 0.1);
+  --common-sharedui-alert-info-border: rgba(249, 115, 22, 0.35);
+  --common-sharedui-alert-info-bg: rgba(249, 115, 22, 0.12);
+  --common-sharedui-primary-btn-fg: #0f172a;
+  --common-sharedui-solid-btn-fg: #fff;
+  --common-sharedui-run-success-border: rgba(22, 163, 74, 0.4);
+  --common-sharedui-run-success-bg: rgba(22, 163, 74, 0.08);
+  --common-sharedui-run-warning-border: rgba(245, 158, 11, 0.5);
+  --common-sharedui-run-warning-bg: rgba(245, 158, 11, 0.12);
+  --common-sharedui-run-error-border: rgba(220, 38, 38, 0.5);
+  --common-sharedui-run-error-bg: rgba(220, 38, 38, 0.1);
+  --common-sharedui-status-running-bg: rgba(249, 115, 22, 0.16);
+  --common-sharedui-status-completed-bg: rgba(22, 163, 74, 0.16);
+  --common-sharedui-status-missed-bg: rgba(220, 38, 38, 0.12);
+  --common-sharedui-status-pending-bg: rgba(253, 224, 71, 0.22);
+  --common-sharedui-status-pending-fg: #b45309;
+
+  /* shared_ui.css: modal backdrop, loading overlay and card */
+  --common-sharedui-backdrop-bg: rgba(5, 7, 15, 0.65);
+  --common-sharedui-loading-overlay-bg: rgba(5, 7, 15, 0.75);
+  --common-sharedui-loading-card-border: rgba(255, 255, 255, 0.08);
+  --common-sharedui-loading-card-shadow: rgba(0, 0, 0, 0.35);
+  --common-sharedui-loading-card-fg: #fff;
+  --common-sharedui-loading-cancel-fg: rgba(255, 255, 255, 0.8);
+  --common-sharedui-loading-cancel-bg: rgba(255, 255, 255, 0.08);
+  --common-sharedui-loading-cancel-border: rgba(255, 255, 255, 0.15);
+  --common-sharedui-loading-cancel-hover-bg: rgba(255, 80, 80, 0.2);
+  --common-sharedui-loading-cancel-hover-border: rgba(255, 80, 80, 0.4);
+  --common-sharedui-loading-cancel-hover-fg: #fff;
+
+  /* app_shell.css: sidenav, hero chip, home block title, nav badge, mobile drawer (explicit -light / -dark pairs,
+     the sheet keeps its [data-color-scheme='dark'] split) */
+  --common-appshell-sidenav-start-light: rgba(255, 255, 255, 0.9);
+  --common-appshell-hero-chip-bg-light: rgba(255, 255, 255, 0.7);
+  --common-appshell-hero-chip-bg-dark: rgba(15, 23, 42, 0.7);
+  --common-appshell-block-title-fg-light: #1e1e1e;
+  --common-appshell-block-title-fg-dark: #111;
+  --common-appshell-nav-badge-fg: #fff;
+  --common-appshell-drawer-start-light: rgba(255, 255, 255, 0.96);
+  --common-appshell-drawer-end-light: rgba(255, 255, 255, 0.9);
+  --common-appshell-drawer-start-dark: rgba(15, 23, 42, 0.98);
+  --common-appshell-drawer-end-dark: rgba(15, 23, 42, 0.9);
 }
