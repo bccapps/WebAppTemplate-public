@@ -80,6 +80,11 @@ Feature access control (`hasFeature`, `@RequireFeature`, tiers) only exists with
 - **Do the checks yourself** (§8) and the debugging too (commands, throwaway programs, servers, DB reads, logs); ask the user only for what cannot be automated.
 - **Keep context small**: relevant files only, one task per session; `.claudeignore` excludes `node_modules/`, `dist/`, `build/`, `coverage/`, `*.lock`, `*.log`, `logs/`, `.db/`, `.env*`.
 
+**Git branches (MANDATORY)** — applies to the project repo only, not to its sub-repos/libraries (`.libs/*`) nor to private data repos
+- Work only from branch `dev`: create it from `main` if missing, then switch to it before any change.
+- Extra work branches are allowed; every merge (manual or automatic) targets `dev` only.
+- Never merge into or push `main` on your own: the user does it to publish a roughly stable `dev`.
+
 **Conventions**
 - Code and comments in English; `camelCase` functions, `PascalCase` classes, `SCREAMING_SNAKE_CASE` constants; Conventional Commits; functions < 40 lines, moderate files.
 - **Strong typing**: interfaces for all props, no `any`, explicit types where inference fails (strict mode).
@@ -143,4 +148,4 @@ Feature access control (`hasFeature`, `@RequireFeature`, tiers) only exists with
 - Plans extremely concise; once validated, don't interrupt yourself until everything is done; finish with a synthesis, then open questions or suggestions.
 
 ---
-**Updated:** 2026-10-23 — keep under ~6,000 tokens: rules here, detail in the READMEs/annexes (§7). Getting started: template `README.md`, « Needed Customizations ».
+**Updated:** 2026-10-27 — keep under ~6,000 tokens: rules here, detail in the READMEs/annexes (§7). Getting started: template `README.md`, « Needed Customizations ».
