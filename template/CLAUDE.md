@@ -80,10 +80,11 @@ Feature access control (`hasFeature`, `@RequireFeature`, tiers) only exists with
 - **Do the checks yourself** (§8) and the debugging too (commands, throwaway programs, servers, DB reads, logs); ask the user only for what cannot be automated.
 - **Keep context small**: relevant files only, one task per session; `.claudeignore` excludes `node_modules/`, `dist/`, `build/`, `coverage/`, `*.lock`, `*.log`, `logs/`, `.db/`, `.env*`.
 
-**Git branches (MANDATORY)** — applies to the project repo only, not to its sub-repos/libraries (`.libs/*`) nor to private data repos
+**Git branches (MANDATORY)** — the project repo only (the one holding this file)
 - Work only from branch `dev`: create it from `main` if missing, then switch to it before any change.
 - Extra work branches are allowed; every merge (manual or automatic) targets `dev` only.
 - Never merge into or push `main` on your own: the user does it to publish a roughly stable `dev`.
+- Every other repo stays on its default branch (`main`), commits go there directly: the libraries (`.libs/*`, published by `update_common.sh`) and any data/asset repo the project uses, nested or sibling (theme packs, datasets…), even when edited in the same session. « Passe sur dev » / « switch to dev » means the project repo alone; never create `dev` elsewhere.
 
 **Conventions**
 - Code and comments in English; `camelCase` functions, `PascalCase` classes, `SCREAMING_SNAKE_CASE` constants; Conventional Commits; functions < 40 lines, moderate files.
