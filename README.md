@@ -11,6 +11,7 @@ An opinionated full-stack web application template: a **NestJS + TypeORM + Postg
 | `nest/common`, `react/common` | Core modules (configuration, i18n, HTTP, crypto transport, email, theming, hardened HTTP bootstrap `configureHttpApp`, public `GET /api/v1/health`...) |
 | `nest/database` | Multi-connection TypeORM helpers |
 | `nest/voice`, `react/voice` | Voice module |
+| `nest/issue-report`, `react/issue-report` | « Report a problem » for signed-in users, relayed to an Agent Hub project (status follow-up, closure e-mail) |
 | `tools/` | `check-boundaries.mjs`, `license-headers.mjs`, `ci-sandbox.sh`, `ci-git-flow.sh`, `allowed.json` |
 
 ## Quick start

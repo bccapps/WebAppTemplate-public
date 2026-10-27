@@ -1,0 +1,12 @@
+{
+  "id": "issue-report",
+  "title": "Issue report",
+  "description": "Frontend counterpart of the nest/issue-report module: « Report a problem » header button, report dialog and the user's own reports.",
+  "visibility": "public",
+  "category": "other",
+  "requires": [
+    "common"
+  ],
+  "env": [],
+  "questions": []
+}

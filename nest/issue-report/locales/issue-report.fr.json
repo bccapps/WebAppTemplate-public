@@ -1,0 +1,10 @@
+{
+  "issueReport.email.greeting": "Bonjour,",
+  "issueReport.email.thanks": "Merci de nous l'avoir signalé : ça nous aide à améliorer l'application.",
+  "issueReport.email.fixed.subject": "Ton signalement n°{0} a été corrigé",
+  "issueReport.email.fixed.body": "Le problème que tu nous as signalé (« {1} ») a été corrigé.",
+  "issueReport.email.dropped.subject": "Ton signalement n°{0} a été clos",
+  "issueReport.email.dropped.body": "Nous avons examiné le problème que tu nous as signalé (« {1} ») et décidé de ne pas le traiter pour l'instant.",
+  "issueReport.email.manual.subject": "Ton signalement n°{0} a été clos",
+  "issueReport.email.manual.body": "Le problème que tu nous as signalé (« {1} ») a été examiné et ton signalement est maintenant clos."
+}

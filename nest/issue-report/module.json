@@ -1,0 +1,19 @@
+{
+  "id": "issue-report",
+  "title": "Issue report",
+  "description": "Lets signed-in users report a problem from the app; the back relays each report to an Agent Hub project (secret token kept server-side), follows its status and e-mails the reporter when it is closed.",
+  "visibility": "public",
+  "category": "other",
+  "databases": [
+    "postgres",
+    "sqlite"
+  ],
+  "requires": [
+    "common"
+  ],
+  "env": [
+    "ISSUE_HUB_URL",
+    "ISSUE_HUB_TOKEN"
+  ],
+  "questions": []
+}

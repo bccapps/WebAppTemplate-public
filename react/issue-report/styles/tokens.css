@@ -1,0 +1,25 @@
+/**
+ * VXFramework
+ *
+ * Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
+ * SPDX-License-Identifier: MIT
+ *
+ * Licensed under the MIT License. See LICENSE in the project root.
+ */
+
+/* Colors of the issue-report module, as tokens a theme may override (`--issue-report-<component>-<role>`).
+   Defaults read the shared contract (react/common/theme/tokens.css), so no literal is needed here. */
+:where(:root) {
+  /* Header button (IssueReportButton) */
+  --issue-report-button-bg: var(--header-pill);
+  /* Status label of a report (MyIssueReports) */
+  --issue-report-status-open-fg: var(--color-warning);
+  --issue-report-status-fixed-fg: var(--color-success);
+  --issue-report-status-dropped-fg: var(--color-text-muted);
+  --issue-report-status-closed-fg: var(--color-text-muted);
+  /* List of reports (MyIssueReports) */
+  --issue-report-item-border: var(--color-border);
+  --issue-report-item-meta-fg: var(--color-text-muted);
+  /* Hint lines of the form (IssueReportForm) */
+  --issue-report-form-hint-fg: var(--color-text-muted);
+}

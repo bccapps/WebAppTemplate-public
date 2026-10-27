@@ -1,0 +1,10 @@
+{
+  "issueReport.email.greeting": "Hello,",
+  "issueReport.email.thanks": "Thank you for reporting it: it helps us improve the app.",
+  "issueReport.email.fixed.subject": "Your report #{0} has been fixed",
+  "issueReport.email.fixed.body": "The problem you reported (“{1}”) has been fixed.",
+  "issueReport.email.dropped.subject": "Your report #{0} has been closed",
+  "issueReport.email.dropped.body": "We looked into the problem you reported (“{1}”) and decided not to work on it for now.",
+  "issueReport.email.manual.subject": "Your report #{0} has been closed",
+  "issueReport.email.manual.body": "The problem you reported (“{1}”) has been reviewed and your report is now closed."
+}

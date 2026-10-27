@@ -752,6 +752,25 @@ reconnecte et se réabonne seul. Après un retour à `ok`, relire les ressources
   compression ; la compression est celle du back (écartée par `no-transform`). Aucun réglage requis.
 - Options (tests, réglage) : `{ provide: EVENT_STREAM_OPTIONS, useValue: { heartbeatMs, maxTopicsPerConnection, maxPendingBytes, ... } }`.
 
+## Points d'extension (`types/ExtensionPoints.ts`)
+
+Un module consomme une capacité d'un module **optionnel** sans l'importer : le fournisseur enregistre son service sous
+le token (`{ provide: TOKEN, useExisting: Service }`) et l'exporte d'un scope global ; le consommateur l'injecte en
+`@Optional() @Inject(TOKEN)` et se dégrade sans lui. Un seul fournisseur par token et par projet.
+
+| Token | Interface | Fourni par | Consommé par |
+| --- | --- | --- | --- |
+| `KEY_VALUE_CACHE` | `KeyValueCache` | `infra` (`InfraModule.forRoot()`) | `user` (voir son README, « Modules optionnels ») |
+| `USER_METRICS_SINK` | `UserMetricsSink` | `infra` (Prometheus) | `user` |
+| `TIER_PRICING_PROVIDER` | `TierPricingProvider` | `commerce` | `user` |
+| `HEALTH_CONTRIBUTORS` | `HealthContributor` (ou tableau) | `infra` | `HealthController` (voir « Santé ») |
+| `USER_CONTACT` (2026-10-27) | `UserContactProvider { emailOf(userId): Promise<string \| null>; localeOf?(userId): Promise<string \| null> }` | `user` (`UserContactModule`, `@Global()`, importé par `UserModule`) | `issue-report` (e-mail de clôture d'un signalement) |
+
+`USER_CONTACT` est le sens inverse des autres : il permet à un module **public** de joindre un utilisateur sans importer
+le module privé `user` et sans garder sa propre copie de l'adresse. `emailOf` ne renvoie l'adresse que d'un compte actif
+et non supprimé (`null` sinon), `localeOf` sa langue préférée. Sans `user`, le token est absent : le consommateur
+n'envoie rien et le dit une fois dans le journal.
+
 ## Plugins
 
 `common/plugins/NestModulePlugin.ts` définit le descripteur que chaque module lié peut exporter (`<module>/plugin.ts`, export `plugin`) :
