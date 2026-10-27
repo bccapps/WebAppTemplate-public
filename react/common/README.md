@@ -616,6 +616,18 @@ front/src/themes/<id>/            # Thèmes privés de l'app
 
 Un composant partagé ne contient aucune couleur en dur : il lit le contrat de jetons (`theme/tokens.css`, valeurs du thème `default`) ou les jetons de son module, `<module>/styles/tokens.css` (`--<module>-<composant>-<rôle>`, valeurs par défaut en `:where(:root)`, donc surchargeables par n'importe quel thème sans toucher au composant). Pour `common` : `styles/tokens.css` (préfixe `--common-`). Les couleurs qui doivent être des valeurs résolues (canvas, librairies de graphiques, `alpha()` MUI, attributs SVG) ou qui sont des données (séries, avatars, couleurs choisies par l'utilisateur) restent en JS.
 
+### Garde-fou : `npm run theme:check`
+
+La règle « aucune couleur en dur » est vérifiée par `template/scripts/check-theme-colors.mjs` (`npm run theme:check` dans `front/`, `theme:audit` pour lister sans échouer). Il parcourt `front/src` (`.ts`, `.tsx`, `.css`, `.scss` ; les modules partagés de `modules_shared` sont ceux de la librairie, pas parcourus) et signale tout `#hex`, `rgb()`, `rgba()`, `hsl()`, `hsla()` hors :
+- les fichiers de jetons (`tokens.css`), le dossier du thème de l'app (`front/src/themes/`), les specs/tests et les commentaires ;
+- le **repli** d'un `var(--jeton, <repli>)` (le jeton reste la source) ; `rgba(var(--x-rgb), .3)` n'est pas un littéral ;
+- une ligne portant `theme-colors-ignore: <raison>` (ou suivant une telle ligne) et un fichier portant `theme-colors-ignore-file: <raison>` dans ses premières lignes : couleurs de **données** (séries, avatars, couleur choisie par l'utilisateur, couleur de marque d'un tiers, palette ANSI d'un terminal) ;
+- les chemins listés dans `.themecolorsrc.json` (`{ "ignore": ["^front/src/modules/jeu/engine/"] }`, regex relatives à la racine) : moteurs canvas/pixel-art dont les couleurs sont du dessin et non du chrome d'UI.
+
+Une app existante qui a déjà des littéraux enregistre l'état courant avec `node .libs/apptemplate/scripts/check-theme-colors.mjs --update-baseline` (`.themecolors-baseline.json`, `{ fichier: nombre }`) : `--check` n'échoue alors que sur un fichier qui **dépasse** son nombre, on rembourse ensuite fichier par fichier en relançant `--update-baseline`. Tests : `scripts/check-theme-colors.test.mjs`.
+
+Pour une couleur dont une API JS a besoin déjà résolue (canvas, graphiques, xterm), lire le jeton à l'exécution (`getComputedStyle(document.documentElement).getPropertyValue('--jeton')`) et relire au changement de thème ou de mode, plutôt que d'écrire le littéral.
+
 ### Feuilles partagées et feuilles d'app
 
 Aucune app ne garde de copie de `theme_default.css` : le contenu se répartit selon son propriétaire.

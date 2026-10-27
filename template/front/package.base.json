@@ -15,6 +15,8 @@
     "typecheck:specs": "node .libs/apptemplate/scripts/typecheck-specs.mjs front",
     "i18n:check": "node .libs/apptemplate/scripts/check-i18n.mjs --check",
     "i18n:audit": "node .libs/apptemplate/scripts/check-i18n.mjs",
+    "theme:check": "node .libs/apptemplate/scripts/check-theme-colors.mjs --check",
+    "theme:audit": "node .libs/apptemplate/scripts/check-theme-colors.mjs",
     "preview": "vite preview",
     "postinstall": "if [ -f .libs/apptemplate/scripts/link-shared.mjs ]; then node .libs/apptemplate/scripts/link-shared.mjs front; fi",
     "prebuild": "node .libs/apptemplate/scripts/build-package.mjs front && node .libs/apptemplate/scripts/link-shared.mjs front"

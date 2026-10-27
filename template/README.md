@@ -350,6 +350,7 @@ when they drift by more than ~2×:
 | `cd back && npm test` | all back unit tests | _to measure_ |
 | `cd front && npx vitest run <file>` | one front spec | _to measure_ |
 | `npm run i18n:check` | missing locale keys | _to measure_ |
+| `cd front && npm run theme:check` | color literals outside tokens/themes | _to measure_ |
 
 Memory (2026-10-23: a full back run with Jest's default 13 workers on a 14-core, 36 GB Mac grew to ~25 GB, next to a browser and IDEs,
 and the machine froze until a watchdog panic): `back/jest.config.js` and `createVitestConfig()` cap the workers at half the cores
