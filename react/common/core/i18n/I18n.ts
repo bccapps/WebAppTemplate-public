@@ -110,12 +110,10 @@ class I18n extends EventObject {
       let label: string = localesForLang[key];
       if (label) {
         if (params && params.length > 0) {
-          for (let i = 0; i < params.length; i++) {
-            label = label.replace(
-              '{' + i + '}',
-              params[i] != undefined ? params[i] : ''
-            );
-          }
+          // One pass: every occurrence of `{n}` (a label may repeat one), and a value is never re-scanned.
+          label = label.replace(/\{(\d+)\}/g, (placeholder, index) =>
+            Number(index) < params.length ? String(params[Number(index)] ?? '') : placeholder
+          );
         }
         retour = label;
       }
