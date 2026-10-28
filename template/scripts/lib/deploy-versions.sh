@@ -196,7 +196,8 @@ dv_sqlite_file()   { printf '/data/%s.db' "${PROJECT_NAME}"; }
 # Database backups. Kept per host (DEPLOY_DB_BACKUP_KEEP, default 2, read from back/.env at call time) and copied to
 # ./backups/deploy-<environment>/ at the end of the deploy (dv_download_backups, same count kept locally).
 #   SQLite   : at the switch (old back stopped, nothing writes), copy of the file inside the volume to
-#              /data/backups/<project>-pre-<revision>-<UTC ts>.db — every deploy: the automatic rollback restores it.
+#              /data/backups/<project>-pre-<revision>-<UTC ts>.db — every deploy: the automatic rollback restores it (left
+#              uncompressed: it is taken during the maintenance window; only the local copy is gzipped, dv_sqlite_gzip_level).
 #   Postgres : self-hosted `db` service, only with --migrate, --force-db-backup or DB_SCHEMA_MODE=sync. BEFORE the switch,
 #              while the old back still serves (pg_dump reads a consistent snapshot; writes made between the dump and the
 #              switch are not in it), into <remote app dir>/backups/<project>_pre-<revision>_<UTC ts>.dump on the server
@@ -290,6 +291,17 @@ dv_dump_compression() {
   printf '%s' "${value}"
 }
 
+# Compression of the SQLite local copy: the tar is gzip-compressed in the container, before it crosses the network (the
+# back image has gzip, not zstd). DEPLOY_DB_BACKUP_COMPRESSION: `gzip:<1-9>` sets the level, `none` keeps a plain tar,
+# anything else (the zstd:9 default of the Postgres dump included) gives gzip:6. Prints the level, nothing when off.
+dv_sqlite_gzip_level() {
+  local value level
+  value="$(dv_dump_compression)"
+  [[ "${value}" != "none" ]] || return 0
+  level="${value#gzip:}"
+  if [[ "${value}" == gzip:* && "${level}" =~ ^[1-9]$ ]]; then printf '%s' "${level}"; else printf '6'; fi
+}
+
 # Prints the compression actually used and the size of the dump from the remote shell's COMPRESSION=/SIZE= lines.
 dv_report_dump() {
   local used size
@@ -360,13 +372,22 @@ dv_queue_backup_download() {
   DV_DL_REF+=("$2")
 }
 
-# Copies one queued backup to <dest> (SQLite: tar of the file and its -wal/-shm companions). Returns 1 on failure.
+# Copies one queued backup to <dest> (SQLite: tar of the file and its -wal/-shm companions, gzip-compressed in the
+# container at <level> when given). Returns 1 on failure.
 dv_fetch_backup() {
-  local ref="$1" dest="$2"
+  local ref="$1" dest="$2" level="${3:-}"
   if [[ "${IS_SQLITE_DB:-0}" -eq 1 ]]; then
     dv_docker run --rm --entrypoint sh -v "$(dv_sqlite_volume):/data" "$(dv_any_back_image)" -c '
-      cd "$(dirname "$1")" && n="$(basename "$1")" && tar -cf - "$n" $(ls "$n-wal" "$n-shm" 2>/dev/null)
-    ' sh "${ref}" > "${dest}"
+      cd "$(dirname "$1")" && n="$(basename "$1")" || exit 1
+      if [ -n "$2" ]; then
+        tar -cf - "$n" $(ls "$n-wal" "$n-shm" 2>/dev/null) | gzip -"$2"
+      else
+        tar -cf - "$n" $(ls "$n-wal" "$n-shm" 2>/dev/null)
+      fi
+    ' sh "${ref}" "${level}" > "${dest}" || return 1
+    # a stream cut short (or a tar that failed before gzip got its EOF: no pipefail in the image's sh) is still a
+    # non-empty file: read the whole archive back
+    [[ -z "${level}" ]] || tar -tzf "${dest}" >/dev/null
   else
     scp "${DV_SCP_OPTS[@]}" "${DV_SSH_TARGET}:${ref}" "${dest}" >/dev/null
   fi
@@ -381,34 +402,37 @@ dv_download_backups() {
     echo "==> Local copy of the database backups disabled (DEPLOY_DB_BACKUP_DOWNLOAD=0)"
     return 0
   fi
-  local i dir pattern dest min_age recent
+  local i dir pattern dest min_age recent level
   dir="$(dv_local_backup_dir)"
   min_age="$(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 24)"
   mkdir -p "${dir}"
   for ((i = 0; i < ${#DV_DL_IDX[@]}; i++)); do
     dv_load_record "${DV_DL_IDX[i]}"
-    if [[ "${IS_SQLITE_DB:-0}" -eq 1 ]]; then pattern="${PROJECT_NAME}-pre-*.db.tar"; dest="${dir}/$(basename "${DV_DL_REF[i]}").tar"
-    else pattern="${PROJECT_NAME}_pre-*.dump"; dest="${dir}/$(basename "${DV_DL_REF[i]}")"; fi
+    # SQLite: .db.tar.gz, or .db.tar when compression is off; the pattern also covers copies of either kind (and the
+    # interrupted *.part ones are never counted, see below)
+    if [[ "${IS_SQLITE_DB:-0}" -eq 1 ]]; then
+      level="$(dv_sqlite_gzip_level)"; pattern="${PROJECT_NAME}-pre-*.db.tar*"; dest="${dir}/$(basename "${DV_DL_REF[i]}").tar${level:+.gz}"
+    else level=""; pattern="${PROJECT_NAME}_pre-*.dump"; dest="${dir}/$(basename "${DV_DL_REF[i]}")"; fi
     if [[ -f "${dest}" ]]; then
       echo "==> [BACK:${DV_HOST}] Database backup already copied locally (${dest})"
       continue
     fi
     if ! dv_backup_forced && [[ "${min_age}" -gt 0 ]]; then
-      recent="$(find "${dir}" -maxdepth 1 -name "${pattern}" -mmin -$((min_age * 60)) 2>/dev/null | head -n 1)"
+      recent="$(find "${dir}" -maxdepth 1 -name "${pattern}" ! -name '*.part' -mmin -$((min_age * 60)) 2>/dev/null | head -n 1)"
       if [[ -n "${recent}" ]]; then
         echo "==> [BACK:${DV_HOST}] A local backup copy younger than ${min_age} h exists (${recent}) — not copied again"
         continue
       fi
     fi
     echo "==> [BACK:${DV_HOST}] Copying the database backup to ${dest}"
-    if ! dv_fetch_backup "${DV_DL_REF[i]}" "${dest}.part" || [[ ! -s "${dest}.part" ]]; then
+    if ! dv_fetch_backup "${DV_DL_REF[i]}" "${dest}.part" "${level}" || [[ ! -s "${dest}.part" ]]; then
       rm -f "${dest}.part"
       warn "[BACK:${DV_HOST}] Could not copy ${DV_DL_REF[i]} locally — it stays on the server"
       continue
     fi
     mv -f "${dest}.part" "${dest}"
     # shellcheck disable=SC2012 # names are generated (no spaces/newlines)
-    ls -1t "${dir}"/${pattern} 2>/dev/null | tail -n +$(( $(dv_backup_keep) + 1 )) | while read -r f; do rm -f "${f}"; done
+    ls -1t "${dir}"/${pattern} 2>/dev/null | grep -v '\.part$' | tail -n +$(( $(dv_backup_keep) + 1 )) | while read -r f; do rm -f "${f}"; done
     echo "==> [BACK:${DV_HOST}] Local copy: ${dest} (last $(dv_backup_keep) kept in ${dir})"
   done
 }

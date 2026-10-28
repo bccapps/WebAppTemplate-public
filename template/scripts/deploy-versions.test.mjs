@@ -53,7 +53,18 @@ case "$cmd" in
   volume) if [ "\${1:-}" = inspect ]; then [ -f "$S/vol_$2" ]; exit $?; fi ;;
   run)
     if [ -n "\${STUB_RUN_FAIL:-}" ]; then exit 1; fi
-    case "$*" in *RESTORE_OK*) echo RESTORE_OK ;; *BACKUP_OK*) echo BACKUP_OK ;; *"tar -cf"*) echo TARDATA ;; esac ;;
+    case "$*" in
+      *RESTORE_OK*) echo RESTORE_OK ;;
+      *BACKUP_OK*) echo BACKUP_OK ;;
+      *"tar -cf"*)
+        # SQLite local copy: the last argument is the gzip level ("" = plain tar); STUB_TAR_CUT = a stream cut short
+        last="\${!#}"
+        if [ -n "$last" ]; then
+          printf TARDATA > "$STUB_STATE/testapp.db"
+          if [ -n "\${STUB_TAR_CUT:-}" ]; then tar -cf - -C "$STUB_STATE" testapp.db | gzip -"$last" -c | head -c 12
+          else tar -cf - -C "$STUB_STATE" testapp.db | gzip -"$last" -c; fi
+        else echo TARDATA; fi ;;
+    esac ;;
   exec) case "$*" in *pg_dump*) echo "-- pg dump" ;; esac ;;
   compose)
     proj=""; dir=""
@@ -849,7 +860,7 @@ test('backups: 2 kept by default on the volume (SQLite) and locally; a recent lo
   const local = path.join(p.root, 'backups/deploy-prod');
   mkdirSync(local, { recursive: true });
   const old = Date.now() / 1000 - 3 * 86400;
-  for (const [i, name] of ['testapp-pre-a-20261001T000000Z.db.tar', 'testapp-pre-b-20261002T000000Z.db.tar', 'other-pre-c.db.tar'].entries()) {
+  for (const [i, name] of ['testapp-pre-a-20261001T000000Z.db.tar', 'testapp-pre-b-20261002T000000Z.db.tar.gz', 'other-pre-c.db.tar'].entries()) {
     writeFileSync(path.join(local, name), 'x');
     utimesSync(path.join(local, name), old + i, old + i);
   }
@@ -861,11 +872,11 @@ test('backups: 2 kept by default on the volume (SQLite) and locally; a recent lo
     assert.match(backup, / 2$/, 'keep count passed to the volume backup');
     const files = readdirSync(local).sort();
     assert.equal(files.length, 3, files.join(','));
-    assert.ok(files.includes('testapp-pre-b-20261002T000000Z.db.tar') && files.includes('other-pre-c.db.tar'), 'oldest of this project pruned, other projects untouched');
-    const copy = files.find((f) => /^testapp-pre-abc1234-\d{8}T\d{6}Z\.db\.tar$/.test(f));
+    assert.ok(files.includes('testapp-pre-b-20261002T000000Z.db.tar.gz') && files.includes('other-pre-c.db.tar'), 'oldest (a legacy plain copy) pruned, other projects untouched');
+    const copy = files.find((f) => /^testapp-pre-abc1234-\d{8}T\d{6}Z\.db\.tar\.gz$/.test(f));
     assert.ok(copy);
     // a fast second run may land in the same second (same backup name): rename the fresh copy so the age rule is hit
-    renameSync(path.join(local, copy), path.join(local, 'testapp-pre-abc1234-20000101T000000Z.db.tar'));
+    renameSync(path.join(local, copy), path.join(local, 'testapp-pre-abc1234-20000101T000000Z.db.tar.gz'));
 
     writeFileSync(p.log, '');
     r = p.run(['prod', '--no-update-common', '--target=back']);
@@ -875,6 +886,64 @@ test('backups: 2 kept by default on the volume (SQLite) and locally; a recent lo
 
     r = p.run(['prod', '--no-update-common', '--target=back'], { DEPLOY_DB_BACKUP_DOWNLOAD: '0' });
     assert.match(strip(r.out), /Local copy of the database backups disabled/);
+  } finally { p.cleanup(); }
+});
+
+test('SQLite local copy: gzip-compressed in the container before the transfer (level 6 by default), a valid .db.tar.gz', () => {
+  const p = deployedProject();
+  const local = path.join(p.root, 'backups/deploy-prod');
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back']);
+    assert.equal(r.status, 0, r.out);
+    const copy = readdirSync(local).find((f) => /^testapp-pre-abc1234-\d{8}T\d{6}Z\.db\.tar\.gz$/.test(f));
+    assert.ok(copy, readdirSync(local).join(','));
+    assert.equal(spawnSync('tar', ['-tzf', path.join(local, copy)]).status, 0, 'the copy is a readable tar.gz');
+    assert.equal(spawnSync('tar', ['-xzOf', path.join(local, copy), 'testapp.db'], { encoding: 'utf8' }).stdout, 'TARDATA');
+    const fetch = p.logLines().find((l) => /\| gzip -"\$2"/.test(l));
+    assert.ok(fetch, 'the tar runs through gzip in the container');
+    assert.match(fetch, /sh \/data\/backups\/testapp-pre-abc1234-\d{8}T\d{6}Z\.db 6$/, 'level 6 passed to the container');
+    assert.equal(readdirSync(local).filter((f) => f.endsWith('.part')).length, 0);
+  } finally { p.cleanup(); }
+});
+
+test('SQLite local copy: DEPLOY_DB_BACKUP_COMPRESSION gzip:<level> sets the level, none keeps a plain .db.tar, others give gzip:6', () => {
+  for (const [value, ext, level] of [['gzip:9', '.db.tar.gz', '9'], ['none', '.db.tar', ''], ['zstd:19', '.db.tar.gz', '6'], ['gzip:12', '.db.tar.gz', '6']]) {
+    const p = deployedProject();
+    const local = path.join(p.root, 'backups/deploy-prod');
+    try {
+      const r = p.run(['prod', '--no-update-common', '--target=back'], { DEPLOY_DB_BACKUP_COMPRESSION: value });
+      assert.equal(r.status, 0, `${value}: ${r.out}`);
+      const files = readdirSync(local);
+      assert.ok(files.some((f) => f.endsWith(ext) && !f.endsWith('.part')), `${value}: ${files.join(',')}`);
+      assert.ok(!files.some((f) => f.endsWith(ext === '.db.tar' ? '.db.tar.gz' : '.db.tar')), `${value}: only one kind of copy`);
+      const fetch = p.logLines().find((l) => /\| gzip -"\$2"/.test(l));
+      assert.ok(fetch, `${value}: copy made`);
+      assert.match(fetch, new RegExp(`\\.db${level ? ` ${level}` : ''}$`), `${value}: level "${level}" passed (none = no level argument)`);
+    } finally { p.cleanup(); }
+  }
+});
+
+test('SQLite local copy: a stream cut short is detected (tar -tzf), nothing is kept, the deploy still succeeds', () => {
+  const p = deployedProject();
+  const local = path.join(p.root, 'backups/deploy-prod');
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_TAR_CUT: '1' });
+    assert.equal(r.status, 0, r.out);
+    assert.match(strip(r.out), /Could not copy .* locally/);
+    assert.deepEqual(existsSync(local) ? readdirSync(local) : [], [], 'no truncated copy left behind');
+  } finally { p.cleanup(); }
+});
+
+test('local copies: an interrupted *.part file is neither a recent copy nor counted for the pruning', () => {
+  const p = deployedProject();
+  const local = path.join(p.root, 'backups/deploy-prod');
+  mkdirSync(local, { recursive: true });
+  writeFileSync(path.join(local, 'testapp-pre-zzz-20990101T000000Z.db.tar.gz.part'), 'x');
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back']);
+    assert.equal(r.status, 0, r.out);
+    assert.doesNotMatch(strip(r.out), /younger than/);
+    assert.ok(readdirSync(local).some((f) => /^testapp-pre-abc1234-.*\.db\.tar\.gz$/.test(f)), 'the copy was made despite the leftover .part');
   } finally { p.cleanup(); }
 });
 
