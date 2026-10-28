@@ -10,6 +10,7 @@
 import '../../../styles/tokens.css';
 import { Box, Typography } from '@mui/material';
 import { i18n } from '../../../core/i18n/I18n';
+import { useThemeImage } from '../../../theme/hooks/useThemeImage';
 
 export interface ILoaderProps {
   size?: number;
@@ -17,7 +18,8 @@ export interface ILoaderProps {
   logoSrc?: string;
 }
 
-export const Loader = ({ size = 96, label = i18n.get('common.loading'), logoSrc = '/images/logo-main.svg' }: ILoaderProps) => {
+export const Loader = ({ size = 96, label = i18n.get('common.loading'), logoSrc }: ILoaderProps) => {
+  const themeLogo = useThemeImage('logoMain');
   const ringSize = size + 20;
 
   return (
@@ -47,7 +49,7 @@ export const Loader = ({ size = 96, label = i18n.get('common.loading'), logoSrc 
       >
         <Box
           component="img"
-          src={logoSrc}
+          src={logoSrc ?? themeLogo}
           alt=""
           sx={{
             width: size,
