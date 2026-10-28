@@ -1,0 +1,11 @@
+title = "WebAppTemplate gitleaks config"
+
+[extend]
+useDefault = true
+
+# Test files use obviously fake credentials (e.g. 'ahi_0123456789abcdefSECRET'); the generic rule
+# matches their shape. Other rules (AWS, GitHub tokens, private keys…) still apply to specs.
+[[allowlists]]
+description = "Fake credentials in unit tests"
+targetRules = ["generic-api-key"]
+paths = ['''\.spec\.ts$''']
