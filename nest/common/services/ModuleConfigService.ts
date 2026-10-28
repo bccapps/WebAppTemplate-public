@@ -121,7 +121,18 @@ export class ModuleConfigService {
   }
 
   /**
-   * Decrypt and return a single secret field's value, scoped to a registered module.
+   * Value of a secret field for the admin screen's reveal button: like `getDecryptedSecretValue` but only for a field
+   * that declared `revealable: true` — every other secret is write-only. Returns null otherwise.
+   */
+  getRevealableSecretValue(moduleId: string, key: string): string | null {
+    const field = this.registry.getSchema(moduleId)?.fields.find((f) => f.key === key);
+    if (!field || field.revealable !== true) return null;
+    return this.getDecryptedSecretValue(moduleId, key);
+  }
+
+  /**
+   * Decrypt and return a single secret field's value, scoped to a registered module. For server-side use (a service
+   * that needs the secret): it ignores `revealable`, so never hand its result to a route.
    * Returns null if the module/field doesn't exist or the field isn't of type 'secret'.
    */
   getDecryptedSecretValue(moduleId: string, key: string): string | null {

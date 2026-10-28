@@ -424,6 +424,7 @@ type ConfigFieldSchema = {
   group?: string;        // Groupe pour organiser les champs
   hidden?: boolean;      // Masque le champ dans l'UI générique
   visibleWhen?: { field: string; in: string[] };  // Visibilité conditionnelle — voir ci-dessous
+  revealable?: boolean;  // type 'secret' : l'admin peut relire la valeur (bouton 👁). Absent = écriture seule
 };
 
 type ModuleConfigSchema = {
@@ -482,7 +483,7 @@ import { ConfigurationSettings } from '@/modules_shared/common/components/ui/Con
 | Méthode | Endpoint | Description |
 | --- | --- | --- |
 | GET | `/api/v1/admin/module-configs` | Récupère tous les modules avec valeurs |
-| GET | `/api/v1/admin/module-configs/:moduleId/secret/:key` | Déchiffre et renvoie la valeur d'un champ `secret` (`getSecretValue`) |
+| GET | `/api/v1/admin/module-configs/:moduleId/secret/:key` | Déchiffre et renvoie la valeur d'un champ `secret` déclaré `revealable: true` (`getSecretValue`) |
 | PUT | `/api/v1/admin/module-configs/:moduleId` | Met à jour les valeurs d'un module |
 
 ### Types de champs supportés
@@ -501,7 +502,7 @@ import { ConfigurationSettings } from '@/modules_shared/common/components/ui/Con
 
 `ModuleConfigForm` accepte une prop `copyableKeys?: string[]` listant des clés de champs pour lesquelles afficher un bouton copier-coller.
 - Champs non-`secret` : le bouton copie directement la valeur affichée.
-- Champs `secret` : un bouton "Révéler" (👁) apparaît en plus, qui appelle `moduleConfigService.getSecretValue(moduleId, key)` (`GET /api/v1/admin/module-configs/:moduleId/secret/:key`, admin only) pour déchiffrer la valeur à la demande — jamais renvoyée par les endpoints `getModuleConfig`/`getAllWithValues`. Une fois révélée, la valeur s'affiche en clair (lecture seule) et devient copiable ; "Masquer" (🙈) l'efface de l'état du composant. La valeur révélée est aussi effacée automatiquement après un save ou un refetch.
+- Champs `secret` : un secret est **en écriture seule par défaut** (on le remplace ou on l'efface, il n'est jamais renvoyé, même à l'admin) ; le bouton "Révéler" (👁) n'apparaît que si le champ du schéma déclare `revealable: true` **et** figure dans `copyableKeys`. Il appelle `moduleConfigService.getSecretValue(moduleId, key)` (`GET /api/v1/admin/module-configs/:moduleId/secret/:key`, admin only) pour déchiffrer la valeur à la demande — jamais renvoyée par les endpoints `getModuleConfig`/`getAllWithValues`. Une fois révélée, la valeur s'affiche en clair (lecture seule) et devient copiable ; "Masquer" (🙈) l'efface de l'état du composant. La valeur révélée est aussi effacée automatiquement après un save ou un refetch.
 
 ```tsx
 <ModuleConfigForm moduleId="tokenCreator" groups={['signals']} copyableKeys={['token_solbixApiKey', 'token_pumpFunAuthToken']} />

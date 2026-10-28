@@ -53,10 +53,10 @@ export class ModuleConfigController {
   }
 
   @ApiOkResponse({
-    description: 'Decrypted value of a single secret field',
+    description: 'Decrypted value of a single secret field that declared `revealable: true`',
   })
   @ApiBadRequestResponse({
-    description: 'Module not found or field is not a secret field',
+    description: 'Module not found, field is not a secret field, or the secret is write-only (not `revealable`)',
     type: FunctionalException,
   })
   @Get('/api/v1/admin/module-configs/:moduleId/secret/:key')
@@ -64,9 +64,9 @@ export class ModuleConfigController {
     @Param('moduleId') moduleId: string,
     @Param('key') key: string,
   ): Promise<{ value: string }> {
-    const value = this.moduleConfigService.getDecryptedSecretValue(moduleId, key);
+    const value = this.moduleConfigService.getRevealableSecretValue(moduleId, key);
     if (value === null) {
-      throw new FunctionalException('MCC', `Secret field '${key}' not found for module '${moduleId}'`);
+      throw new FunctionalException('MCC', `Secret field '${key}' not found or not revealable for module '${moduleId}'`);
     }
     return { value };
   }

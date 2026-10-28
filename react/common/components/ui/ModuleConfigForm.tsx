@@ -270,7 +270,7 @@ const ModuleConfigForm: React.FC<ModuleConfigFormProps> = ({ moduleId, groups, c
 
     const isSecret = field.type === 'secret';
     const secretIsSet = isSecret && (config?.secretsIsSet?.[key] ?? false);
-    const isRevealable = isSecret && copyableKeys?.includes(key);
+    const isRevealable = isSecret && field.revealable === true && copyableKeys?.includes(key);
     const revealedVal = revealedValues[key];
     const isRevealed = isRevealable && revealedVal !== undefined;
     const isRevealing = revealingKey === key;

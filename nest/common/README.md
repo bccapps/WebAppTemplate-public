@@ -43,7 +43,7 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 | `GET` | `/api/v1/admin/module-configs/schemas` | Admin | Récupère tous les schémas de configuration de modules. |
 | `GET` | `/api/v1/admin/module-configs` | Admin | Récupère tous les modules avec leurs valeurs actuelles. |
 | `GET` | `/api/v1/admin/module-configs/:moduleId` | Admin | Récupère un module avec ses valeurs. |
-| `GET` | `/api/v1/admin/module-configs/:moduleId/secret/:key` | Admin | Déchiffre et renvoie la valeur d'un champ `secret` donné (`{ value }`). |
+| `GET` | `/api/v1/admin/module-configs/:moduleId/secret/:key` | Admin | Déchiffre et renvoie la valeur d'un champ `secret` donné (`{ value }`), **seulement s'il déclare `revealable: true`** ; un secret sans ce drapeau est en écriture seule (400, jamais renvoyé). |
 | `PUT` | `/api/v1/admin/module-configs/:moduleId` | Admin | Met à jour les valeurs de configuration d'un module (clés hors schéma ignorées ; valeurs modifiées validées par le champ du schéma — voir ci-dessous). |
 
 #### Écriture de la configuration : validation
@@ -343,6 +343,7 @@ type ConfigFieldSchema = {
   group?: string;        // Groupe pour organiser les champs
   hidden?: boolean;      // Masque le champ dans l'UI générique (géré par une UI dédiée)
   visibleWhen?: { field: string; in: string[] };  // Visibilité conditionnelle — voir ci-dessous
+  revealable?: boolean;  // type 'secret' : l'admin peut relire la valeur (route /secret/:key, bouton 👁). Absent = écriture seule
 };
 
 type ModuleConfigSchema = {
@@ -455,7 +456,7 @@ export class MonService {
 | GET | `/api/v1/admin/module-configs/schemas` | Récupère tous les schémas |
 | GET | `/api/v1/admin/module-configs` | Récupère tous les modules avec valeurs actuelles |
 | GET | `/api/v1/admin/module-configs/:moduleId` | Récupère un module avec ses valeurs |
-| GET | `/api/v1/admin/module-configs/:moduleId/secret/:key` | Déchiffre et renvoie la valeur d'un champ `secret` (`{ value }`) |
+| GET | `/api/v1/admin/module-configs/:moduleId/secret/:key` | Déchiffre et renvoie la valeur d'un champ `secret` déclaré `revealable: true` (`{ value }`) |
 | PUT | `/api/v1/admin/module-configs/:moduleId` | Met à jour les valeurs d'un module (valeurs modifiées validées par le champ du schéma : codes `CFG_*`, voir « Écriture de la configuration : validation ») |
 
 ### Seeding automatique des valeurs par défaut

@@ -57,6 +57,12 @@ export type ConfigFieldSchema = {
    * their stored value — they are just not shown nor editable.
    */
   visibleWhen?: ConfigFieldVisibility;
+  /**
+   * 'secret' fields only: an admin may read the stored value back (the eye button of `ModuleConfigForm`, the
+   * `/secret/:key` route) only when the field opts in with `true`. Absent = write-only: the value can be replaced
+   * or cleared but is never sent back, to the admin screen either.
+   */
+  revealable?: boolean;
 };
 
 export type ModuleConfigSchema = {

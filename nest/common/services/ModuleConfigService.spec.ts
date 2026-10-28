@@ -20,6 +20,7 @@ const SCHEMA: ModuleConfigSchema = {
     { key: 'marketIntelligence_ecbEnabled', label: 'ECB', description: '', type: 'boolean', defaultValue: true, group: 'sources' },
     { key: 'marketIntelligence_tradingEconomicsEnabled', label: 'TE', description: '', type: 'boolean', defaultValue: false, group: 'sources' },
     { key: 'marketIntelligence_fredApiKey', label: 'FRED key', description: '', type: 'secret', defaultValue: '', group: 'sources' },
+    { key: 'marketIntelligence_webhookToken', label: 'Token', description: '', type: 'secret', defaultValue: '', group: 'sources', revealable: true },
   ],
 };
 
@@ -57,6 +58,22 @@ describe('ModuleConfigService.getResolvedValue', () => {
   it('returns the raw value unchanged for a key no schema owns', () => {
     const service = makeService({ someUnrelatedKey: 'raw-value' });
     expect(service.getResolvedValue('someUnrelatedKey')).toBe('raw-value');
+  });
+});
+
+describe('ModuleConfigService.getRevealableSecretValue', () => {
+  it('serves only a secret that declared revealable: true — the others stay write-only', () => {
+    const service = makeService({ marketIntelligence_fredApiKey: 'fred', marketIntelligence_webhookToken: 'tok' });
+    expect(service.getRevealableSecretValue('marketIntelligence', 'marketIntelligence_webhookToken')).toBe('tok');
+    expect(service.getRevealableSecretValue('marketIntelligence', 'marketIntelligence_fredApiKey')).toBeNull();
+    // the server-side reader still gets every secret
+    expect(service.getDecryptedSecretValue('marketIntelligence', 'marketIntelligence_fredApiKey')).toBe('fred');
+  });
+
+  it('refuses a non-secret or unknown key', () => {
+    const service = makeService({ marketIntelligence_ecbEnabled: 'true' });
+    expect(service.getRevealableSecretValue('marketIntelligence', 'marketIntelligence_ecbEnabled')).toBeNull();
+    expect(service.getRevealableSecretValue('marketIntelligence', 'nope')).toBeNull();
   });
 });
 
