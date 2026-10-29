@@ -367,7 +367,7 @@ test('deploy: unhealthy back -> automatic rollback (retag, env, SQLite restore, 
     assert.equal(p.image('testapp_back:latest'), 'v1');
     assert.ok(indexOfLine(lines, /^ssh .*cp -p \.env\.previous \.env/, rb) >= 0, 'env restored');
     assert.ok(indexOfLine(lines, /^docker .* run --rm .*RESTORE_OK/, rb) >= 0, 'SQLite backup restored (new back never served)');
-    assert.ok(indexOfLine(lines, /^docker .*compose .* up -d --no-build back back-lb$/, rb) >= 0, 'up without build');
+    assert.ok(indexOfLine(lines, /^docker .*compose .* up -d --no-build back$/, rb) >= 0, 'up without build');
     assert.ok(indexOfLine(lines, /rm -f \/etc\/nginx\/maintenance\.flag/, rb) >= 0, 'maintenance off');
   } finally { p.cleanup(); }
 });
@@ -414,7 +414,7 @@ test('deploy: a failing database backup aborts and rolls back', () => {
     assert.match(r.out, /SQLite backup failed/);
     // the new back must never have been started
     const lines = p.logLines();
-    assert.equal(indexOfLine(lines, /^docker .*compose .* up -d back back-lb$/), -1);
+    assert.equal(indexOfLine(lines, /^docker .*compose .* up -d back$/), -1);
   } finally { p.cleanup(); }
 });
 
@@ -468,7 +468,7 @@ test('deploy: colocated Redis and self-hosted Postgres keep the internal-hostnam
     assert.ok(lines.includes('ENV_SNAPSHOT: SERVER_IP=10.0.0.1'));
     assert.ok(indexOfLine(lines, /compose .* rm -sf back back-worker$/) >= 0, 'db and redis are never stopped by a switch');
     assert.equal(indexOfLine(lines, /compose .* rm -sf .*\b(db|redis)\b/), -1);
-    assert.ok(indexOfLine(lines, /compose .* up -d back back-lb db redis$/) >= 0, 'up list includes db and redis (recreated only if changed)');
+    assert.ok(indexOfLine(lines, /compose .* up -d back db redis$/) >= 0, 'up list includes db and redis (recreated only if changed)');
   } finally { p.cleanup(); }
 });
 
@@ -568,6 +568,7 @@ test('manual rollback of the front swaps its images', () => {
 // back-worker sequencing (only `back` manages the schema) and BACK_WORKER=on|off
 // ---------------------------------------------------------------------------
 const WORKER_START = /^docker .*compose .* up -d --no-build --no-deps back-worker$/;
+const LB_START = /^docker .*compose .* up -d --no-build --no-deps back-lb$/;
 const HEALTH_WAIT = /compose .* ps --format \{\{\.Health\}\} back$/;
 const MAINT_OFF = /rm -f \/etc\/nginx\/maintenance\.flag/;
 
@@ -581,12 +582,14 @@ test('deploy BACK_WORKER on (default): up without back-worker, health wait, then
     assert.doesNotMatch(out, /back-worker disabled/);
     const lines = p.logLines();
     const build = indexOfLine(lines, /^docker .*compose .* build --pull back back-worker$/);
-    const up = indexOfLine(lines, /^docker .*compose .* up -d back back-lb$/);
+    const up = indexOfLine(lines, /^docker .*compose .* up -d back$/);
     const health = indexOfLine(lines, HEALTH_WAIT, up);
+    const lb = indexOfLine(lines, LB_START, health);
     const worker = indexOfLine(lines, WORKER_START);
     const maintOff = indexOfLine(lines, MAINT_OFF);
     assert.ok(build >= 0, 'both services built');
-    assert.ok(up >= 0 && health > up, 'up (no worker) then health wait');
+    assert.ok(up >= 0 && health > up, 'up (no worker, no back-lb) then health wait');
+    assert.ok(lb > health, 'back-lb started separately, after back is healthy (not bundled into the initial up)');
     assert.ok(worker > health, 'back-worker started after back is healthy');
     assert.ok(maintOff > worker, 'maintenance lifted after the worker start');
     assert.equal(indexOfLine(lines, /^COMPOSE_ENV\[(up|build)\]: BACK_NODE_ROLE=.+$/), -1, 'BACK_NODE_ROLE unset');
@@ -609,7 +612,7 @@ test('deploy BACK_WORKER=off: only back built, back-worker removed not started, 
       assert.equal(indexOfLine(lines, /compose .* build .*back-worker/), -1);
       assert.ok(indexOfLine(lines, /compose .* rm -sf back back-worker$/) >= 0, 'existing worker removed by the switch');
       assert.equal(indexOfLine(lines, /compose .* up .*back-worker/), -1, 'back-worker never started');
-      assert.ok(indexOfLine(lines, /compose .* up -d back back-lb$/) >= 0);
+      assert.ok(indexOfLine(lines, /compose .* up -d back$/) >= 0);
       assert.ok(lines.includes('COMPOSE_ENV[up]: BACK_NODE_ROLE=all'), 'BACK_NODE_ROLE=all reaches compose');
       assert.ok(lines.includes('COMPOSE_ENV[build]: BACK_NODE_ROLE=all'));
     } finally { p.cleanup(); }
@@ -675,7 +678,7 @@ test('deploy rollback path, worker on: up without back-worker, health, then back
     assert.equal(r.status, 3, r.out);
     const lines = p.logLines();
     const rb = indexOfLine(lines, /^docker .* tag testapp_back:previous testapp_back:latest$/);
-    const up = indexOfLine(lines, /^docker .*compose .* up -d --no-build back back-lb$/, rb);
+    const up = indexOfLine(lines, /^docker .*compose .* up -d --no-build back$/, rb);
     const health = indexOfLine(lines, HEALTH_WAIT, up);
     const worker = indexOfLine(lines, WORKER_START, rb);
     const maintOff = indexOfLine(lines, MAINT_OFF, rb);
@@ -693,7 +696,7 @@ test('deploy rollback path, worker off: back-worker removed, never started, NODE
     const rb = indexOfLine(lines, /^docker .* tag testapp_back:previous testapp_back:latest$/);
     assert.ok(rb >= 0);
     assert.equal(lines.filter((l) => /compose .* rm -sf back back-worker$/.test(l)).length, 2, 'worker removed by the switch AND by the rollback');
-    assert.ok(indexOfLine(lines, /^docker .*compose .* up -d --no-build back back-lb$/, rb) >= 0);
+    assert.ok(indexOfLine(lines, /^docker .*compose .* up -d --no-build back$/, rb) >= 0);
     assert.equal(indexOfLine(lines, /compose .* up .*back-worker/), -1);
     assert.ok(lines.slice(rb).includes('COMPOSE_ENV[up]: BACK_NODE_ROLE=all'));
     assert.match(strip(r.stdout), /back-worker disabled \(BACK_WORKER=off\): removed if present/);
@@ -1135,7 +1138,7 @@ exit 0
       assert.equal(r.status, 0, r.out);
       const lines = p.logLines();
       assert.deepEqual(lines.filter((l) => l.startsWith('hook ')), c.phases.map((phase) => `hook ${phase} 10.0.0.1`), `${c.order || 'default'} ${c.fail}`);
-      const up = indexOfLine(lines, /^docker .*compose .* up -d back back-lb$/);
+      const up = indexOfLine(lines, /^docker .*compose .* up -d back$/);
       const health = indexOfLine(lines, HEALTH_WAIT, up);
       assert.ok(up >= 0 && health > up, 'the back went up then was waited for');
       for (const phase of c.phases) {

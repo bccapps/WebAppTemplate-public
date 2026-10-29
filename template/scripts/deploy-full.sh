@@ -157,6 +157,48 @@ source "${BACK_ENV_FILE}"
 set +a
 COMPOSE_PROJECT_NAME="${PROJECT_NAME:?PROJECT_NAME is required}"
 
+# ── Deploy from `main` regardless of the branch checked out (opt-in, per-project: back/.env DEPLOY_FROM_MAIN=true) ──
+# A project working from `dev` (template convention) but wanting every deploy to ship only the user's own "roughly
+# stable" publish point (`main`), never whatever is checked out locally mid-feature. restore_deploy_branch() is
+# chained into every EXIT trap this script sets later (ssh_mux / build-context cleanup) so the original branch (and
+# any stashed local change) comes back no matter how the deploy ends — success, failure, rollback, Ctrl-C. Off by
+# default: a project that never sets DEPLOY_FROM_MAIN keeps deploying whatever branch is checked out, byte-for-byte
+# today's behaviour.
+DEPLOY_BRANCH_SWITCHED=0
+DEPLOY_STASHED=0
+DEPLOY_ORIGINAL_BRANCH=""
+restore_deploy_branch() {
+  [[ "${DEPLOY_BRANCH_SWITCHED}" -eq 1 ]] || return 0
+  git -C "${PROJECT_ROOT}" checkout "${DEPLOY_ORIGINAL_BRANCH}" >/dev/null 2>&1 \
+    || err "Could not switch back to '${DEPLOY_ORIGINAL_BRANCH}' after the deploy — check 'git status' in ${PROJECT_ROOT}."
+  if [[ "${DEPLOY_STASHED}" -eq 1 ]]; then
+    git -C "${PROJECT_ROOT}" stash pop >/dev/null 2>&1 \
+      || err "Could not restore the stashed changes — run 'git stash list' / 'git stash pop' manually in ${PROJECT_ROOT}."
+  fi
+  DEPLOY_BRANCH_SWITCHED=0
+}
+if [[ "$(printf '%s' "${DEPLOY_FROM_MAIN:-0}" | tr '[:upper:]' '[:lower:]')" =~ ^(1|true|on|yes)$ ]]; then
+  DEPLOY_ORIGINAL_BRANCH="$(git -C "${PROJECT_ROOT}" branch --show-current)"
+  if [[ -z "${DEPLOY_ORIGINAL_BRANCH}" ]]; then
+    err "DEPLOY_FROM_MAIN=true requires a checked-out branch (detached HEAD found) — aborting."
+    exit 1
+  fi
+  if [[ "${DEPLOY_ORIGINAL_BRANCH}" != "main" ]]; then
+    if [[ -n "$(git -C "${PROJECT_ROOT}" status --porcelain)" ]]; then
+      info "DEPLOY_FROM_MAIN=true: stashing local changes on '${DEPLOY_ORIGINAL_BRANCH}' before switching to main"
+      git -C "${PROJECT_ROOT}" stash push -u -m "deploy-full.sh: auto-stash before switching to main" >/dev/null
+      DEPLOY_STASHED=1
+    fi
+    DEPLOY_BRANCH_SWITCHED=1
+    trap restore_deploy_branch EXIT
+    info "DEPLOY_FROM_MAIN=true: switching from '${DEPLOY_ORIGINAL_BRANCH}' to main for this deploy"
+    git -C "${PROJECT_ROOT}" fetch origin main
+    git -C "${PROJECT_ROOT}" checkout main
+    git -C "${PROJECT_ROOT}" merge --ff-only origin/main \
+      || { err "Local main cannot fast-forward on origin/main — resolve manually, then re-run."; exit 1; }
+  fi
+fi
+
 # ── back-worker on/off (BACK_WORKER in back/.env: on (default) | off) ────────
 # off = no back-worker container: `back` runs as a single process with NODE_ROLE=all (API + background work). The
 # compose files read it through `NODE_ROLE: ${BACK_NODE_ROLE:-api}`; BACK_NODE_ROLE is exported here, so it reaches every
@@ -744,7 +786,7 @@ fi
 
 # Every ssh / scp / docker call below rides on one SSH connection per host (lib/ssh-mux.sh).
 ssh_mux_enable
-trap 'ssh_mux_close; dt_summary' EXIT   # extended with the build-dir cleanup once those exist (BUILD CONTEXT PREP)
+trap 'ssh_mux_close; dt_summary; restore_deploy_branch' EXIT   # extended with the build-dir cleanup once those exist (BUILD CONTEXT PREP)
 
 # ======================
 # SHARED DOCKER FILES (homogeneity)
@@ -858,7 +900,7 @@ cleanup_back_build() {
     rm -rf "${BACK_BUILD_DIR}"
   fi
 }
-trap 'cleanup_context; cleanup_front_build; cleanup_back_build; ssh_mux_close; dt_summary' EXIT
+trap 'cleanup_context; cleanup_front_build; cleanup_back_build; ssh_mux_close; dt_summary; restore_deploy_branch' EXIT
 
 # .cache / logs are runtime artefacts: already excluded by back/.dockerignore, so they never
 # reach an image — but staging them still cost two full local copies per deploy (measured
@@ -1367,6 +1409,23 @@ start_back_worker() {
     up -d --no-build --no-deps back-worker
 }
 
+# Starts the services that `depends_on: back: condition: service_healthy` (back-lb, vmagent) once `back` is
+# confirmed healthy by wait_for_back_healthy — never bundled into the initial `up -d back ...` (see
+# compute_back_services for why). `--no-deps`: back is already up and healthy, so this must not re-trigger that
+# same native wait. Best-effort: back-lb is normally unchanged (long-lived, just needs its upstream reloaded
+# separately — see the nginx -s reload call after this) and vmagent is a metrics sidecar off the request path;
+# neither is worth failing an otherwise good deploy over.
+start_back_dependents() {
+  local context_name="$1" docker_ssh_command="$2" project_name="$3" target_host="$4" vmagent_config="${5:-}"
+  [[ "${#BACK_SERVICES_UP_DEFERRED[@]}" -eq 0 ]] && return 0
+  VMAGENT_CONFIG_PATH="${vmagent_config}" \
+  DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
+    --project-directory "${BUILD_CONTEXT_DIR}" \
+    --project-name "${project_name}" \
+    up -d --no-build --no-deps "${BACK_SERVICES_UP_DEFERRED[@]}" \
+    || warn "[BACK:${target_host}] $(printf '%s ' "${BACK_SERVICES_UP_DEFERRED[@]}")did not (re)start — check manually"
+}
+
 # Fills BACK_SERVICES_STOP (stopped at the switch) and BACK_SERVICES_UP (started by `up -d`) for a back host.
 # Only the application containers are stopped: db and a colocated Redis keep running through the switch (`up -d`
 # recreates them only when their configuration changed), so a deploy never restarts Postgres (cold cache, extra wait)
@@ -1377,7 +1436,16 @@ compute_back_services() {
   # back-worker is always stopped/removed by a switch (also when BACK_WORKER=off, to drop an existing container), but
   # never part of BACK_SERVICES_UP: start_back_worker starts it once back is healthy (only `back` manages the schema).
   BACK_SERVICES_STOP=("back" "back-worker")
-  BACK_SERVICES_UP=("back" "back-lb")
+  # `back`'s own dependencies (db, redis) become healthy almost instantly (observed) and are safe to bring up
+  # together with it. back-lb and vmagent are started separately, by start_back_dependents, once
+  # wait_for_back_healthy's own polling confirms `back` is healthy: both `depends_on: back: condition:
+  # service_healthy`, and compose's native wait for that condition — triggered simply by sharing an `up -d` call
+  # with `back` — has been observed to give up well before the healthcheck's own start_period/retries budget
+  # (TradeKong, 2026-10-29: ~30s elapsed vs. a configured 120s start_period, 3/3 reproductions, `back` itself
+  # demonstrably healthy within seconds when inspected directly). Exactly the race start_back_worker below was
+  # already written to avoid for back-worker; back-lb/vmagent just never got the same treatment.
+  BACK_SERVICES_UP=("back")
+  BACK_SERVICES_UP_DEFERRED=("back-lb")
   if [[ "${IS_SELF_HOSTED_DB}" -eq 1 ]]; then
     BACK_SERVICES_UP+=("db")
   fi
@@ -1390,7 +1458,7 @@ compute_back_services() {
   fi
   if [[ -n "${PROMETHEUS_REMOTE_WRITE_URLS:-}" ]]; then
     BACK_SERVICES_STOP+=("vmagent")
-    BACK_SERVICES_UP+=("vmagent")
+    BACK_SERVICES_UP_DEFERRED+=("vmagent")
   fi
 }
 
@@ -1645,6 +1713,7 @@ deploy_back_host() {
   local serving=0
   if wait_for_back_healthy "${context_name}" "${docker_ssh_command}" "${project_name}" "${target_host}"; then
     dt_record "back ${target_host}:   new back started and healthy (up + boot)" "${t0}"
+    start_back_dependents "${context_name}" "${docker_ssh_command}" "${project_name}" "${target_host}" "${remote_dir}/vmagent.yml"
     t0="$(dt_now)"
     if start_back_worker "${context_name}" "${docker_ssh_command}" "${project_name}" "${target_host}" "${remote_dir}/vmagent.yml"; then
       serving=1
