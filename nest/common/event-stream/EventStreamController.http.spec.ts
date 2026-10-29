@@ -185,6 +185,14 @@ describe('EventStreamController over HTTP', () => {
     await reader.until(() => reader.ended, 2000);
   });
 
+  it('cycles a healthy connection after cycleMs, with no `expired` frame (Cloudflare-proxy workaround)', async () => {
+    await boot({}, false, 20_000, { cycleMs: 50 });
+    const reader = await open('/api/v1/events/stream?topics=x.a', admin);
+    await reader.until((t) => t.includes('event: ready'));
+    await reader.until(() => reader.ended, 2000);
+    expect(reader.text).not.toContain('event: expired');
+  });
+
   it('closes a connection whose client does not read once the pending output exceeds maxPendingBytes', async () => {
     await boot({}, false, 20_000, { maxPendingBytes: 64 * 1024, maxEventBytes: 16 * 1024 });
     const serverSockets: import('net').Socket[] = [];

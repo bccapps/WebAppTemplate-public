@@ -742,16 +742,21 @@ reconnecte et se réabonne seul. Après un retour à `ok`, relire les ressources
   la reprise est impossible. `EventStreamService.connectionCount` donne le nombre de connexions ouvertes du processus.
 - **Proxys** (`template/front/nginx.conf`, bloc `back-lb` de `template/scripts/docker-compose.yml`) : `location
   /api/v1/events/` avant `/api/`, avec `proxy_buffering off`, `proxy_cache off`, `gzip off`, `proxy_read_timeout 3600s`,
-  `proxy_http_version 1.1` et `Connection ""` (pas de `upgrade`). `docker-compose-cloud.yml` ne tamponne pas déjà
+  `proxy_http_version 1.1` et `Connection ""` (pas de `upgrade`). nginx envoie aussi, pour cette location,
+  `Cache-Control: no-cache, no-transform` et `X-Accel-Buffering: no` (`add_header`, après `proxy_hide_header
+  Cache-Control` pour ne pas dupliquer celui de Nest). `docker-compose-cloud.yml` ne tamponne pas déjà
   (`proxy_buffering off`, délais de 3600 s sur `/`) : pas de règle dédiée. Les apps reçoivent ces fichiers par lien
   (`front/nginx.conf` et `scripts/` pointent vers le gabarit) : vérifier qu'une app n'en garde pas une copie.
-  Le serveur envoie aussi `X-Accel-Buffering: no` et `Cache-Control: ... no-transform` (Nest), ce qui écarte la
-  compression `compression` de `main.ts` et le tampon de nginx même sans règle dédiée.
-- **Cloudflare** : coupe une connexion inactive vers 100 s ; la pulsation `: ping` de 20 s la maintient. Rien à régler
-  (pas de règle de cache ni de « Rocket Loader » sur `/api/`).
+- **Cloudflare (Free/Pro)** : coupe toute connexion proxied vers ~100 s — **constaté en reproduction live (2026-10-29,
+  TradeKong) : la pulsation `: ping` de 20 s ne suffit PAS à l'éviter**, ni les deux en-têtes ci-dessus (524 reproduit
+  à l'identique, à 125 s, avec et sans eux). Rien côté nginx/Cloudflare ne contourne ce palier sur ces plans ; la seule
+  parade vérifiée est côté serveur : `EventStreamOptions.cycleMs` (env `EVENT_STREAM_CYCLE_MS`, désactivé par défaut)
+  termine proprement une connexion saine avant ce délai — le client la rouvre tout de suite avec `Last-Event-ID` (même
+  chemin qu'un redémarrage de back, déjà exercé). À activer uniquement pour un déploiement derrière un tel proxy
+  (ex. TradeKong : 80000).
 - **Proxy de dev Vite** (`viteConfig.ts`) : `http-proxy` relaie le flux sans le tamponner et Vite n'ajoute aucune
   compression ; la compression est celle du back (écartée par `no-transform`). Aucun réglage requis.
-- Options (tests, réglage) : `{ provide: EVENT_STREAM_OPTIONS, useValue: { heartbeatMs, maxTopicsPerConnection, maxPendingBytes, ... } }`.
+- Options (tests, réglage) : `{ provide: EVENT_STREAM_OPTIONS, useValue: { heartbeatMs, cycleMs, maxTopicsPerConnection, maxPendingBytes, ... } }`.
 
 ## Points d'extension (`types/ExtensionPoints.ts`)
 

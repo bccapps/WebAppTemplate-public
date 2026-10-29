@@ -27,4 +27,10 @@ export interface EventStreamOptions {
   replayBufferSize?: number;
   /** Close a connection whose unsent output (`res.writableLength`) exceeds this many bytes. */
   maxPendingBytes?: number;
+  /**
+   * Proactively end a healthy connection after this long (the client reconnects with `Last-Event-ID`, no gap: see
+   * `EVENT_STREAM_CYCLE_MS` below). Disabled (0) by default: only a project behind a reverse proxy with a hard
+   * response-duration cap needs it (observed on Cloudflare Free/Pro: ~100 s, enforced even with a steady heartbeat).
+   */
+  cycleMs?: number;
 }

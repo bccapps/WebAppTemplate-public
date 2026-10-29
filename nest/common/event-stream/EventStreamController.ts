@@ -97,6 +97,9 @@ export class EventStreamController {
         }, delay),
       );
     }
+    // See `EventStreamOptions.cycleMs`: a plain clean end (no frame) reads as `ended` client-side, reconnected
+    // right away with `Last-Event-ID` — same path already exercised by an ordinary server restart/deploy.
+    if (this.events.cycleMs > 0) timers.push(setTimeout(() => sink.end(), this.events.cycleMs));
     timers.forEach((t) => t.unref());
     return timers;
   }

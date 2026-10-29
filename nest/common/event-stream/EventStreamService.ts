@@ -118,6 +118,7 @@ export class EventStreamService implements OnModuleInit, OnModuleDestroy {
       maxEventBytes: options?.maxEventBytes ?? MAX_EVENT_BYTES,
       replayBufferSize: options?.replayBufferSize ?? REPLAY_BUFFER_SIZE,
       maxPendingBytes: options?.maxPendingBytes ?? MAX_PENDING_BYTES,
+      cycleMs: options?.cycleMs ?? Number(process.env.EVENT_STREAM_CYCLE_MS) || 0,
     };
     this.replay = new ReplayBuffer(this.instanceId, this.limits.replayBufferSize);
   }
@@ -153,6 +154,11 @@ export class EventStreamService implements OnModuleInit, OnModuleDestroy {
 
   get heartbeatMs(): number {
     return this.limits.heartbeatMs;
+  }
+
+  /** 0 when disabled (default): see `EventStreamOptions.cycleMs`. */
+  get cycleMs(): number {
+    return this.limits.cycleMs;
   }
 
   /** Number of open connections on this process (monitoring, tests). */
