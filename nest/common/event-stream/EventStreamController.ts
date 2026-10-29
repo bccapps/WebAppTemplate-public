@@ -22,6 +22,14 @@ type AuthedRequest = Request & { user?: AuthPrincipal };
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
 /**
+ * Sent once per connection, right away: an SSE comment line (ignored by any compliant reader) large enough that an
+ * intermediary proxy/CDN buffering the response until it has "enough" bytes starts streaming immediately instead of
+ * holding a healthy, already-sent response until its own gateway timeout (observed on Cloudflare: a fast backend
+ * reply released to the client ~100s late, surfacing as a 524 the browser reports as a CORS failure).
+ */
+const STREAM_PADDING = 'x'.repeat(2048);
+
+/**
  * `GET /api/v1/events/stream?topics=a,b`. Authentication is the global auth interceptor (Bearer token, admin key, or
  * local trust): without a principal the route answers 401. `@NoTransportCrypt()`: Nest sends the SSE headers with
  * the first message, which must not be encrypted.
@@ -53,6 +61,7 @@ export class EventStreamController {
     const connection = await this.events.openConnection(principal, topics, sink, lastEventId);
     return new Observable<MessageEvent>((subscriber) => {
       const inner = subject.subscribe(subscriber);
+      subject.next({ comment: STREAM_PADDING });
       const timers = this.startTimers(principal, req, res, sink);
       return () => {
         timers.forEach((t) => clearTimeout(t));
