@@ -169,8 +169,19 @@ DEPLOY_STASHED=0
 DEPLOY_ORIGINAL_BRANCH=""
 restore_deploy_branch() {
   [[ "${DEPLOY_BRANCH_SWITCHED}" -eq 1 ]] || return 0
+  # Discard any uncommitted change to a TRACKED file made while on `main`: the build/package steps regenerate
+  # .env.example, package.json... from the template, and nothing legitimate is hand-edited on `main` by this script.
+  # Left in place, such a diff blocks the checkout below (observed 2026-10-29: back/.env.example regenerated
+  # mid-deploy blocked `git checkout dev`, stranding the repo on main with the stash still applied). Untracked files
+  # (caches, build artefacts) are never touched by checkout in the first place, so they are never stashed below either.
+  git -C "${PROJECT_ROOT}" checkout -- . 2>/dev/null || true
   git -C "${PROJECT_ROOT}" checkout "${DEPLOY_ORIGINAL_BRANCH}" >/dev/null 2>&1 \
     || err "Could not switch back to '${DEPLOY_ORIGINAL_BRANCH}' after the deploy — check 'git status' in ${PROJECT_ROOT}."
+  # `checkout` never resets a submodule's own working tree to the commit the branch just switched to records (that
+  # needs this separate call) — without it, back/.libs/{vx-public,vx-private} etc. stay wherever `main` (or whatever
+  # was deployed) left them, so `${DEPLOY_ORIGINAL_BRANCH}`'s own, possibly newer, submodule commits never come back.
+  git -C "${PROJECT_ROOT}" submodule update --init --recursive >/dev/null 2>&1 \
+    || warn "Could not resync submodules to '${DEPLOY_ORIGINAL_BRANCH}' — run 'git submodule update --init --recursive' manually in ${PROJECT_ROOT}."
   if [[ "${DEPLOY_STASHED}" -eq 1 ]]; then
     git -C "${PROJECT_ROOT}" stash pop >/dev/null 2>&1 \
       || err "Could not restore the stashed changes — run 'git stash list' / 'git stash pop' manually in ${PROJECT_ROOT}."
@@ -184,9 +195,12 @@ if [[ "$(printf '%s' "${DEPLOY_FROM_MAIN:-0}" | tr '[:upper:]' '[:lower:]')" =~ 
     exit 1
   fi
   if [[ "${DEPLOY_ORIGINAL_BRANCH}" != "main" ]]; then
-    if [[ -n "$(git -C "${PROJECT_ROOT}" status --porcelain)" ]]; then
+    # Tracked changes only: an untracked file (caches, build artefacts) is never touched by `checkout <branch>`, so
+    # there is nothing to protect by stashing it — and doing so anyway risks a stash the untracked half of which
+    # can't be popped back if that same path was (re)created in the meantime (observed 2026-10-29).
+    if [[ -n "$(git -C "${PROJECT_ROOT}" status --porcelain --untracked-files=no)" ]]; then
       info "DEPLOY_FROM_MAIN=true: stashing local changes on '${DEPLOY_ORIGINAL_BRANCH}' before switching to main"
-      git -C "${PROJECT_ROOT}" stash push -u -m "deploy-full.sh: auto-stash before switching to main" >/dev/null
+      git -C "${PROJECT_ROOT}" stash push -m "deploy-full.sh: auto-stash before switching to main" >/dev/null
       DEPLOY_STASHED=1
     fi
     DEPLOY_BRANCH_SWITCHED=1
@@ -196,6 +210,12 @@ if [[ "$(printf '%s' "${DEPLOY_FROM_MAIN:-0}" | tr '[:upper:]' '[:lower:]')" =~ 
     git -C "${PROJECT_ROOT}" checkout main
     git -C "${PROJECT_ROOT}" merge --ff-only origin/main \
       || { err "Local main cannot fast-forward on origin/main — resolve manually, then re-run."; exit 1; }
+    # Without this, a submodule (back/.libs/vx-public, vx-private...) stays checked out at whatever commit
+    # ${DEPLOY_ORIGINAL_BRANCH} last left it at — not the one `main` actually records — so the deploy would silently
+    # ship that other branch's library code under a `main` label instead of what was really published (observed
+    # 2026-10-29: `main` recorded an older vx-public than the one that ended up built and deployed).
+    git -C "${PROJECT_ROOT}" submodule update --init --recursive \
+      || { err "Could not sync submodules to main — resolve manually, then re-run."; exit 1; }
   fi
 fi
 
