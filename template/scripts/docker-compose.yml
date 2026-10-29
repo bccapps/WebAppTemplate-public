@@ -187,6 +187,7 @@ services:
                 gzip off;
                 proxy_hide_header Cache-Control;
                 add_header Cache-Control "no-cache, no-transform" always;
+                add_header X-Accel-Buffering "no" always;
                 proxy_read_timeout 3600s;
                 proxy_next_upstream error timeout http_502 http_503 http_504;
                 proxy_next_upstream_tries 2;
