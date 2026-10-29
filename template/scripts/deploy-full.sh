@@ -47,6 +47,9 @@ set -euo pipefail
 #   PROJECT_NAME, REMOTE_USER, REMOTE_SSH_PORT, SSH_KEY_FILE,
 #   REMOTE_CONTEXT_NAME, BACK_HOSTS (or REMOTE_HOST)
 #
+# DEPLOY_FROM_MAIN=true (back/.env, optional): deploy origin/main from a clean temporary clone (its own deploy-full.sh,
+# the submodule commits it records), never the working copy, left untouched (lib/deploy-from-main.sh).
+#
 # Front hosts (Docker mode):
 #   FRONT_HOSTS (or REMOTE_HOST)
 #
@@ -157,66 +160,18 @@ source "${BACK_ENV_FILE}"
 set +a
 COMPOSE_PROJECT_NAME="${PROJECT_NAME:?PROJECT_NAME is required}"
 
-# ── Deploy from `main` regardless of the branch checked out (opt-in, per-project: back/.env DEPLOY_FROM_MAIN=true) ──
-# A project working from `dev` (template convention) but wanting every deploy to ship only the user's own "roughly
-# stable" publish point (`main`), never whatever is checked out locally mid-feature. restore_deploy_branch() is
-# chained into every EXIT trap this script sets later (ssh_mux / build-context cleanup) so the original branch (and
-# any stashed local change) comes back no matter how the deploy ends — success, failure, rollback, Ctrl-C. Off by
-# default: a project that never sets DEPLOY_FROM_MAIN keeps deploying whatever branch is checked out, byte-for-byte
-# today's behaviour.
-DEPLOY_BRANCH_SWITCHED=0
-DEPLOY_STASHED=0
-DEPLOY_ORIGINAL_BRANCH=""
-restore_deploy_branch() {
-  [[ "${DEPLOY_BRANCH_SWITCHED}" -eq 1 ]] || return 0
-  # Discard any uncommitted change to a TRACKED file made while on `main`: the build/package steps regenerate
-  # .env.example, package.json... from the template, and nothing legitimate is hand-edited on `main` by this script.
-  # Left in place, such a diff blocks the checkout below (observed 2026-10-29: back/.env.example regenerated
-  # mid-deploy blocked `git checkout dev`, stranding the repo on main with the stash still applied). Untracked files
-  # (caches, build artefacts) are never touched by checkout in the first place, so they are never stashed below either.
-  git -C "${PROJECT_ROOT}" checkout -- . 2>/dev/null || true
-  git -C "${PROJECT_ROOT}" checkout "${DEPLOY_ORIGINAL_BRANCH}" >/dev/null 2>&1 \
-    || err "Could not switch back to '${DEPLOY_ORIGINAL_BRANCH}' after the deploy — check 'git status' in ${PROJECT_ROOT}."
-  # `checkout` never resets a submodule's own working tree to the commit the branch just switched to records (that
-  # needs this separate call) — without it, back/.libs/{vx-public,vx-private} etc. stay wherever `main` (or whatever
-  # was deployed) left them, so `${DEPLOY_ORIGINAL_BRANCH}`'s own, possibly newer, submodule commits never come back.
-  git -C "${PROJECT_ROOT}" submodule update --init --recursive >/dev/null 2>&1 \
-    || warn "Could not resync submodules to '${DEPLOY_ORIGINAL_BRANCH}' — run 'git submodule update --init --recursive' manually in ${PROJECT_ROOT}."
-  if [[ "${DEPLOY_STASHED}" -eq 1 ]]; then
-    git -C "${PROJECT_ROOT}" stash pop >/dev/null 2>&1 \
-      || err "Could not restore the stashed changes — run 'git stash list' / 'git stash pop' manually in ${PROJECT_ROOT}."
-  fi
-  DEPLOY_BRANCH_SWITCHED=0
-}
-if [[ "$(printf '%s' "${DEPLOY_FROM_MAIN:-0}" | tr '[:upper:]' '[:lower:]')" =~ ^(1|true|on|yes)$ ]]; then
-  DEPLOY_ORIGINAL_BRANCH="$(git -C "${PROJECT_ROOT}" branch --show-current)"
-  if [[ -z "${DEPLOY_ORIGINAL_BRANCH}" ]]; then
-    err "DEPLOY_FROM_MAIN=true requires a checked-out branch (detached HEAD found) — aborting."
-    exit 1
-  fi
-  if [[ "${DEPLOY_ORIGINAL_BRANCH}" != "main" ]]; then
-    # Tracked changes only: an untracked file (caches, build artefacts) is never touched by `checkout <branch>`, so
-    # there is nothing to protect by stashing it — and doing so anyway risks a stash the untracked half of which
-    # can't be popped back if that same path was (re)created in the meantime (observed 2026-10-29).
-    if [[ -n "$(git -C "${PROJECT_ROOT}" status --porcelain --untracked-files=no)" ]]; then
-      info "DEPLOY_FROM_MAIN=true: stashing local changes on '${DEPLOY_ORIGINAL_BRANCH}' before switching to main"
-      git -C "${PROJECT_ROOT}" stash push -m "deploy-full.sh: auto-stash before switching to main" >/dev/null
-      DEPLOY_STASHED=1
-    fi
-    DEPLOY_BRANCH_SWITCHED=1
-    trap restore_deploy_branch EXIT
-    info "DEPLOY_FROM_MAIN=true: switching from '${DEPLOY_ORIGINAL_BRANCH}' to main for this deploy"
-    git -C "${PROJECT_ROOT}" fetch origin main
-    git -C "${PROJECT_ROOT}" checkout main
-    git -C "${PROJECT_ROOT}" merge --ff-only origin/main \
-      || { err "Local main cannot fast-forward on origin/main — resolve manually, then re-run."; exit 1; }
-    # Without this, a submodule (back/.libs/vx-public, vx-private...) stays checked out at whatever commit
-    # ${DEPLOY_ORIGINAL_BRANCH} last left it at — not the one `main` actually records — so the deploy would silently
-    # ship that other branch's library code under a `main` label instead of what was really published (observed
-    # 2026-10-29: `main` recorded an older vx-public than the one that ended up built and deployed).
-    git -C "${PROJECT_ROOT}" submodule update --init --recursive \
-      || { err "Could not sync submodules to main — resolve manually, then re-run."; exit 1; }
-  fi
+# ── Deploy origin/main, never the working copy (opt-in, per project: back/.env DEPLOY_FROM_MAIN=true) ──
+# For a project working from `dev` (template convention) that wants every deploy to ship the user's own "roughly
+# stable" publish point, never whatever is checked out locally mid-feature. The working copy is shared by several
+# sessions: it is never checked out, stashed or switched, and none of its uncommitted or untracked files reach the
+# build. lib/deploy-from-main.sh clones origin/main (with the submodule commits it records) into a temporary tree, runs
+# THAT tree's deploy-full.sh from it and exits with its exit code. DEPLOY_FROM_MAIN_TREE marks that inner run. A
+# rollback builds nothing and runs here, as before. Off by default: unset, every deploy ships whatever is checked out,
+# byte-for-byte as before.
+if [[ "${ROLLBACK_MODE}" != "1" && -z "${DEPLOY_FROM_MAIN_TREE:-}" ]] \
+  && [[ "$(printf '%s' "${DEPLOY_FROM_MAIN:-0}" | tr '[:upper:]' '[:lower:]')" =~ ^(1|true|on|yes)$ ]]; then
+  source "${SCRIPT_DIR}/lib/deploy-from-main.sh"
+  dfm_run "$@"
 fi
 
 # ── back-worker on/off (BACK_WORKER in back/.env: on (default) | off) ────────
@@ -806,7 +761,7 @@ fi
 
 # Every ssh / scp / docker call below rides on one SSH connection per host (lib/ssh-mux.sh).
 ssh_mux_enable
-trap 'ssh_mux_close; dt_summary; restore_deploy_branch' EXIT   # extended with the build-dir cleanup once those exist (BUILD CONTEXT PREP)
+trap 'ssh_mux_close; dt_summary' EXIT   # extended with the build-dir cleanup once those exist (BUILD CONTEXT PREP)
 
 # ======================
 # SHARED DOCKER FILES (homogeneity)
@@ -920,7 +875,7 @@ cleanup_back_build() {
     rm -rf "${BACK_BUILD_DIR}"
   fi
 }
-trap 'cleanup_context; cleanup_front_build; cleanup_back_build; ssh_mux_close; dt_summary; restore_deploy_branch' EXIT
+trap 'cleanup_context; cleanup_front_build; cleanup_back_build; ssh_mux_close; dt_summary' EXIT
 
 # .cache / logs are runtime artefacts: already excluded by back/.dockerignore, so they never
 # reach an image — but staging them still cost two full local copies per deploy (measured

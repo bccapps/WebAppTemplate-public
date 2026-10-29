@@ -1081,7 +1081,7 @@ test('homogeneity: a project copy of a shared Docker file stops the deploy befor
 });
 
 test('portable sed: no BSD-only `sed -i \'\'` left, in-place helpers work and leave no backup file', () => {
-  for (const file of ['deploy-full.sh', 'run.sh', 'lib/deploy-versions.sh', 'lib/deploy-timing.sh', 'lib/ssh-mux.sh']) {
+  for (const file of ['deploy-full.sh', 'run.sh', 'lib/deploy-versions.sh', 'lib/deploy-timing.sh', 'lib/ssh-mux.sh', 'lib/deploy-from-main.sh']) {
     assert.doesNotMatch(readFileSync(path.join(SCRIPTS_DIR, file), 'utf8'), /sed -i ''/, file);
   }
   const dir = mkdtempSync(path.join(tmpdir(), 'dv-sed-'));
@@ -1105,7 +1105,7 @@ dv_env_set "${envFile}" DEPLOY_REVISION def
 });
 
 test('every modified shell script passes bash -n; shellcheck when installed', (t) => {
-  const files = ['run.sh', 'deploy-full.sh', 'lib/deploy-versions.sh', 'lib/deploy-timing.sh', 'lib/ssh-mux.sh'].map((f) => path.join(SCRIPTS_DIR, f));
+  const files = ['run.sh', 'deploy-full.sh', 'lib/deploy-versions.sh', 'lib/deploy-timing.sh', 'lib/ssh-mux.sh', 'lib/deploy-from-main.sh'].map((f) => path.join(SCRIPTS_DIR, f));
   for (const f of files) {
     const res = spawnSync('bash', ['-n', f], { encoding: 'utf8' });
     assert.equal(res.status, 0, `${f}: ${res.stderr}`);
