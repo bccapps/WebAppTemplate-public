@@ -1,0 +1,32 @@
+{
+  "targets": {
+    "front": "https://app.example.com",
+    "api": "https://api.example.com/api/v1"
+  },
+  "auth": { "userCount": 100, "prefix": "loadtest" },
+  "model": { "mix": { "registered": 0.4, "anonymous": 0.6 }, "thinkSec": [3, 15], "coldLoadRatio": { "registered": 0.2, "anonymous": 0.9 } },
+  "journeys": {
+    "registered": [
+      { "name": "home", "weight": 5, "requests": [[{ "path": "/home/bootstrap" }, { "path": "/users/me" }]] }
+    ],
+    "anonymous": [
+      { "name": "landing", "weight": 1, "requests": [{ "path": "/health" }] }
+    ]
+  },
+  "monitor": {
+    "prometheus": {
+      "url": "https://prometheus.example.com",
+      "queries": [
+        {
+          "name": "cpu_pct",
+          "query": "100 - avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[1m])) * 100",
+          "unit": "%",
+          "guard": { "max": 85 }
+        }
+      ]
+    },
+    "postgres": { "enabled": false, "envFile": "back/.env" },
+    "redis": { "enabled": false, "envFile": "back/.env" }
+  },
+  "cloudflare": { "zone": "example.com", "tokenEnv": "CLOUDFLARE_API_TOKEN" }
+}
