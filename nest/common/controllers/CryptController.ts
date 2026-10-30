@@ -8,6 +8,7 @@
  */
 
 import { BadRequestException, Body, Controller, Get, Post, UseInterceptors } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { DecryptPayloadDto } from '../dtos/DecryptPayloadDto';
 import { ApiTags } from '@nestjs/swagger';
 import { CryptSessionService } from '../services/CryptSessionService';
@@ -16,7 +17,16 @@ import { CreateSessionDto } from '../dtos/CreateSessionDto';
 import { Public } from '../decorators/Public';
 import { AdminOnlyInterceptor } from '../interceptors/AdminOnlyInterceptor';
 
-@Public()
+/**
+ * Budget of the anonymous transport handshake (an ECDH computation and a stored session each): a browser opens one per
+ * page load and renews it when it expires; several users behind one NAT share it.
+ */
+export const CRYPT_SESSION_THROTTLE = { limit: 30, ttl: 60_000 };
+
+/**
+ * Transport-encryption handshake (public) and the admin decryption tool. `@Public()` is set per route, never on the
+ * class: `admin/decrypt` must go through the global auth interceptor so that `AdminOnlyInterceptor` sees `req.user`.
+ */
 @ApiTags('crypt')
 @Controller('/api/v1/crypt')
 export class CryptController {
@@ -25,6 +35,7 @@ export class CryptController {
     private readonly cryptService: CryptService,
   ) {}
 
+  @Public()
   @Get('public-key')
   getPublicKey() {
     return {
@@ -33,12 +44,20 @@ export class CryptController {
     };
   }
 
+  @Public()
+  @Throttle({ default: CRYPT_SESSION_THROTTLE })
   @Post('session')
   async createSession(@Body() body: CreateSessionDto) {
     if (!body?.clientPublicKey || typeof body.clientPublicKey !== 'string') {
       throw new BadRequestException('clientPublicKey is required');
     }
-    const result = await this.cryptSessionService.createSession(body.clientPublicKey);
+    let result: Awaited<ReturnType<CryptSessionService['createSession']>>;
+    try {
+      result = await this.cryptSessionService.createSession(body.clientPublicKey);
+    } catch {
+      // Storage failures fail open inside the service: what reaches here is a malformed key or an invalid curve point.
+      throw new BadRequestException('clientPublicKey must be an uncompressed P-256 public key');
+    }
     return {
       ...result,
       ttlMs: this.cryptSessionService.getSessionTtlMs(),

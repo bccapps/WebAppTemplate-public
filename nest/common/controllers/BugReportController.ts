@@ -8,12 +8,16 @@
  */
 
 import { Body, Controller, Post, Req } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { BugReportDto } from '../dtos/BugReportDto';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { EmailService } from '../services/EmailService';
 import { ModuleConfigService } from '../services/ModuleConfigService';
 import { FunctionalException } from '../exceptions/FunctionalException';
+
+/** Budget of bug reports (each one sends an email; reachable without a token when the app runs in anonymous mode). */
+export const BUG_REPORT_THROTTLE = { limit: 5, ttl: 3_600_000 };
 
 /** The report fields are user input embedded in an HTML email: escaped so they cannot inject markup or links. */
 function escapeHtml(value: string): string {
@@ -29,6 +33,7 @@ export class BugReportController {
   ) {}
 
   @ApiOkResponse({ description: 'Send a bug report email' })
+  @Throttle({ default: BUG_REPORT_THROTTLE })
   @Post('/api/v1/common/bug-report')
   async sendBugReport(
     @Body() body: BugReportDto,

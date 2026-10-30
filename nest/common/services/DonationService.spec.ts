@@ -6,7 +6,7 @@
  *
  * Licensed under the MIT License. See LICENSE in the project root.
  */
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals';
 import { BadRequestException, ServiceUnavailableException } from '@nestjs/common';
 
 const checkoutSessionsCreate: jest.Mock<(...args: any[]) => Promise<{ url: string | null }>> = jest.fn();
@@ -16,6 +16,7 @@ jest.mock('stripe', () => ({
 }));
 
 import { DonationService } from './DonationService';
+import { recordAllowedClientOrigins, resetAllowedClientOrigins } from '../bootstrap/clientOrigins';
 import type { ModuleConfigService } from './ModuleConfigService';
 import type { DonationPriceService } from './DonationPriceService';
 
@@ -121,6 +122,10 @@ describe('DonationService.getQuote', () => {
 });
 
 describe('DonationService.createStripeCheckoutSession', () => {
+  // The front origins applied by configureHttpApp (CLIENT_ORIGINS).
+  beforeAll(() => recordAllowedClientOrigins(['https://app', 'https://www.app.example']));
+  afterAll(() => resetAllowedClientOrigins());
+
   it('creates a Checkout session for the USD amount and returns its URL', async () => {
     checkoutSessionsCreate.mockReset();
     checkoutSessionsCreate.mockResolvedValue({ url: 'https://checkout.stripe.com/pay/cs_test_x' });
@@ -130,6 +135,37 @@ describe('DonationService.createStripeCheckoutSession', () => {
     expect(checkoutSessionsCreate).toHaveBeenCalledWith(
       expect.objectContaining({ success_url: 'https://app/success', cancel_url: 'https://app/cancel' }),
     );
+  });
+
+  it('accepts any allowed front origin and resolves a /path against the first one', async () => {
+    checkoutSessionsCreate.mockReset();
+    checkoutSessionsCreate.mockResolvedValue({ url: 'https://checkout.stripe.com/pay/cs_test_y' });
+    const service = new DonationService(makeModuleConfigService(), makePriceService({}));
+    await service.createStripeCheckoutSession({ amountUsd: 5, successUrl: 'https://www.app.example/d?donation=success', cancelUrl: '/d?donation=cancelled' });
+    expect(checkoutSessionsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ success_url: 'https://www.app.example/d?donation=success', cancel_url: 'https://app/d?donation=cancelled' }),
+    );
+  });
+
+  it.each([
+    ['https://evil.example/phish', 'https://app/cancel'],
+    ['https://app/success', '//evil.example/x'],
+    ['javascript:alert(1)', 'https://app/cancel'],
+    ['https://app/success', 'https://app.evil.example/'],
+  ])('refuses a redirect outside the front origins (%p, %p) without calling Stripe', async (successUrl, cancelUrl) => {
+    checkoutSessionsCreate.mockReset();
+    const service = new DonationService(makeModuleConfigService(), makePriceService({}));
+    await expect(service.createStripeCheckoutSession({ amountUsd: 5, successUrl, cancelUrl })).rejects.toBeInstanceOf(BadRequestException);
+    expect(checkoutSessionsCreate).not.toHaveBeenCalled();
+  });
+
+  it.each([0.1, 1_000_000, Number.NaN])('refuses the amount %p (also when the app has no validation pipe)', async (amountUsd) => {
+    checkoutSessionsCreate.mockReset();
+    const service = new DonationService(makeModuleConfigService(), makePriceService({}));
+    await expect(service.createStripeCheckoutSession({ amountUsd, successUrl: 'https://app/s', cancelUrl: 'https://app/c' })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(checkoutSessionsCreate).not.toHaveBeenCalled();
   });
 
   it('refuses to create a session when no Stripe secret key is configured', async () => {

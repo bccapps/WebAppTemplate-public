@@ -85,10 +85,14 @@ export class LocaleService {
   }
 
   /**
-   * get locale of app for the given cateogry
-   * @returns
+   * Locale of one category (public `GET /api/v1/locales/:category`). Memoized per category for the same TTL as
+   * `getAllLocales`: an anonymous caller would otherwise trigger synchronous directory scans and file reads on every
+   * request. Only categories backed by a file are cached (a finite set); `clearAllLocalesCache()` empties it too.
    */
   async getLocale(category: string): Promise<any> {
+    const now = Date.now();
+    const cached = this.categoryCache.get(category);
+    if (cached && cached.expiresAt > now) return cached.payload;
     const { legacyPath, moduleLocaleDirs } = this.resolveLocaleDirectories();
     const pathsToScan = [legacyPath, ...moduleLocaleDirs];
     const files = this.collectLocaleFiles(pathsToScan, (fn) => fn.startsWith(category + '.'));
@@ -96,9 +100,12 @@ export class LocaleService {
     if (!files || files.length == 0) {
       throw new FunctionalException('LOC', 'Locale category not found');
     }
-    const locale = this.buildLocalePayload(files);
-    return locale[category];
+    const payload = this.buildLocalePayload(files)[category];
+    this.categoryCache.set(category, { payload, expiresAt: now + LocaleService.ALL_LOCALES_CACHE_TTL_MS });
+    return payload;
   }
+
+  private readonly categoryCache = new Map<string, { payload: any; expiresAt: number }>();
 
   /**
    * All locales, merged across the legacy `locales/` tree and every module's own
@@ -140,9 +147,10 @@ export class LocaleService {
     return payload;
   }
 
-  /** Forces the next `getAllLocales()` call to re-read locale files from disk. */
+  /** Forces the next `getAllLocales()` / `getLocale()` call to re-read locale files from disk. */
   clearAllLocalesCache(): void {
     this.allLocalesCache = null;
+    this.categoryCache.clear();
   }
 
   private allLocalesCache: { payload: Record<string, Record<string, any>>; expiresAt: number } | null = null;

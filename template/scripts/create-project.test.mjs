@@ -51,6 +51,7 @@ test('anonymous project: --yes, no question, generated configuration, replayable
   assert.doesNotMatch(readFileSync(path.join(app, 'back', '.env.example'), 'utf8'), /JWT_SECRET|@module/);
   assert.doesNotMatch(readFileSync(path.join(app, 'front', '.env.example'), 'utf8'), /REOWN/);
   assert.match(readFileSync(path.join(app, 'back', 'src', 'config', 'defaultConfig.ts'), 'utf8'), /name: 'localesLanguages', value: 'en'/);
+  assert.match(readFileSync(path.join(app, 'back', 'src', 'config', 'defaultConfig.ts'), 'utf8'), /name: 'common_throttleEnabled', value: 'true'/);
   assert.deepEqual(readdirSync(path.join(app, 'back', 'src', 'locales')).sort(), ['common.en.json', 'custom.en.json']);
   assert.deepEqual(json(path.join(app, 'back', 'src', 'locales', 'common.en.json')), json(path.join(REPO, 'template', 'back', 'locales', 'common.en.json')), 'common locales seeded from the canonical subset');
   assert.equal(existsSync(path.join(app, 'back', 'src', 'modules_shared', 'voice')), true, 'link-shared ran');

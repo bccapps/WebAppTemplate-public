@@ -13,7 +13,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   DB_ENGINES, appendModuleEnv, databaseIncompatibilities, dbFamily, applyEnvValues, buildConfigEntries, buildEnvFromAnswers, buildSharedModules, dependentsOf,
-  filterEnvExample, loadCatalog, patchDefaultConfig, resolveModules, resolveProject, validateAnswers,
+  buildNewProjectConfigEntries, filterEnvExample, loadCatalog, patchDefaultConfig, resolveModules, resolveProject, validateAnswers,
   withQuestionDefaults,
 } from './lib/project-engine.mjs';
 import { addConfigEntries, missingEnvLines } from './add-module.mjs';
@@ -148,6 +148,19 @@ test('env helpers: manifest variables appended once, values uncomment or append,
   assert.match(text2, /# JWT_SECRET=/);
   assert.equal(applyEnvValues('# PORT=1\nB=2\n', { PORT: 9, NEW: 'x' }), 'PORT=9\nB=2\nNEW=x\n');
   assert.deepEqual(missingEnvLines('# A=1\nB=2\n# C=3\n', 'B=9\n'), ['# A=1', '# C=3']);
+  libs.cleanup();
+});
+
+test('a new project starts with the rate limiter of common on; add-module entries never add it', () => {
+  const libs = makeLibs();
+  const catalog = loadCatalog({ public: libs.pub, private: libs.priv });
+  const answers = withQuestionDefaults(catalog, { ...base, privateAccess: true, multiUser: true });
+  const ids = resolveProject(catalog, answers).ids;
+  const created = buildNewProjectConfigEntries(catalog, answers, ids);
+  assert.deepEqual(created[0], { name: 'common_throttleEnabled', value: 'true', description: 'Global rate limiter of common on (create-project)' });
+  assert.equal(created.filter((e) => e.name === 'common_throttleEnabled').length, 1);
+  assert.deepEqual(created.slice(1), buildConfigEntries(catalog, answers, ids), 'then the entries of the answers, unchanged');
+  assert.equal(buildConfigEntries(catalog, answers, ids).some((e) => e.name === 'common_throttleEnabled'), false, 'add-module path');
   libs.cleanup();
 });
 

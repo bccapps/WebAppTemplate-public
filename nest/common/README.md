@@ -79,13 +79,15 @@ Les deux routes d'écriture admin valident ce qu'elles stockent, **uniquement po
 ### Locales (`LocaleController`)
 | Méthode | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
-| `GET` | `/api/v1/locales/:category` | Public | Récupère les traductions pour une catégorie donnée. **Exemptée du chiffrement de transport** (`@NoTransportCrypt`, appliqué au niveau classe — voir plus bas) ; `Cache-Control: public, max-age=300, stale-while-revalidate=86400`. |
+| `GET` | `/api/v1/locales/:category` | Public | Récupère les traductions pour une catégorie donnée, mémoïsées par catégorie (même TTL de 5 min que `/locales` ; seules les catégories adossées à un fichier sont gardées, `clearAllLocalesCache()` vide aussi ce cache). **Exemptée du chiffrement de transport** (`@NoTransportCrypt`, appliqué au niveau classe — voir plus bas) ; `Cache-Control: public, max-age=300, stale-while-revalidate=86400`. |
 | `GET` | `/api/v1/locales` | Public | Toutes les catégories, toutes langues confondues. Query `?lang=fr` (optionnel) : ne renvoie que cette langue (`{ fr: {...} }`) au lieu de toutes — le front ne charge que la langue active au boot (PERFORMANCE_PLAN.md §1.3), et bascule sur l'autre à la demande (`LocaleService.ensureLangLoaded`, voir README front `reactcommon/common`). Payload mémoïsé côté service (TTL 5 min) — voir `LocaleService.getAllLocales`. **Exemptée du chiffrement de transport** ; `Cache-Control` idem ci-dessus. `?lang=` fait partie de l'URL donc du cache key (pas de `Vary` nécessaire). |
 
 ### Transport chiffré (`CryptController`)
 | Méthode | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
-| `POST` | `/api/v1/crypt/session` | Public | Initie une session de chiffrement ECDH (échange de clés publiques). |
+| `GET` | `/api/v1/crypt/public-key` | Public | Clé publique ECDH du serveur et durée de session (`{ publicKey, ttlMs }`). |
+| `POST` | `/api/v1/crypt/session` | Public | Initie une session de chiffrement ECDH (échange de clés publiques, `clientPublicKey` ≤ 256 caractères ; clé invalide : 400). Budget `CRYPT_SESSION_THROTTLE` (30 / min par IP, voir « Limiteur de débit »). Sessions vivantes plafonnées par `common_cryptSessionMaxLive` (défaut 50 000) : au-delà, `CryptSessionService` évince les plus anciennes (mémoire : ordre d'insertion ; Redis : ensemble trié `crypt:session-index` + script Lua atomique) ; une session évincée fait seulement repartir les réponses en clair (sur HTTPS) jusqu'à la renégociation du navigateur. |
+| `POST` | `/api/v1/crypt/admin/decrypt` | Admin | Déchiffre une valeur de colonne chiffrée (`DecryptPayloadDto`). `@Public()` est posé route par route, jamais sur la classe : sinon l'intercepteur d'auth global ne pose pas `req.user` et `AdminOnlyInterceptor` refusait tout le monde (corrigé 2026-10-29). |
 
 #### Compression avant chiffrement (compress-then-encrypt)
 `TransportCryptInterceptor` peut deflater le JSON **avant** l'AES-GCM (PERFORMANCE_PLAN.md §2.3) — un
@@ -169,7 +171,12 @@ Sans contributeur, la route répond `{ status: 'ok', checks: {} }` : un projet p
 ### Cookie consent (`CookieConsentController`)
 | Méthode | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
-| `POST` | `/api/v1/cookie-consent` | Public | Journalise un choix de consentement (`CookieConsentLogDto { categories: { necessary: true, audienceMeasurement: boolean } }`, validé) — preuve de consentement CNIL, anonyme (pas de résolution d'utilisateur, `userId` toujours `null` aujourd'hui — voir `CookieConsentController`). Appelé en fire-and-forget par `CookieConsentBanner`/`CookieConsentSettingsModal` (front), erreurs ignorées côté client. |
+| `POST` | `/api/v1/cookie-consent` | Public | Journalise un choix de consentement (`CookieConsentLogDto { categories: { necessary: true, audienceMeasurement: boolean } }`, validé) — preuve de consentement CNIL, anonyme (pas de résolution d'utilisateur, `userId` toujours `null` aujourd'hui — voir `CookieConsentController`). Appelé en fire-and-forget par `CookieConsentBanner`/`CookieConsentSettingsModal` (front), erreurs ignorées côté client. IP enregistrée = `req.ip` (`extractClientIp`, jamais le premier `X-Forwarded-For`) ; budget `COOKIE_CONSENT_THROTTLE` (10 / 10 min par IP) ; corps borné par le DTO (`whitelist`) et les troncatures du service (IP ≤ 128, user-agent ≤ 256). |
+
+### Signalement de bug (`BugReportController`)
+| Méthode | Endpoint | Auth | Description |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/common/bug-report` | Principal authentifié (sans jeton en mode `anonymous`) | Envoie le rapport (`BugReportDto`) à `common_bugReport_recipientEmail`. Budget `BUG_REPORT_THROTTLE` (5 / h par utilisateur ou IP) : chaque appel envoie un e-mail. |
 
 DTO des corps (2026-10-18, `dtos/`) : `CookieConsentLogDto`, `BugReportDto` (`POST /api/v1/common/bug-report` : sujet ≤ 300, description ≤ 20 000 ; l'id du rapporteur vient de `req.user`, les champs sont échappés dans l'email HTML), `ThemeCreateDto` / `ThemeCssUpdateDto` (thèmes admin, CSS ≤ 1 000 000), `TestEmailDto`, `DecryptPayloadDto` (`admin/decrypt`). `PUT /configurations` (tableau) et `PUT /admin/module-configs/:moduleId` (map dynamique) restent sans DTO de classe : leur validation est faite dans le service (voir « Écriture de la configuration : validation »), car elle compare chaque entrée à la valeur stockée.
 
@@ -180,16 +187,7 @@ Widget de don non-custodial : affiche une adresse/QR/lien à payer, ne confirme 
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/donations/config` | Public | Configuration publique (méthodes activées, adresses, chaînes/actifs activés, montants prédéfinis) — ne renvoie jamais la clé secrète Stripe, seulement si elle est définie. |
 | `GET` | `/api/v1/donations/quote` | Public | `{ chain, asset, amountUsd }` → `{ amount, uri, chainId? }` : montant dans l'unité native + URI prête pour un wallet (BIP21 Bitcoin, EIP-681 EVM natif/ERC-20, Solana Pay). Refuse une combinaison chaîne/actif non activée par l'admin. |
-| `POST` | `/api/v1/donations/stripe/checkout-session` | Public | `{ amountUsd, successUrl, cancelUrl }` → `{ url }` : crée une session Stripe Checkout (carte/Apple Pay/Google Pay) et renvoie son URL de redirection. |
-
-### Dons (`DonationController`)
-Widget de don non-custodial : affiche une adresse/QR/lien à payer, ne confirme ni ne suit jamais un paiement (pas de webhook, pas d'indexeur on-chain). Paramétrage via `donationsConfigSchema` (champs `donations_*`, groupe `donations`, tous `hidden: true` — gérés par l'écran admin dédié `AdminDonations.tsx`, pas par le formulaire générique). Prix live (BTC/ETH/SOL uniquement, USDC/USDT traités 1:1 USD) : `DonationPriceService`, CoinGecko via `throttledFetchJson('donations-coingecko', …)`, cache mémoire 60 s. Catalogue des contrats EVM (USDC/USDT par chaîne) et du mint USDC Solana : `constants/donationEvmCatalog.ts` — **adresses à revérifier sur un explorateur de blocs avant mise en production**, voir l'avertissement en tête de ce fichier.
-
-| Méthode | Endpoint | Auth | Description |
-| --- | --- | --- | --- |
-| `GET` | `/api/v1/donations/config` | Public | Configuration publique (méthodes activées, adresses, chaînes/actifs activés, montants prédéfinis) — ne renvoie jamais la clé secrète Stripe, seulement si elle est définie. |
-| `GET` | `/api/v1/donations/quote` | Public | `{ chain, asset, amountUsd }` → `{ amount, uri, chainId? }` : montant dans l'unité native + URI prête pour un wallet (BIP21 Bitcoin, EIP-681 EVM natif/ERC-20, Solana Pay). Refuse une combinaison chaîne/actif non activée par l'admin. |
-| `POST` | `/api/v1/donations/stripe/checkout-session` | Public | `{ amountUsd, successUrl, cancelUrl }` → `{ url }` : crée une session Stripe Checkout (carte/Apple Pay/Google Pay) et renvoie son URL de redirection. |
+| `POST` | `/api/v1/donations/stripe/checkout-session` | Public | `{ amountUsd, successUrl, cancelUrl }` → `{ url }` : crée une session Stripe Checkout (carte/Apple Pay/Google Pay) et renvoie son URL de redirection. `amountUsd` entre 0,5 et 999 999. `successUrl`/`cancelUrl` (≤ 2048) : URL absolue d'une origine de `CLIENT_ORIGINS` ou chemin `/…` résolu sur la première, sinon 400 (`resolveFrontRedirectUrl`, `bootstrap/clientOrigins.ts` : pas de redirection ouverte depuis la page Checkout de l'opérateur ; `//hôte`, `javascript:`, identifiants dans l'URL refusés ; `*` ne correspond à rien). Budget `DONATION_CHECKOUT_THROTTLE` (10 / 10 min par IP). |
 
 ## Configuration requise
 - Variables d'environnement Prowl : `PROWL_API_KEY`, `PROWL_API_URL` (optionnel), `PROWL_APPLICATION_NAME`.
@@ -516,10 +514,33 @@ Un `main.ts` qui appelle encore `configureHttpApp`, `serveFrontend` ... à la ma
 | --- | --- | --- |
 | `CLIENT_ORIGINS` | `http://localhost:<FRONT_PORT>` | Liste CORS séparée par des virgules. `*` reflète toute origine sans credentials ; **refusé** avec `NODE_ENV=production`. |
 | `HOST` | `0.0.0.0` | Adresse d'écoute (`resolveListenHost`). Obligatoirement de boucle locale avec `LOCAL_TRUST=true`. |
-| `TRUST_PROXY` | `1` en production, désactivé sinon | `true`, `false`, nombre de sauts ou nom de sous-réseau (`loopback`). Nécessaire pour un `req.ip` correct derrière nginx. |
-| `RAW_BODY_PATHS` | `/webhook` | Fragments de chemin dont le corps JSON est aussi disponible en `req.rawBody` (signatures de webhooks), limite 50 Mo. Correspondance par sous-chaîne sur le chemin sans query string. Les autres routes : 5 Mo. |
+| `TRUST_PROXY` | `1` en production, désactivé sinon | `true`, `false`, nombre de sauts, ou **liste** séparée par des virgules d'adresses, de CIDR et des noms Express `loopback`, `linklocal`, `uniquelocal` (normalisée par `parseTrustProxy`, compilée par `proxy-addr` : une entrée invalide fait **échouer le démarrage**). Décide `req.ip`, donc le limiteur de débit et les IP journalisées : voir « IP du client derrière les proxys » ci-dessous. `true` en production : avertissement au démarrage (tout client choisit son IP). |
+| `RAW_BODY_PATHS` | `/webhook,/webhooks` | Fragments dont le corps JSON d'un **POST** est aussi disponible en `req.rawBody` (signatures de webhooks : Stripe `constructEvent`, Alchemy, Coinbase…). Correspondance sur des **segments entiers** du chemin, insensible à la casse : `/webhook` couvre `/api/v1/x/stripe/webhook` et `/api/v1/communications/webhook/:p/:s`, pas `/api/v1/webhooks` (d'où `/webhooks` dans le défaut : `wallet-intelligence/webhooks/…`) ni `/api/v1/…/test-webhook`. Un fragment `/a/b` exige les deux segments consécutifs. Jusqu'au 2026-10-29 : sous-chaîne, tout chemin contenant `/webhook` (même sans route) était parsé jusqu'à 50 Mo avant le routage. |
+| `WEBHOOK_BODY_LIMIT` | `1mb` | Limite de corps de ces routes (taille `body-parser` : `512kb`, `1mb`, `10mb`… ; valeur invalide : échec du démarrage). Les autres routes : `jsonLimit` (5 Mo). Le parsing a lieu avant le routage : un chemin qui ressemble seulement à un webhook coûte au plus cette limite. |
 
-Limites ajustables par option (`jsonLimit`, `rawBodyLimit`).
+Limites ajustables par option (`jsonLimit`, `rawBodyLimit` ; l'option l'emporte sur `WEBHOOK_BODY_LIMIT`, ex. ChainTradingDataAPI garde 50 Mo pour les lots Helius).
+
+- **`jsonLimit` (5 Mo par défaut) est le réglage à baisser** pour une API exposée : les corps JSON et urlencoded de **toute** route, y compris un chemin sans route, sont parsés avant le routage jusqu'à cette taille. Le défaut reste 5 Mo parce que des apps envoient de gros corps (ComptaFacile 50 Mo) ; une app qui n'en a pas besoin passe `http: { jsonLimit: '1mb' }` à `startApp`, et garde une limite plus haute seulement sur ses familles de routes qui en ont besoin (middleware `early`, exemple : `largeBodyRoutes.ts` de ChainTradingDataAPI).
+- **Erreurs de corps du client dans les journaux** : `configureHttpApp` pose après les parseurs un middleware d'erreur (`tagBodyParserErrors`, `utils/bodyParserErrors.ts`) qui marque la requête quand `body-parser` refuse le corps (413 trop gros, 400 JSON mal formé ou corps interrompu, 415 charset/encodage non pris en charge, 413 trop de paramètres) ; l'erreur suit son cours. `AppExceptionFilter` répond comme avant (même statut, même forme de réponse) mais la journalise en **une ligne WARN sans pile** (`Client body error (<statut> <type>) | ip=<req.ip> | endpoint=<méthode> <chemin caviardé>`, jamais l'objet d'erreur ni un extrait du corps ; chemin : voir « Chemins dans les journaux »), au plus `BODY_ERROR_LOG_PER_MINUTE` (5) lignes par catégorie (statut + type) et par minute, puis une ligne de compte (`… N more "413 entity.too.large" line(s) suppressed`) à la fin de la minute (`utils/rateLimitedLog.ts`, `RateLimitedLog`). Les vraies erreurs serveur restent en ERROR avec la pile (et la notification Prowl). Sans le marqueur (app qui n'appelle pas `configureHttpApp`), le filtre reconnaît encore 413/415 à leur `type`, pas le JSON mal formé (Nest le transforme en `BadRequestException` anonyme). Tests : `utils/rateLimitedLog.spec.ts`, `utils/bodyParserErrors.spec.ts`, `exceptions/AppExceptionFilter.spec.ts`, `bootstrap/configureHttpApp.spec.ts` (« client body errors in the logs »).
+
+#### Chemins dans les journaux (`utils/redactPath.ts`)
+
+Des secrets voyagent dans des chemins d'URL (`/api/v1/communications/webhook/:provider/:secret`, AgentHub `/api/v1/agenthub/hooks/:postId/:secret`, `/share-info/:token`, liens de désabonnement, jetons d'aperçu ou d'invitation). Tout chemin écrit dans un journal par `common` passe par `redactPath(url)` : query string et fragment retirés, chaque segment qui ressemble à un secret remplacé par `[redacted]`, coupé à 200 caractères. `redactUrlIn(texte, url)` caviarde aussi l'URL citée dans un message (le 404 de Nest : `Cannot GET /…`) ou un détail d'exception. Un segment est un secret s'il :
+
+- commence par un préfixe de jeton connu (`SECRET_SEGMENT_PREFIXES` : AgentHub `acs_`, `ahe_`, `ahf_`, `ahi_`, `ahr_` ; tiers `sk_`, `rk_`, `whsec_`, `ghp_`…, `glpat-`, `xoxb-`, `xkeysib-`) suivi d'au moins 8 caractères ;
+- ou compte au moins 20 caractères URL-sûrs (`[A-Za-z0-9_-.~+=]`, après décodage `%`) d'allure aléatoire : au moins 2 chiffres, ou au moins 2 majuscules et 2 minuscules.
+
+Restent lisibles : les ids numériques, les mots de route même longs (`notification-channels`, `project-creation-defaults`, `wallet-intelligence-v2`). Sont caviardés : jetons base64url/hex, empreintes, **et les UUID** (choix : un UUID v4 porte 122 bits aléatoires, exactement la forme d'un jeton de capacité ; la méthode, les autres segments, l'IP et le statut suffisent pour diagnostiquer). Limite : un secret court choisi à la main (moins de 20 caractères, sans préfixe connu) n'est pas reconnu ; générer ces secrets aléatoires et longs. Utilisé par `AppExceptionFilter` (toutes ses lignes, la notification Prowl des 5xx et les lignes des erreurs de corps) ; la réponse HTTP garde l'URL du client telle quelle. Tests : `utils/redactPath.spec.ts`, `exceptions/AppExceptionFilter.spec.ts` (« logged paths never carry secrets »).
+
+#### IP du client derrière les proxys (`TRUST_PROXY`)
+
+Chaîne de production du gabarit : client → reverse proxy (hôte d'entrée, TLS) → `back-lb` (nginx du `docker-compose.yml`, réseau docker) → `back`. Chaque proxy **ajoute** l'adresse de son pair à droite de `X-Forwarded-For` (`$proxy_add_x_forwarded_for`) sans effacer ce que le client a écrit à gauche. Express part de la droite (le pair TCP du back = `back-lb`) et remonte tant que l'adresse est de confiance : `req.ip` est la première qui ne l'est pas.
+
+- **Nombre de sauts (`1`, défaut en production)** : fragile. Il faut exactement le nombre de proxys de la chaîne ; avec `1`, seul `back-lb` est cru, et `req.ip` devient l'adresse du **reverse proxy pour tous les clients** : le limiteur compte tout le trafic anonyme dans un seul seau (une panne pour tout le monde dès le seuil). Avec un saut de trop, le client choisit son IP. Le nombre change dès qu'on ajoute ou retire un proxy (CDN, second reverse proxy, accès direct au port).
+- **Liste (recommandée)** : `TRUST_PROXY=loopback,linklocal,uniquelocal,<IP du reverse proxy>[,<autre reverse proxy>]` (`uniquelocal` couvre `back-lb` et la passerelle docker). Une adresse est crue pour ce qu'elle est, quel que soit le nombre de sauts ; un client qui écrit une IP (même celle d'un proxy de la liste) dans son `X-Forwarded-For` n'obtient que sa vraie adresse, et un client qui contourne le reverse proxy en visant directement `back-lb` aussi. Condition : le port de `back-lb` n'est joignable que par ces proxys (pare-feu), et aucun hôte non fiable n'est dans les réseaux privés listés.
+- Rien dans `common` ne lit `X-Forwarded-For` à la main : `extractClientIp(req)` (`utils/clientRequest.ts`) renvoie `req.ip`, puis l'adresse de la socket ; `LOCAL_TRUST` ne lit que la socket. Tests : `bootstrap/configureHttpApp.spec.ts` (« client IP behind reverse proxy → back-lb → back »), `utils/clientRequest.spec.ts`.
+
+`allowedClientOrigins()` (`bootstrap/clientOrigins.ts`) renvoie la liste CORS appliquée par `configureHttpApp` (ou, avant lui, celle de l'environnement), et `resolveFrontRedirectUrl(url, origins)` valide une URL de redirection vers le front (utilisé par les dons Stripe) : un service n'analyse jamais `CLIENT_ORIGINS` lui-même.
 
 | Option | Défaut | Effet |
 | --- | --- | --- |
@@ -528,7 +549,7 @@ Limites ajustables par option (`jsonLimit`, `rawBodyLimit`).
 | `corsOriginPolicy` | aucun | `(origin, { path, method }) => boolean \| { credentials: boolean } \| undefined`, appelée pour une origine **hors** `CLIENT_ORIGINS` (jamais sans en-tête `Origin`). `undefined` ou `false` : refus (`CORS_FORBIDDEN`, comportement par défaut) ; `true` : autorisée **avec** cookies ; `{ credentials }` : autorisée, cookies selon la valeur. Pour un préflight, `method` est la méthode demandée (`Access-Control-Request-Method`) et `path` le chemin sans query string. Les origines de `CLIENT_ORIGINS` gardent toutes les routes sans appel à la politique ; `publicCorsPaths` l'emporte. Exemple : une origine `chrome-extension://<id>` autorisée avec cookies sur les seules routes de l'extension. |
 | `validation` | `{ whitelist: true, transform: true }` | Options du `ValidationPipe` global (`whitelist`, `transform`, `forbidNonWhitelisted`) ; les champs donnés remplacent les défauts. `{ validateOnly: true }` : `ValidateOnlyPipe` (`bootstrap/ValidateOnlyPipe.ts`) — les DTO class-validator sont vérifiés (400), mais le handler reçoit la valeur de la requête **inchangée** (ni whitelist, ni transformation : les `uid`/`user` posés par les intercepteurs restent, les chaînes de query ne sont pas converties) ; pour une app dont tous les DTO ne sont pas décorés. Les pipes déclarés sur une route s'appliquent ensuite normalement. `false` : aucun pipe global (une app sans `ValidationPipe` à migrer, dont les DTO sans décorateurs perdraient leurs champs sous `whitelist` — une classe **sans aucun décorateur** est entièrement vidée par `whitelist`). |
 
-Tests : `bootstrap/configureHttpApp.spec.ts`, `throttle/CommonThrottlerGuard.spec.ts` (suivi par utilisateur, throttlers nommés), `auth/GlobalAuthInterceptor.spec.ts`.
+Tests : `bootstrap/configureHttpApp.spec.ts`, `bootstrap/clientOrigins.spec.ts`, `throttle/CommonThrottlerGuard.spec.ts` (suivi par utilisateur, throttlers nommés et leurs trackers, budgets des routes anonymes), `auth/GlobalAuthInterceptor.spec.ts`.
 
 ### Servir le front (`serveFrontend`)
 
@@ -582,7 +603,7 @@ Une modification du seuil en base après la première requête n'est prise en co
 | `ImageStorageService` | Stockage générique d'images, **deux providers** sélectionnés par `common_storage_provider` (voir `storageConfigSchema` ci-dessous) : `local` (défaut, inchangé) écrit sur le volume partagé (`SHARED_DIRECTORY`, repli `<APP_DATA_DIR>/shared` si `APP_DATA_DIR` est défini, sinon `/app/shared` en prod / `tmp/shared` en dev) ; `r2` envoie vers un bucket Cloudflare R2 (S3-compatible, `@aws-sdk/client-s3`) servi directement depuis son URL publique — voir la section « Stockage R2 » plus bas. `write(namespace, baseName, file)` (valide mimetype png/jpeg/webp et taille ≤ `IMAGE_MAX_BYTES` = 5 Mo, retourne le nom de fichier stocké — même contrat quel que soit le provider) / `read(namespace, filename)` (résout le chemin absolu + `mimeType`, `null` si absent — **disque local uniquement**, jamais consultée pour un fichier R2) / `publicUrl(namespace, filename)` (URL publique R2, `null` si provider `local`) / `getProvider()`. Namespace-scopé pour que des appelants indépendants ne collisionnent pas (ex. `user-inline` pour `InlineImageController`, `user-avatar` pour les avatars — les deux dans le module `user`). Volontairement générique — pas de logique métier — pour être réutilisé par n'importe quel module ayant besoin de stocker des images issues d'un upload, sans dépendre d'une notion de propriétaire (contrairement à `CmsArticleService`, qui garde sa propre implémentation similaire mais scopée à un article). Les avatars (2026-09-14, `UserService.saveAvatar`/`getAvatarFile`, `UserInfoMapper.avatarUrl`) utilisent un nom de fichier **déterministe** (`${userId}${ext}`, réutilisé à chaque nouvel upload) au lieu du nom unique horodaté d'`InlineImageController` — ils passent donc un `cacheControl` court explicite à `write()` plutôt que le défaut d'un an immuable (voir le commentaire de `write()` : un appelant qui réutilise un nom de fichier DOIT le faire, sous peine de resservir les anciens octets pendant un an après un remplacement). |
 | `PrivateStorageService` | Stockage d'octets pour des fichiers **non publics** (PDF de factures, logo de facture), sans URL publique — contrepartie privée d'`ImageStorageService`. API : `put(key, body: Buffer, contentType)` / `get(key): Buffer \| null` / `remove(key)` (clé absente = pas d'erreur) / `getProvider()`. La `key` est relative (`invoices/SHOP-2026-0001.pdf`) ; `..`, `//`, `\\` et chemins absolus sont refusés. Fournisseur choisi par `common_private_storage_provider` (voir « Stockage privé » ci-dessus) : `local` écrit sous `<APP_DATA_DIR>/private/<key>` ou `<cwd>/storage/<key>` (disposition historique des apps : les fichiers existants restent valides), `r2` envoie vers un bucket R2 privé (`@aws-sdk/client-s3`, compte/identifiants repris du stockage public s'ils sont vides). Le client S3 est reconstruit uniquement quand la configuration change. |
 | `CookieConsentService` / `CookieConsentRetentionCronService` (2026-09-14) | Système de consentement cookies, générique comme `ImageStorageService` (pas de propriétaire métier). `CookieConsentEntity` (`cookie_consent_log`) est une table **append-only** (une ligne par action banner/modale, jamais mise à jour) — preuve de consentement CNIL. `CookieConsentService.log({ip, userAgent, categories})` fait l'insertion, appelée par `CookieConsentController` (voir endpoints ci-dessus). `CookieConsentRetentionCronService` (même pattern que `UserAnonymizationCronService` du module `user` : `@Cron(EVERY_DAY_AT_3AM)` + garde `InstanceRoleService.isWorker()` + `CronLockService.runIfDue` pour survivre à un redémarrage) supprime les lignes de plus de **6 mois** — durée de validité du consentement CNIL, identique au `Max-Age` du cookie client `vx_cookie_consent` (`front/.libs/reactcommon/common/utils/cookieConsent.ts`) pour que le bandeau se re-déclenche exactement quand la ligne de preuve correspondante sort de la fenêtre de rétention. Aucune infrastructure de mesure d'audience n'est câblée à ce jour (aucun outil choisi) — `hasConsent('audienceMeasurement')` (front) est le point de contrôle prêt à l'emploi pour un futur chargement conditionnel de script, qui devra lui-même plafonner ses propres cookies à **13 mois** (exemption CNIL mesure d'audience) — rien à appliquer aujourd'hui côté backend pour un script qui n'existe pas. Pas d'interface admin pour consulter `cookie_consent_log` (hors périmètre, à ajouter si un jour nécessaire pour répondre à un contrôle). |
-| `AppExceptionFilter` | Filtre global d'exceptions HTTP. Les erreurs 4xx levées par les middlewares Express (body-parser : 413 corps trop gros, 400 JSON mal formé) gardent leur statut et ne déclenchent plus de notification Prowl « Unhandled Exception » (elles répondaient 500 + alerte, donc un visiteur pouvait déclencher des alertes). |
+| `AppExceptionFilter` | Filtre global d'exceptions HTTP. Les erreurs 4xx levées par les middlewares Express (body-parser : 413 corps trop gros, 400 JSON mal formé) gardent leur statut et ne déclenchent plus de notification Prowl « Unhandled Exception » (elles répondaient 500 + alerte, donc un visiteur pouvait déclencher des alertes). Journalisation : toute réponse **4xx** donne une ligne WARN sans pile, limitée en débit (`RateLimitedLog`) pour qu'un appelant anonyme ne puisse pas noyer les journaux : erreurs de corps `body-parser` au plus `BODY_ERROR_LOG_PER_MINUTE` (5) lignes par minute et par catégorie statut + type (voir « Démarrage HTTP », « Erreurs de corps du client dans les journaux ») ; les autres 4xx (404 route inconnue, 401 jeton invalide, 403, 429 du limiteur, 400 de validation…) au plus `CLIENT_ERROR_LOG_PER_MINUTE` (20) lignes par minute et par code de statut ; au-delà, une ligne de compte (`… N more "404" line(s) suppressed`) en fin de minute. Chemins et messages des lignes (et de la notification Prowl) caviardés par `redactPath` (« Chemins dans les journaux ») ; réponses inchangées. Les **5xx ne sont jamais limitées** : `HttpException`/`AppException` 5xx gardent leur ligne WARN, une erreur inconnue reste en ERROR avec la pile + notification Prowl. Tests : `exceptions/AppExceptionFilter.spec.ts`. |
 | `events/` (2026-09-23) | Flux d'événements **en pull** entre apps : `EventFeedEntityBase` (colonnes `id`/`type`/`payload` JSON portable — `jsonb` sur Postgres, `simple-json` sur SQLite —/`createdAt` d'une table outbox propre à chaque module), `appendFeedEvent`, `readEventFeed(repo, afterId, limit)` (`{ events, latestId }`, sans `afterId` = `latestId` seul), `purgeEventFeed(repo, jours)`. Côté consommateur, `RemoteEventFeedPollerService.poll({ feedId, url, onEvent })` (identifié par `remoteApiAuthHeaders()`) : lit les événements après son curseur (Redis `event-feed-cursor:<feedId>`, mémoire à défaut), avance le curseur après chaque événement traité, démarre à `latestId` sans rejouer l'historique, ne lève jamais. Le producteur n'appelle jamais ses consommateurs. Utilisé par `wallet-intelligence` / `breakout-intelligence` et leurs `-remote`. |
 | `utils/portableTypes.ts`, `utils/dbDialect.ts`, `utils/dbDate.ts`, `utils/dbErrors.ts` | **Portabilité Postgres/SQLite** (ajouts, sans effet sous Postgres) : `applyPortableColumnTypes()` adapte automatiquement les décorateurs d'entités sous SQLite (`jsonb`→`simple-json`, `timestamptz`→`datetime`, enums, tableaux, défauts, index Postgres) ; `dialect()`/`dialectOf()` fournissent le SQL par moteur (`ilike`, `monthBucket`, `jsonExtract`, `jsonArrayContains`, `now`, `lockForWrite`…) ; `parseDbDate`, `toNumber`, `isUniqueViolation`/`isForeignKeyViolation`/`isNotNullViolation`. Détail et limites : `database/README.md` (« Portabilité automatique Postgres → SQLite »), garde-fou `npm run db:check`. Tests : `portableTypes.spec.ts`, `dbDialect.spec.ts`. |
 | `utils/dbEngine.ts` | Utilitaires purs de moteur de base, sans dépendance au module `database` (qui les ré-exporte) : `resolveEngine`, `isSqlite`, `isSqliteDataSource`, types de colonnes portables `jsonColumnType()` / `timestampColumnType()` (`jsonb`/`timestamptz` en Postgres, `simple-json`/`datetime` en SQLite), `portableQuery` (SQL brut `$n` → `?` sous SQLite), `readConnectionEnv`, `MAIN_CONNECTION`. Les entités de `common` et de `voice` les importent d'ici : ne jamais importer `database` depuis `common`/`voice`. Tests : `sqlite.integration.spec.ts`, `portableEntities.spec.ts`. |
@@ -818,17 +839,30 @@ bascule depuis l'admin sans redémarrage).
 
 | Clé | Défaut | Rôle |
 | --- | --- | --- |
-| `common_throttleEnabled` | `false` | interrupteur général |
+| `common_throttleEnabled` | `false` (bibliothèque) ; `true` dans le `defaultConfig.ts` d'une app créée par `create-project` | interrupteur général |
 | `common_throttleDefaultLimit` | `300` | requêtes par identité et par fenêtre |
 | `common_throttleDefaultTtlMs` | `60000` | fenêtre, en ms |
 
-- **Identité** : l'utilisateur authentifié (`user:<id>`) sinon l'adresse IP (`ip:<adresse>`, `req.ip` : voir `TRUST_PROXY`). La garde
+- **Identité** : l'utilisateur authentifié (`user:<id>`) sinon l'adresse IP (`ip:<adresse>`, `req.ip` : voir « IP du client derrière les proxys » ;
+  normalisée par `@nestjs/throttler` : un client IPv6 compte par /64, une adresse IPv4 mappée en IPv6 comme l'IPv4). La garde
   s'exécute **avant** l'intercepteur d'auth global (`req.user` n'est donc pas encore posé) : elle résout elle-même le principal par
   `AUTH_PORT` (optionnel : sans port, tout est compté par IP), sans rien écrire sur la requête (`req.user` reste posé par l'intercepteur).
   Jeton absent, inconnu ou rejeté (le `resolveToken` du port qui lève, ex. JWT expiré) : IP. Sans jeton, en mode `anonymous`,
   `resolveRequest` (mode local de confiance) donne `user:0`. Le résultat de `resolveToken` est mémorisé sur la requête
   (`resolveTokenOnce`, `auth/authRequest.ts`) : l'intercepteur ne résout pas le jeton une seconde fois et relève la même erreur. Un contrôleur s'exclut avec `@SkipThrottle()` (le flux SSE `EventStreamController` l'est) ; une route peut
-  surcharger la limite avec `@Throttle({ default: { limit, ttl } })`.
+  surcharger la limite avec `@Throttle({ default: { limit, ttl } })`. Les compteurs sont **par route** (la clé de stockage contient
+  la classe et la méthode) : un budget de route ne consomme pas celui des autres routes.
+- **Budgets des routes anonymes de `common`** (constantes exportées, appliquées seulement quand l'interrupteur est vrai) :
+
+  | Route | Constante | Budget |
+  | --- | --- | --- |
+  | `POST /api/v1/crypt/session` | `CRYPT_SESSION_THROTTLE` | 30 / min |
+  | `POST /api/v1/cookie-consent` | `COOKIE_CONSENT_THROTTLE` | 10 / 10 min |
+  | `POST /api/v1/donations/stripe/checkout-session` | `DONATION_CHECKOUT_THROTTLE` | 10 / 10 min |
+  | `POST /api/v1/common/bug-report` | `BUG_REPORT_THROTTLE` | 5 / h |
+
+  Les autres routes publiques (`/health`, `/configurations`, `/locales`, `/themes/*`, `/donations/config|quote`) gardent le budget
+  `default` ; le plafond des sessions de transport (`common_cryptSessionMaxLive`) s'applique, lui, même interrupteur éteint.
 - **Throttlers nommés** (`ThrottleRegistry`, exporté par `CommonModule`) : en plus de `default`, une app déclare des limiteurs supplémentaires,
   chacun avec ses compteurs, ses en-têtes (`X-RateLimit-Limit-<nom>`, `Retry-After-<nom>`) et sa clé (utilisateur ou IP). Enregistrement
   au démarrage, avant la première requête (constructeur d'un module de l'app, ou `app.get(ThrottleRegistry)` dans `main.ts` avant `app.init()`) :
@@ -843,20 +877,47 @@ bascule depuis l'admin sans redémarrage).
   });
   ```
 
-  Sans `paths` ni `skipIf`, la règle s'applique à toutes les routes. Comme dans `@nestjs/throttler`, une route surcharge un throttler par nom :
+  Sans `paths` ni `skipIf`, la règle s'applique à toutes les routes.
+
+  **Clé de comptage propre à une règle** (`tracker?: ThrottleTracker`, optionnel, 2026-10-29) : par défaut une règle compte, comme
+  `default`, par utilisateur authentifié sinon par IP. Une règle peut compter par autre chose (clé d'API, runner) :
+
+  ```ts
+  // ThrottleTracker = (req: Request, context: ExecutionContext) => string | null | undefined | Promise<string | null | undefined>
+  registry.register({
+    name: 'mcp',
+    limit: 120,
+    ttlMs: 60_000,
+    paths: ['/api/v1/agenthub/mcp'],
+    // Id d'une clé VÉRIFIÉE (cache) — jamais le secret ni une valeur non vérifiée : un client choisirait un seau neuf par requête.
+    tracker: async (req) => (await apiKeys.verifiedKeyId(req.headers['x-api-key'])) ?? undefined,
+  });
+  ```
+
+  La garde l'appelle avant l'intercepteur d'auth (`req.user` n'est pas encore posé) et compte sous `key:<valeur>` (espace distinct de
+  `user:`/`ip:`). `undefined`, `null`, `''` ou une exception : repli sur la clé par défaut (utilisateur, sinon IP), jamais une erreur
+  500 ; une exception est journalisée au plus une fois par minute et par règle. Seule cette règle est concernée (`default` et les autres
+  règles gardent utilisateur/IP) ; un `@Throttle({ mcp: { getTracker } })` de route l'emporte toujours. `registry.trackerOf(name)`
+  rend le tracker d'une règle. Comme toute règle, les compteurs restent **par route** (la clé de stockage contient la classe et la
+  méthode) : une règle sur plusieurs routes donne un budget par route et par clé, pas un budget commun.
+
+  Comme dans `@nestjs/throttler`, une route surcharge un throttler par nom :
   `@Throttle({ indicatorSeries: { limit: 10, ttl: 60_000 } })`, ou l'ignore : `@SkipThrottle({ indicatorSeries: true })`. Un nom en double, `default`,
   une limite ou fenêtre non positive : erreur à l'enregistrement. Toutes les règles s'appliquent à la fois (une requête doit passer chacune).
 - **Stockage** : `FailOpenThrottlerStorage` compte dans Redis (client partagé `RedisService`, script Lua atomique, fenêtre fixe) quand
   `REDIS_URL` est définie, sinon (ou si une commande Redis échoue) dans une table en mémoire du processus : **échec ouvert**, jamais
   de rejet à cause du stockage. Sans Redis et avec N réplicas, la limite effective est N fois la limite configurée.
-- **Pourquoi `false` par défaut** : TradeKong et PapangWorkspace déclarent déjà `ThrottlerModule` + `ThrottlerGuard` dans leur
-  `AppModule` ; deux gardes globales compteraient chaque requête deux fois. Les fournisseurs de `common` (options, stockage) sont
-  limités à `CommonModule` : ils ne touchent pas à `ThrottlerModule` de l'app.
+- **Pourquoi `false` par défaut dans la bibliothèque** : une app qui déclare encore son propre `ThrottlerModule` + `ThrottlerGuard`
+  global compterait chaque requête deux fois (TradeKong et PapangWorkspace ont depuis basculé : `common_throttleEnabled = true` dans
+  leur `defaultConfig.ts`). Les fournisseurs de `common` (options, stockage) sont limités à `CommonModule` : ils ne touchent pas à
+  `ThrottlerModule` de l'app. Une garde de route (`@UseGuards`, ex. `AgentHubApiKeyThrottlerGuard`) n'est pas globale : elle s'ajoute.
 - **Bascule d'une app existante** (tâches D9 et D10) : supprimer `ThrottlerModule.forRoot(...)`, `ThrottlerRedisStorage` et
   l'`APP_GUARD ThrottlerGuard` de son `AppModule`, puis régler `common_throttleEnabled = true` (et limite/fenêtre) dans la
   configuration. Les `@Throttle()` / `@SkipThrottle()` déjà posés sur les routes continuent de s'appliquer. Les variables
   `THROTTLE_DEFAULT_TTL` / `THROTTLE_DEFAULT_LIMIT` de TradeKong sont remplacées par les clés de configuration.
-- Un nouveau projet du gabarit active la clé selon ses besoins (aucune graine par défaut : `defaultConfig.ts` reste vide).
+- **Nouvelle app** : `create-project` écrit `common_throttleEnabled = true` dans `back/src/config/defaultConfig.ts`
+  (`NEW_PROJECT_CONFIG_ENTRIES`, `template/scripts/lib/project-engine.mjs`) ; `add-module` ne l'ajoute jamais à une app existante.
+  Une valeur déjà en base n'est jamais écrasée : une app existante l'active depuis l'admin (Configuration › `common`).
 
 ## Redis partagé (`RedisService`)
 

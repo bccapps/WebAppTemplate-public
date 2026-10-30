@@ -7,12 +7,41 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { createECDH, hkdfSync, randomUUID } from 'crypto';
-import { DEFAULT_SESSION_TTL_MS, TRANSPORT_HKDF_INFO, TRANSPORT_SESSION_SALT } from '../constants/crypt.constants';
+import {
+  DEFAULT_MAX_LIVE_SESSIONS,
+  DEFAULT_SESSION_TTL_MS,
+  TRANSPORT_HKDF_INFO,
+  TRANSPORT_SESSION_SALT,
+} from '../constants/crypt.constants';
+import { ConfigurationService } from './ConfigurationService';
 import { RedisService } from './RedisService';
 
 const REDIS_KEY_PREFIX = 'crypt:session:';
+/** Sorted set of the live session ids (score = creation time in ms): the Redis side of the session cap. */
+const REDIS_INDEX_KEY = 'crypt:session-index';
+const EVICTION_WARN_INTERVAL_MS = 60_000;
+
+/**
+ * Stores one session and keeps at most `cap` live ones, atomically (several replicas share the index).
+ * KEYS: session key, index key. ARGV: value, ttl (s), now (ms), expiry cutoff (ms), cap, session id, key prefix, ttl (ms).
+ * Returns how many live sessions were evicted.
+ */
+const LUA_STORE_CAPPED = `
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+redis.call('ZADD', KEYS[2], ARGV[3], ARGV[6])
+redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[4])
+local over = redis.call('ZCARD', KEYS[2]) - tonumber(ARGV[5])
+if over > 0 then
+  local evicted = redis.call('ZPOPMIN', KEYS[2], over)
+  for i = 1, #evicted, 2 do redis.call('DEL', ARGV[7] .. evicted[i]) end
+else
+  over = 0
+end
+redis.call('PEXPIRE', KEYS[2], ARGV[8])
+return over
+`;
 
 interface ActiveSession {
   key: Buffer;
@@ -26,10 +55,14 @@ export class CryptSessionService {
   private readonly serverPublicKey: Buffer;
   private readonly ttlMs: number;
 
-  /** In-memory fallback when Redis is unavailable */
+  /** In-memory fallback when Redis is unavailable (insertion order = expiry order: one TTL for every session). */
   private localSessions = new Map<string, ActiveSession>();
+  private lastEvictionWarnAt = 0;
 
-  constructor(private readonly redisService: RedisService) {
+  constructor(
+    private readonly redisService: RedisService,
+    @Optional() private readonly config?: ConfigurationService,
+  ) {
     const sessionPrivateInput = process.env.CRYPT_SESSION_PRIVATE_KEY;
     if (!sessionPrivateInput) {
       throw new Error(
@@ -65,6 +98,12 @@ export class CryptSessionService {
 
   getSessionTtlMs() {
     return this.ttlMs;
+  }
+
+  /** Most live sessions kept: `common_cryptSessionMaxLive`, else {@link DEFAULT_MAX_LIVE_SESSIONS}. */
+  getMaxLiveSessions(): number {
+    const value = Number(this.config?.get('common_cryptSessionMaxLive'));
+    return Number.isFinite(value) && value >= 1 ? Math.floor(value) : DEFAULT_MAX_LIVE_SESSIONS;
   }
 
   async createSession(clientPublicKeyB64: string) {
@@ -113,16 +152,43 @@ export class CryptSessionService {
 
   private async storeSession(sessionId: string, key: Buffer, ttlSeconds: number): Promise<void> {
     const redis = this.redisService.getClient();
+    const cap = this.getMaxLiveSessions();
+    const ttlMs = ttlSeconds * 1000;
     if (redis) {
       try {
-        await redis.set(REDIS_KEY_PREFIX + sessionId, key.toString('base64'), 'EX', ttlSeconds);
+        const now = Date.now();
+        const evicted = await redis.eval(
+          LUA_STORE_CAPPED, 2, REDIS_KEY_PREFIX + sessionId, REDIS_INDEX_KEY,
+          key.toString('base64'), ttlSeconds, now, now - ttlMs, cap, sessionId, REDIS_KEY_PREFIX, ttlMs,
+        );
+        this.warnOnEviction(Number(evicted), cap);
         return;
       } catch (err: any) {
-        this.logger.warn(`[CryptSessionService] Redis SET failed, storing in-memory: ${err.message}`);
+        this.logger.warn(`[CryptSessionService] Redis store failed, storing in-memory: ${err.message}`);
       }
     }
-    this.localSessions.set(sessionId, { key, expiresAt: Date.now() + ttlSeconds * 1000 });
+    const now = Date.now();
+    this.warnOnEviction(this.evictLocal(now, cap - 1), cap);
+    this.localSessions.set(sessionId, { key, expiresAt: now + ttlMs });
     this.scheduleCleanup();
+  }
+
+  /** Drops the expired in-memory sessions, then the oldest live ones until at most `keep` remain; returns the live ones dropped. */
+  private evictLocal(now: number, keep: number): number {
+    let evicted = 0;
+    for (const [sessionId, session] of this.localSessions) {
+      const live = session.expiresAt > now;
+      if (live && this.localSessions.size <= keep) break;
+      this.localSessions.delete(sessionId);
+      if (live) evicted += 1;
+    }
+    return evicted;
+  }
+
+  private warnOnEviction(evicted: number, cap: number): void {
+    if (!(evicted > 0) || Date.now() - this.lastEvictionWarnAt < EVICTION_WARN_INTERVAL_MS) return;
+    this.lastEvictionWarnAt = Date.now();
+    this.logger.warn(`[CryptSessionService] ${cap} live transport sessions reached: oldest evicted (common_cryptSessionMaxLive).`);
   }
 
   private async loadSession(sessionId: string): Promise<ActiveSession | null> {

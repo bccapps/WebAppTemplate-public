@@ -22,6 +22,10 @@ import { resolveTokenOnce } from '../auth/authRequest';
 import type { AuthPort } from '../auth/AuthPort';
 import type { AuthPrincipal } from '../auth/AuthPrincipal';
 import { ThrottleRegistry } from './ThrottleRegistry';
+import { DonationController, DONATION_CHECKOUT_THROTTLE } from '../controllers/DonationController';
+import { CookieConsentController } from '../controllers/CookieConsentController';
+import { CryptController, CRYPT_SESSION_THROTTLE } from '../controllers/CryptController';
+import { EventStreamController } from '../event-stream/EventStreamController';
 
 const fakeRedis = (eval_: (...a: unknown[]) => Promise<unknown>) =>
   ({ getClient: () => ({ eval: eval_ }) }) as unknown as ConstructorParameters<typeof FailOpenThrottlerStorage>[0];
@@ -182,6 +186,60 @@ describe('CommonThrottlerGuard', () => {
     });
   });
 
+  describe('route budgets of the anonymous routes of common (real controllers, keyed by IP)', () => {
+    type Handler = (...args: never[]) => unknown;
+    const on = (cls: abstract new (...args: never[]) => unknown, handler: Handler, ip: string): ExecutionContext => {
+      const req = { ip, headers: {} };
+      return {
+        getClass: () => cls,
+        getHandler: () => handler,
+        getType: () => 'http',
+        switchToHttp: () => ({ getRequest: () => req, getResponse: () => ({ header: jest.fn() }) }),
+      } as unknown as ExecutionContext;
+    };
+    const enabled = () => build({ common_throttleEnabled: true, common_throttleDefaultLimit: 1000 });
+
+    it('applies @Throttle of the Stripe checkout per IP, apart from the other routes', async () => {
+      const guard = enabled();
+      await guard.onModuleInit();
+      const checkout = DonationController.prototype.createStripeCheckoutSession as Handler;
+      for (let i = 0; i < DONATION_CHECKOUT_THROTTLE.limit; i += 1) {
+        expect(await guard.canActivate(on(DonationController, checkout, '198.51.100.1'))).toBe(true);
+      }
+      await expect(guard.canActivate(on(DonationController, checkout, '198.51.100.1'))).rejects.toThrow();
+      expect(await guard.canActivate(on(DonationController, checkout, '198.51.100.2'))).toBe(true);
+      const config = DonationController.prototype.getConfig as Handler;
+      expect(await guard.canActivate(on(DonationController, config, '198.51.100.1'))).toBe(true);
+    });
+
+    it('applies the crypt session and cookie-consent budgets', async () => {
+      const guard = enabled();
+      await guard.onModuleInit();
+      const session = CryptController.prototype.createSession as Handler;
+      for (let i = 0; i < CRYPT_SESSION_THROTTLE.limit; i += 1) await guard.canActivate(on(CryptController, session, '203.0.113.9'));
+      await expect(guard.canActivate(on(CryptController, session, '203.0.113.9'))).rejects.toThrow();
+      const consent = CookieConsentController.prototype.log as Handler;
+      for (let i = 0; i < 10; i += 1) await guard.canActivate(on(CookieConsentController, consent, '203.0.113.9'));
+      await expect(guard.canActivate(on(CookieConsentController, consent, '203.0.113.9'))).rejects.toThrow();
+    });
+
+    it('lets a @SkipThrottle() controller through whatever the limit', async () => {
+      const guard = build({ common_throttleEnabled: true, common_throttleDefaultLimit: 1 });
+      await guard.onModuleInit();
+      const stream = EventStreamController.prototype.stream as Handler;
+      for (let i = 0; i < 5; i += 1) expect(await guard.canActivate(on(EventStreamController, stream, '203.0.113.9'))).toBe(true);
+    });
+
+    it('counts an IPv6 client per /64 (no escape by rotating addresses) and an IPv4-mapped one as IPv4', async () => {
+      const guard = build({});
+      const tracker = (ip: string) => (guard as unknown as { getTracker(r: Req): Promise<string> }).getTracker({ ip, headers: {} });
+      expect(await tracker('2001:db8:1:2::a')).toBe(await tracker('2001:db8:1:2:ffff::b'));
+      expect(await tracker('2001:db8:1:2::a')).not.toBe(await tracker('2001:db8:1:3::a'));
+      expect(await tracker('::ffff:198.51.100.7')).toBe('ip:198.51.100.7');
+      expect(await tracker('198.51.100.7')).toBe('ip:198.51.100.7');
+    });
+  });
+
   describe('named throttlers', () => {
     const build2 = (registry: ThrottleRegistry) =>
       build({ common_throttleEnabled: true, common_throttleDefaultLimit: 1000 }, undefined, registry);
@@ -240,6 +298,70 @@ describe('CommonThrottlerGuard', () => {
       } as unknown as ExecutionContext;
       expect(await guard.canActivate(c)).toBe(true);
       await expect(guard.canActivate(c)).rejects.toThrow();
+    });
+  });
+
+  describe('named throttlers with their own tracker (ThrottleRule.tracker)', () => {
+    const enabledGuard = (registry: ThrottleRegistry) => build({ common_throttleEnabled: true, common_throttleDefaultLimit: 1000 }, undefined, registry);
+    const call = (ip: string, headers: Record<string, string> = {}): ExecutionContext => request({ ip, path: '/api/v1/mcp', headers }).ctx;
+    const byKeyHeader = (req: { headers: Record<string, unknown> }) => req.headers['x-key'] as string | undefined;
+
+    it('counts per returned key, across IPs, and keeps keys apart', async () => {
+      const registry = new ThrottleRegistry();
+      registry.register({ name: 'mcp', limit: 1, ttlMs: 60_000, tracker: byKeyHeader });
+      const guard = enabledGuard(registry);
+      await guard.onModuleInit();
+      expect(await guard.canActivate(call('10.0.0.1', { 'x-key': 'k1' }))).toBe(true);
+      await expect(guard.canActivate(call('10.0.0.2', { 'x-key': 'k1' }))).rejects.toThrow();
+      expect(await guard.canActivate(call('10.0.0.1', { 'x-key': 'k2' }))).toBe(true);
+    });
+
+    it('accepts an async tracker and namespaces its key apart from the user/IP keys', async () => {
+      const registry = new ThrottleRegistry();
+      registry.register({ name: 'runner', limit: 5, ttlMs: 60_000, tracker: async () => 'ip:10.0.0.9' });
+      const guard = enabledGuard(registry);
+      await guard.onModuleInit();
+      expect(await guard.canActivate(call('10.0.0.9'))).toBe(true);
+      const runner = (guard as unknown as { throttlers: { name?: string; getTracker?: (r: Req, c: ExecutionContext) => Promise<string> }[] }).throttlers.find(
+        (t) => t.name === 'runner',
+      );
+      expect(await runner?.getTracker?.({ ip: '10.0.0.9', headers: {} }, call('10.0.0.9'))).toBe('key:ip:10.0.0.9');
+    });
+
+    it('falls back to the user/IP tracker on an empty key and on a throw, without failing the request', async () => {
+      const registry = new ThrottleRegistry();
+      registry.register({ name: 'empty', limit: 1, ttlMs: 60_000, tracker: () => undefined });
+      registry.register({ name: 'broken', limit: 1, ttlMs: 60_000, tracker: () => { throw new Error('db down'); } });
+      const guard = enabledGuard(registry);
+      await guard.onModuleInit();
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        expect(await guard.canActivate(call('10.0.0.1'))).toBe(true);
+        expect(await guard.canActivate(call('10.0.0.2'))).toBe(true);
+        await expect(guard.canActivate(call('10.0.0.1'))).rejects.toThrow(/Too Many Requests/);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0][0])).toContain('tracker of throttle rule "broken" failed (db down)');
+      } finally {
+        warn.mockRestore();
+        (guard as unknown as { trackerFailures: { flush(): void } }).trackerFailures.flush();
+      }
+    });
+
+    it('leaves the default throttler and the rules without a tracker on user/IP', async () => {
+      const registry = new ThrottleRegistry();
+      registry.register({ name: 'plain', limit: 1, ttlMs: 60_000 });
+      registry.register({ name: 'keyed', limit: 100, ttlMs: 60_000, tracker: byKeyHeader });
+      const guard = build({ common_throttleEnabled: true, common_throttleDefaultLimit: 2 }, undefined, registry);
+      await guard.onModuleInit();
+      expect(registry.trackerOf('plain')).toBeUndefined();
+      expect(await guard.canActivate(call('10.0.0.1', { 'x-key': 'a' }))).toBe(true);
+      // `plain` (limit 1, per IP) refuses the same IP whatever the key.
+      await expect(guard.canActivate(call('10.0.0.1', { 'x-key': 'b' }))).rejects.toThrow();
+      expect(await guard.canActivate(call('10.0.0.3', { 'x-key': 'a' }))).toBe(true);
+    });
+
+    it('refuses a tracker that is not a function', () => {
+      expect(() => new ThrottleRegistry().register({ name: 'x', limit: 1, ttlMs: 1, tracker: 'nope' as never })).toThrow(/tracker must be a function/);
     });
   });
 });

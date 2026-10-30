@@ -14,4 +14,6 @@ export type DefaultConfigEntry = {
 };
 
 // Add project-specific defaults here (see the template README, « Needed Customizations »).
+// create-project fills this array from its answers, plus the entries every new app starts with
+// (`NEW_PROJECT_CONFIG_ENTRIES` in scripts/lib/project-engine.mjs: `common_throttleEnabled` = true, the global rate limiter).
 export const defaultConfigEntries: DefaultConfigEntry[] = [];

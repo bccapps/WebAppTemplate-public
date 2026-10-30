@@ -107,9 +107,9 @@ export const commonConfigSchema: ModuleConfigSchema = {
       group: 'monitoring',
     },
     {
-      // Master switch of the global rate limiter of `common` (throttle/). Off by default so that apps keeping
-      // their own ThrottlerModule + ThrottlerGuard (TradeKong, PapangWorkspace) do not count every request twice;
-      // new apps turn it on (see README, "Limiteur de débit").
+      // Master switch of the global rate limiter of `common` (throttle/). Off by default so that an app keeping
+      // its own ThrottlerModule + ThrottlerGuard does not count every request twice; create-project seeds it ON
+      // in the defaultConfig.ts of a new app (see README, "Limiteur de débit").
       key: 'common_throttleEnabled',
       label: 'common.throttleEnabled',
       description: 'common.throttleEnabled.description',
@@ -138,6 +138,17 @@ export const commonConfigSchema: ModuleConfigSchema = {
       defaultValue: 60000,
       group: 'performance',
       validation: { min: 1000 },
+    },
+    {
+      // Hard cap of the live transport sessions (POST /api/v1/crypt/session is anonymous): past it the oldest are
+      // evicted (CryptSessionService, in memory or in Redis). Read on every handshake.
+      key: 'common_cryptSessionMaxLive',
+      label: 'common.cryptSessionMaxLive',
+      description: 'common.cryptSessionMaxLive.description',
+      type: 'number',
+      defaultValue: 50000,
+      group: 'performance',
+      validation: { min: 100, max: 10000000 },
     },
     {
       // Cache-Control on GET /api/v1/configurations — only reachable because that

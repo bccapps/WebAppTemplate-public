@@ -7,12 +7,17 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { HttpStatus, INestApplication, ValidationPipe } from '@nestjs/common';
+import { HttpStatus, INestApplication, Logger, ValidationPipe } from '@nestjs/common';
 import type { CorsOptions, CorsOptionsDelegate } from '@nestjs/common/interfaces/external/cors-options.interface';
 import * as bodyParser from 'body-parser';
 import helmet from 'helmet';
 import { AppException } from '../exceptions/AppException';
 import { ValidateOnlyPipe } from './ValidateOnlyPipe';
+import { type HttpAppEnv, parseList, recordAllowedClientOrigins, resolveClientOrigins } from './clientOrigins';
+import { tagBodyParserErrors } from '../utils/bodyParserErrors';
+
+export { parseList };
+export type { HttpAppEnv };
 
 /** Options of {@link configureHttpApp}. Every field falls back to the environment, then to a safe default. */
 export interface HttpAppOptions {
@@ -20,13 +25,20 @@ export interface HttpAppOptions {
   clientOrigins?: string;
   /** Production mode (refuses `*` origins, trusts one proxy hop). Env `NODE_ENV === 'production'`. */
   production?: boolean;
-  /** Express `trust proxy` setting. Env `TRUST_PROXY` (`true`, `false`, a hop count or a subnet name); default 1 in production, off otherwise. */
+  /**
+   * Express `trust proxy` setting. Env `TRUST_PROXY`: `true`, `false`, a hop count, or a comma-separated list of trusted
+   * proxy addresses / CIDR / names (`loopback`, `linklocal`, `uniquelocal`); default 1 in production, off otherwise.
+   */
   trustProxy?: boolean | number | string;
-  /** Path fragments whose JSON body is also kept as `req.rawBody`. Env `RAW_BODY_PATHS` (comma-separated), default `/webhook`. */
+  /**
+   * Path fragments whose JSON body is also kept as `req.rawBody` (POST only), matched on whole path segments
+   * (`/webhook` matches `/api/v1/x/webhook` and `/api/v1/webhook/a`, not `/api/v1/webhooks` nor `/api/v1/test-webhook`).
+   * Env `RAW_BODY_PATHS` (comma-separated), default `/webhook,/webhooks`.
+   */
   rawBodyPaths?: string[];
   /** Body size limit of every other route. Default `5mb` (anti-DoS). */
   jsonLimit?: string;
-  /** Body size limit of the raw-body routes. Default `50mb`. */
+  /** Body size limit of the raw-body routes. Env `WEBHOOK_BODY_LIMIT`, default `1mb`. */
   rawBodyLimit?: string;
   /** Request headers allowed by CORS in addition to the built-in ones (e.g. `x-company-id`). Default none. */
   extraCorsHeaders?: string[];
@@ -76,8 +88,6 @@ export interface ValidationOptions {
   validateOnly?: boolean;
 }
 
-export type HttpAppEnv = Record<string, string | undefined>;
-
 export interface ResolvedHttpAppOptions {
   allowedOrigins: string[];
   production: boolean;
@@ -94,23 +104,35 @@ export interface ResolvedHttpAppOptions {
 
 const BASE_CORS_HEADERS = ['Content-Type', 'Authorization', 'x-crypt-session', 'x-crypt-accept-encoding'];
 const DEFAULT_VALIDATION: ValidationOptions = { whitelist: true, transform: true };
-const DEFAULT_RAW_BODY_PATHS = ['/webhook'];
+/** `/webhooks` keeps the routes that the former substring match (`/webhook`) reached, e.g. `wallet-intelligence/webhooks/…`. */
+const DEFAULT_RAW_BODY_PATHS = ['/webhook', '/webhooks'];
+const DEFAULT_WEBHOOK_BODY_LIMIT = '1mb';
 
-/** Splits a comma-separated list, trimming blanks and dropping empty entries. */
-export function parseList(value: string | undefined): string[] {
-  return (value ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-}
-
-/** Parses `TRUST_PROXY`: `true`/`false`, an integer hop count, or any other string (e.g. `loopback`). */
+/**
+ * Parses `TRUST_PROXY`: `true`/`false`, an integer hop count, or a comma-separated list of trusted proxy addresses,
+ * CIDR ranges and Express names (`loopback`, `linklocal`, `uniquelocal`), returned as a normalized list string
+ * (`'loopback, ,10.0.0.1'` → `'loopback,10.0.0.1'`) that Express compiles with `proxy-addr` (an invalid entry makes
+ * `configureHttpApp` throw at boot). Unset: 1 hop in production, off otherwise.
+ */
 export function parseTrustProxy(value: string | undefined, production: boolean): boolean | number | string {
   const raw = value?.trim();
   if (!raw) return production ? 1 : false;
-  if (raw === 'true') return true;
-  if (raw === 'false') return false;
-  return /^\d+$/.test(raw) ? Number(raw) : raw;
+  if (raw.toLowerCase() === 'true') return true;
+  if (raw.toLowerCase() === 'false') return false;
+  return /^\d+$/.test(raw) ? Number(raw) : parseList(raw).join(',');
+}
+
+/** Whether `path` contains one of `fragments` as whole consecutive segments (case-insensitive, like Express routing). */
+export function isRawBodyPath(path: string, fragments: readonly string[]): boolean {
+  const segments = path.toLowerCase().split('/').filter(Boolean);
+  return fragments.some((fragment) => {
+    const wanted = fragment.toLowerCase().split('/').filter(Boolean);
+    if (wanted.length === 0) return false;
+    for (let start = 0; start + wanted.length <= segments.length; start += 1) {
+      if (wanted.every((segment, i) => segments[start + i] === segment)) return true;
+    }
+    return false;
+  });
 }
 
 /** Throws when `*` is configured in production: credentialed CORS must target explicit front origins. */
@@ -126,7 +148,7 @@ export function assertSafeOrigins(allowedOrigins: string[], production: boolean)
 /** Merges explicit options, environment and defaults. Throws on an unsafe combination. */
 export function resolveHttpAppOptions(options: HttpAppOptions = {}, env: HttpAppEnv = process.env): ResolvedHttpAppOptions {
   const production = options.production ?? env.NODE_ENV === 'production';
-  const allowedOrigins = parseList(options.clientOrigins ?? env.CLIENT_ORIGINS ?? `http://localhost:${env.FRONT_PORT}`);
+  const allowedOrigins = resolveClientOrigins(options.clientOrigins, env);
   assertSafeOrigins(allowedOrigins, production);
   const envPaths = parseList(env.RAW_BODY_PATHS);
   return {
@@ -135,7 +157,7 @@ export function resolveHttpAppOptions(options: HttpAppOptions = {}, env: HttpApp
     trustProxy: options.trustProxy ?? parseTrustProxy(env.TRUST_PROXY, production),
     rawBodyPaths: options.rawBodyPaths ?? (envPaths.length > 0 ? envPaths : DEFAULT_RAW_BODY_PATHS),
     jsonLimit: options.jsonLimit ?? '5mb',
-    rawBodyLimit: options.rawBodyLimit ?? '50mb',
+    rawBodyLimit: options.rawBodyLimit ?? (env.WEBHOOK_BODY_LIMIT?.trim() || DEFAULT_WEBHOOK_BODY_LIMIT),
     allowedHeaders: [...new Set([...BASE_CORS_HEADERS, ...(options.extraCorsHeaders ?? []).map((h) => h.trim()).filter(Boolean)])],
     validation: options.validation === false ? false : { ...DEFAULT_VALIDATION, ...options.validation },
     publicCorsPaths: (options.publicCorsPaths ?? []).map((p) => p.trim()).filter(Boolean),
@@ -149,7 +171,7 @@ export function resolveListenHost(env: HttpAppEnv = process.env): string {
 }
 
 type ExpressLike = { set: (key: string, value: unknown) => void };
-type RawBodyRequest = { path?: string; url?: string; rawBody?: Buffer };
+type RawBodyRequest = { method?: string; path?: string; url?: string; rawBody?: Buffer };
 type Next = (err?: unknown) => void;
 
 function corsOrigin(allowedOrigins: string[]) {
@@ -215,7 +237,10 @@ function publicResourcePolicy(publicPaths: readonly string[]) {
   };
 }
 
-/** Parses the JSON body of matching routes with a larger limit and keeps the exact bytes in `req.rawBody` (signature checks). */
+/**
+ * Parses the JSON body of a POST to a raw-body path with its own limit and keeps the exact bytes in `req.rawBody`
+ * (signature checks). It runs before routing, so a path that only looks like a webhook costs at most that limit.
+ */
 function rawBodyMiddleware(paths: string[], limit: string) {
   const parse = bodyParser.json({
     limit,
@@ -224,8 +249,7 @@ function rawBodyMiddleware(paths: string[], limit: string) {
     },
   });
   return (req: RawBodyRequest, res: unknown, next: Next): void => {
-    const path = req.path ?? (req.url ?? '').split('?')[0];
-    if (paths.some((p) => path.includes(p))) {
+    if (req.method === 'POST' && isRawBodyPath(requestPath(req), paths)) {
       (parse as unknown as (r: unknown, s: unknown, n: Next) => void)(req, res, next);
     } else {
       next();
@@ -254,7 +278,15 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions 
   const resolved = resolveHttpAppOptions(options);
   const wildcard = resolved.allowedOrigins.includes('*');
 
+  if (resolved.production && resolved.trustProxy === true) {
+    new Logger('configureHttpApp').warn(
+      'TRUST_PROXY=true trusts every X-Forwarded-For hop: any client can choose its own req.ip (rate limits, audit). ' +
+        'Set TRUST_PROXY to the list of your proxies, e.g. loopback,uniquelocal,<reverse proxy IPs>.'
+    );
+  }
+  // Throws on an invalid address in a TRUST_PROXY list (proxy-addr): the app refuses to boot instead of trusting garbage.
   (app.getHttpAdapter().getInstance() as ExpressLike).set('trust proxy', resolved.trustProxy);
+  recordAllowedClientOrigins(resolved.allowedOrigins);
   // CSP is off on purpose: the API serves JSON and Swagger UI; the front sets its own CSP (nginx / hosting headers).
   app.use(helmet({ contentSecurityPolicy: false }));
   if (resolved.publicCorsPaths.length > 0) app.use(publicResourcePolicy(resolved.publicCorsPaths));
@@ -268,6 +300,9 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions 
   app.use(rawBodyMiddleware(resolved.rawBodyPaths, resolved.rawBodyLimit));
   app.use(bodyParser.json({ limit: resolved.jsonLimit }));
   app.use(bodyParser.urlencoded({ limit: resolved.jsonLimit, extended: true }));
+  // Error middleware (4 arguments): marks client body errors so that AppExceptionFilter logs them as one rate-limited
+  // WARN line (Nest would otherwise turn a malformed-JSON SyntaxError into an anonymous BadRequestException).
+  app.use(tagBodyParserErrors);
   if (resolved.validation) app.useGlobalPipes(createGlobalValidationPipe(resolved.validation));
   return resolved;
 }

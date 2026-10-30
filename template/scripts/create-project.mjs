@@ -33,7 +33,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  DB_ENGINES, DB_ENGINE_LABELS, applyEnvValues, buildConfigEntries, buildEnvFromAnswers, buildSharedModules,
+  DB_ENGINES, DB_ENGINE_LABELS, applyEnvValues, buildEnvFromAnswers, buildNewProjectConfigEntries, buildSharedModules,
   envExampleBody, frontPackageLocal, loadCatalog, normalizeAnswers, patchDefaultConfig, renderEnvExample, resolveDesktop, resolveProject, resolvePwa, supportsDatabase,
   validateAnswers, withQuestionDefaults,
 } from './lib/project-engine.mjs';
@@ -499,7 +499,7 @@ function finishProject({ root, opts, answers, resolved, catalog }) {
     sh('node', ['scripts/apply-component-templates.mjs', root, '--site-name', answers.siteName, '--entity-name', answers.entityName,
       '--contact-email', answers.contactEmail, '--project-name', answers.projectName]);
   }
-  patchDefaults(root, buildConfigEntries(catalog, answers, resolved.ids));
+  patchDefaults(root, buildNewProjectConfigEntries(catalog, answers, resolved.ids));
   writeLocales(root, answers);
   if (answers.desktop.enabled) {
     const copied = installDesktop(root, path.join(root, 'front', '.libs', 'apptemplate'), answers, { keepExisting: true });
@@ -565,7 +565,7 @@ export function renderPlan(answers, resolved, catalog, root) {
   if (resolved.added.length) lines.push(`Added by requires: ${resolved.added.join(', ')}`);
   const dbLine = answers.database.engine === 'sqlite' ? `sqlite (${sqliteDbPath(answers.projectName)}, better-sqlite3 added to back/package.local.json)` : answers.database.engine;
   lines.push(`Database        ${dbLine}${answers.database.redis ? ' + Redis' : ''}`, `Languages       ${answers.languages.join(', ')}`);
-  const entries = buildConfigEntries(catalog, answers, resolved.ids);
+  const entries = buildNewProjectConfigEntries(catalog, answers, resolved.ids);
   const pwa = resolvePwa(answers);
   lines.push(`PWA             ${pwa.enabled ? `yes ("${pwa.name}" / "${pwa.shortName}", theme ${pwa.themeColor}, background ${pwa.backgroundColor}; vite-plugin-pwa added to front/package.local.json)` : 'no'}`);
   const desktop = resolveDesktop(answers);

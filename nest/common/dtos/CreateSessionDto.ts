@@ -7,10 +7,12 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 
+/** Body of the public `POST /api/v1/crypt/session`: an uncompressed P-256 key (65 bytes: 88 base64 / 130 hex chars). */
 export class CreateSessionDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(256)
   clientPublicKey!: string;
 }

@@ -9,9 +9,17 @@
 
 import { ExecutionContext, Injectable } from '@nestjs/common';
 import type { ThrottlerOptions } from '@nestjs/throttler';
+import type { Request } from 'express';
 
 /** A number, or a function read on every request (so a value stored in the configuration can change without a restart). */
 export type ThrottleValue = number | ((context: ExecutionContext) => number | Promise<number>);
+
+/**
+ * What one rule counts by, instead of the authenticated user / client IP of the guard (e.g. an API key id, a runner id).
+ * Called before the auth interceptor (`req.user` is not set yet). A non-empty string ⇒ that key (namespaced `key:<value>`);
+ * `undefined`, `null`, `''` or a throw ⇒ the guard's default tracker (user, else IP), never an error.
+ */
+export type ThrottleTracker = (req: Request, context: ExecutionContext) => string | null | undefined | Promise<string | null | undefined>;
 
 /** An additional, named throttler of the global limiter. */
 export interface ThrottleRule {
@@ -25,6 +33,11 @@ export interface ThrottleRule {
   paths?: string[];
   /** The rule is skipped when this returns true (evaluated after `paths`). */
   skipIf?: (context: ExecutionContext) => boolean;
+  /**
+   * Optional key this rule counts by (see {@link ThrottleTracker}); other rules and `default` keep the user / IP. Return a
+   * key only for a credential you trust (verified or cached): an unverified header lets a client pick a fresh bucket.
+   */
+  tracker?: ThrottleTracker;
 }
 
 type PathRequest = { path?: string; originalUrl?: string; url?: string };
@@ -63,6 +76,7 @@ export function toThrottlerOptions(rule: ThrottleRule): ThrottlerOptions {
 @Injectable()
 export class ThrottleRegistry {
   private readonly rules = new Map<string, ThrottlerOptions>();
+  private readonly trackers = new Map<string, ThrottleTracker>();
   private current = 0;
 
   /** Incremented on every registration; the guard re-reads {@link list} when it changes. */
@@ -77,7 +91,9 @@ export class ThrottleRegistry {
     if (this.rules.has(name)) throw new Error(`Throttle rule "${name}" is already registered`);
     validateValue(name, 'limit', rule.limit);
     validateValue(name, 'ttlMs', rule.ttlMs);
+    if (rule.tracker !== undefined && typeof rule.tracker !== 'function') throw new Error(`Throttle rule "${name}": tracker must be a function`);
     this.rules.set(name, toThrottlerOptions({ ...rule, name }));
+    if (rule.tracker) this.trackers.set(name, rule.tracker);
     this.current += 1;
   }
 
@@ -87,5 +103,10 @@ export class ThrottleRegistry {
 
   list(): ThrottlerOptions[] {
     return [...this.rules.values()];
+  }
+
+  /** The tracker of the rule `name`, if it declared one (the guard wraps it with its fallback). */
+  trackerOf(name: string): ThrottleTracker | undefined {
+    return this.trackers.get(name);
   }
 }

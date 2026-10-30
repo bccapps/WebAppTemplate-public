@@ -100,11 +100,18 @@ Progress markers (`==> ` lines parsed by Agent Hub): `[BACK:<host>] Tagging curr
 | **SQLite** | `DB_ENGINE=sqlite`, `DB_PATH` | Local file database instead of Postgres, single instance (see `modules_shared/database/README.md`). Written by the wizard (`DB_PATH=data/<project>.db`); `better-sqlite3` is added to `back/package.local.json` |
 | **Database engine (scripts)** | `DB_ENGINE` | The only engine variable (the former `DATABASE_ENGINE` is refused by the back and by every script: rename it). `scripts/lib/db-engine.sh` is the single reader: `postgres`/`selfhosted` use `docker-compose.yml` (the `db` Postgres service), every other engine (`cloud`, `supabase`, `neon`, `sqlite`) uses `docker-compose-cloud.yml`, which has no database container; a compose file with a `db` service is refused for those engines. With `sqlite`, deploys keep the file on the `sqlite_data` volume (`DB_PATH=/data/<project>.db` set by the compose file, `/data` owned by the `node` user), require a single back host, `backup-db.sh` / `restore-db.sh` handle SQLite (online backup of the file, local or inside the remote back container; remote restore is manual), while `migrate-db.sh`, `migrate-server.sh` and `populate-db.sh` refuse to run (Postgres only) |
 | **Security** | `ADMIN_TOKEN`, `CRYPT_DB_MASTER_KEY`, `CRYPT_DB_DERIVATION_SALT`, `CRYPT_SESSION_PRIVATE_KEY`, `CLIENT_ORIGINS` | Anonymous-mode admin key, encryption keys, CORS (`*` refused in production) |
-| **HTTP server** | `HOST`, `TRUST_PROXY`, `RAW_BODY_PATHS`, `APP_VERSION`, `LOG_DIR`, `LOG_TO_FILE`, `APP_DATA_DIR` | Listen address, proxy trust, webhook raw-body paths, version in `/api/v1/health`, file logs (all optional, see `back/.env.example` and `nest/common/README.md`) |
+| **HTTP server** | `HOST`, `TRUST_PROXY`, `RAW_BODY_PATHS`, `WEBHOOK_BODY_LIMIT`, `APP_VERSION`, `LOG_DIR`, `LOG_TO_FILE`, `APP_DATA_DIR` | Listen address, proxy trust, webhook raw-body paths and their body limit (1mb), version in `/api/v1/health`, file logs (all optional, see `back/.env.example` and `nest/common/README.md`) |
 | **Front served by the back** | `SERVE_FRONT_DIR` | Optional same-origin front (directory of the built front); see « Servir le front » in `nest/common/README.md` |
 | **With the `user` module only** | `VITE_REOWN_PROJECT_ID`, `VITE_AUTH_CHAIN_POLICY`, `ADMIN_WALLET`, `TECH_TOKEN`, `JWT_SECRET` | Reown/WalletConnect auth, wallet admin, JWT (see `back/.env.example`) |
 | **Deployment** | `FRONT_HOSTS`, `BACK_HOSTS`, `REMOTE_USER`, `REMOTE_SSH_PORT`, `SSH_KEY_FILE`, `REMOTE_CONTEXT_NAME`, `REMOTE_APP_DIR` | Remote Docker deployment |
 | **Notifications** | `PROWL_API_KEY` | Push notifications (optional) |
+
+**Behind a reverse proxy, set `TRUST_PROXY` to a list.** In production the chain is client → your reverse proxy → `back-lb`
+(the nginx of `scripts/docker-compose.yml`) → `back`, each proxy appending its peer to `X-Forwarded-For`. The production default
+`TRUST_PROXY=1` trusts `back-lb` only, so `req.ip` is the reverse proxy for every client and the rate limiter puts all anonymous
+traffic in one bucket. Set `TRUST_PROXY=loopback,linklocal,uniquelocal,<reverse proxy IP>[,<other proxy IP>]` (trust by address, any
+number of hops) and keep the `back-lb` port reachable only through those proxies. Why a hop count is fragile and what the list
+guarantees: `nest/common/README.md`, « IP du client derrière les proxys ».
 
 ## Needed Customizations
 
@@ -169,11 +176,12 @@ Back plugin format (`NestModulePlugin`, details in `nest/common/README.md`, « P
 (created empty by the template, typed `PluginOptions`, keyed by plugin id); a missing option stops the app at startup with the plugin id
 and the missing keys. Listed modules without a plugin are libraries imported by other modules: never write a plugin for them.
 
-**Rate limiter**: `common` ships a global limiter (`@nestjs/throttler`, in `package.base.json`), OFF by default
-(`common_throttleEnabled`, admin configuration). Turn it on for a new app together with `common_throttleDefaultLimit` (300) and
-`common_throttleDefaultTtlMs` (60000); `REDIS_URL` shares the counters between replicas. An app that already registers its own
-`ThrottlerModule` + `ThrottlerGuard` must keep `common_throttleEnabled` off (or drop its own and switch the key on), otherwise each
-request is counted twice.
+**Rate limiter**: `common` ships a global limiter (`@nestjs/throttler`, in `package.base.json`), OFF in the library
+(`common_throttleEnabled`, admin configuration) but ON for a new app: `create-project` seeds `common_throttleEnabled = true` in
+`back/src/config/defaultConfig.ts` (limits `common_throttleDefaultLimit` 300 / `common_throttleDefaultTtlMs` 60000, plus the route
+budgets of `common`'s anonymous routes); `REDIS_URL` shares the counters between replicas. An existing app switches it on from the
+admin (a value already in the database is never reseeded). An app that already registers its own global `ThrottlerModule` +
+`ThrottlerGuard` must keep it off (or drop its own and switch the key on), otherwise each request is counted twice.
 
 ## Optional shared modules (`infra`, `commerce`, `oauth`)
 

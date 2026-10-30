@@ -8,6 +8,13 @@
  */
 
 export * from './configureHttpApp';
+export {
+  allowedClientOrigins,
+  recordAllowedClientOrigins,
+  resetAllowedClientOrigins,
+  resolveClientOrigins,
+  resolveFrontRedirectUrl,
+} from './clientOrigins';
 export * from './ValidateOnlyPipe';
 export * from './serveFrontend';
 export * from './swaggerEnabled';

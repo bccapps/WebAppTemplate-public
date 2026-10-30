@@ -8,11 +8,16 @@
  */
 
 import { Body, Controller, Post, Req } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { CookieConsentLogDto } from '../dtos/CookieConsentLogDto';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { Public } from '../decorators/Public';
 import { CookieConsentService } from '../services/CookieConsentService';
+import { extractClientIp } from '../utils/clientRequest';
+
+/** Budget of the anonymous consent log (each call writes a row): a visitor posts once or twice. */
+export const COOKIE_CONSENT_THROTTLE = { limit: 10, ttl: 600_000 };
 
 @ApiTags('cookie-consent')
 @Controller()
@@ -26,11 +31,11 @@ export class CookieConsentController {
    */
   @ApiOkResponse({ description: 'Log a cookie-consent choice (anonymous, proof-of-consent record)' })
   @Public()
+  @Throttle({ default: COOKIE_CONSENT_THROTTLE })
   @Post('/api/v1/cookie-consent')
   async log(@Body() body: CookieConsentLogDto, @Req() request: Request): Promise<{ success: true }> {
-    const ip = request.ip || request.headers['x-forwarded-for']?.toString().split(',')[0] || null;
     await this.cookieConsentService.log({
-      ip,
+      ip: extractClientIp(request),
       userAgent: request.headers['user-agent']?.toString() ?? null,
       categories: { necessary: true, audienceMeasurement: body.categories.audienceMeasurement },
     });

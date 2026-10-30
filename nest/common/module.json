@@ -26,7 +26,8 @@
     "RAW_BODY_PATHS",
     "REDIS_URL",
     "SHARED_DIRECTORY",
-    "TRUST_PROXY"
+    "TRUST_PROXY",
+    "WEBHOOK_BODY_LIMIT"
   ],
   "questions": []
 }

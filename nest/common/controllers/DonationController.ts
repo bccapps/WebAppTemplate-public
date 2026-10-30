@@ -9,10 +9,14 @@
 
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { Public } from '../decorators/Public';
 import { DonationService, DonationPublicConfig } from '../services/DonationService';
 import { DonationQuoteQueryDto } from '../dtos/DonationQuoteQueryDto';
 import { CreateStripeCheckoutDto } from '../dtos/CreateStripeCheckoutDto';
+
+/** Budget of the anonymous Stripe Checkout creation (one Stripe API call per request). */
+export const DONATION_CHECKOUT_THROTTLE = { limit: 10, ttl: 600_000 };
 
 /**
  * Public, unauthenticated endpoints for the `DonateButton`/`DonationDialog` widget. No endpoint
@@ -39,6 +43,7 @@ export class DonationController {
 
   @ApiOkResponse({ description: 'Creates a Stripe Checkout session for a USD donation amount, returns its redirect URL' })
   @Public()
+  @Throttle({ default: DONATION_CHECKOUT_THROTTLE })
   @Post('/api/v1/donations/stripe/checkout-session')
   async createStripeCheckoutSession(@Body() body: CreateStripeCheckoutDto): Promise<{ url: string }> {
     return this.donationService.createStripeCheckoutSession(body);

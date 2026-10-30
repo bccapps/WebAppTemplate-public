@@ -564,6 +564,22 @@ export function resolveProject(catalog, rawAnswers) {
 
 const serializeConfigValue = (v) => (typeof v === 'string' ? v : Array.isArray(v) || (v && typeof v === 'object') ? JSON.stringify(v) : String(v));
 
+/**
+ * Entries every NEW project starts with, whatever the answers (create-project only: add-module never adds them to an
+ * existing app, which may keep its own ThrottlerModule). `common_throttleEnabled`: the global rate limiter of `common`
+ * is off in the library (older apps), on for a new app (`nest/common/README.md`, « Limiteur de débit »).
+ */
+export const NEW_PROJECT_CONFIG_ENTRIES = Object.freeze([
+  { name: 'common_throttleEnabled', value: 'true', description: 'Global rate limiter of common on (create-project)' },
+]);
+
+/** `defaultConfigEntries` of a project being created: {@link NEW_PROJECT_CONFIG_ENTRIES}, then those of the answers. */
+export function buildNewProjectConfigEntries(catalog, rawAnswers, resolvedIds) {
+  const fromAnswers = buildConfigEntries(catalog, rawAnswers, resolvedIds);
+  const names = new Set(fromAnswers.map((e) => e.name));
+  return [...NEW_PROJECT_CONFIG_ENTRIES.filter((e) => !names.has(e.name)).map((e) => ({ ...e })), ...fromAnswers];
+}
+
 /** `defaultConfigEntries` seeded in the new project, from the answers. */
 export function buildConfigEntries(catalog, rawAnswers, resolvedIds) {
   const a = normalizeAnswers(rawAnswers);

@@ -8,17 +8,26 @@
  */
 
 import { Type } from 'class-transformer';
-import { IsNumber, IsUrl, Min } from 'class-validator';
+import { IsNotEmpty, IsNumber, IsString, Max, MaxLength, Min } from 'class-validator';
 
+/**
+ * Body of the public `POST /api/v1/donations/stripe/checkout-session`. The two URLs are checked by `DonationService`
+ * against the front origins of the app (`CLIENT_ORIGINS`): an absolute URL of an allowed origin or a `/path`.
+ */
 export class CreateStripeCheckoutDto {
   @Type(() => Number)
   @IsNumber()
   @Min(0.5)
+  @Max(999_999)
   amountUsd!: number;
 
-  @IsUrl({ require_tld: false })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2048)
   successUrl!: string;
 
-  @IsUrl({ require_tld: false })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2048)
   cancelUrl!: string;
 }

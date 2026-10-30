@@ -22,6 +22,12 @@ export const STORAGE_SALT_FALLBACK = 'web3c:db';
 export const TRANSPORT_HKDF_INFO = Buffer.from('web3c:transport', 'utf8');
 export const TRANSPORT_SESSION_SALT = Buffer.from('web3c:transport-salt', 'utf8');
 export const DEFAULT_SESSION_TTL_MS = 10 * 60 * 1000;
+/**
+ * Fallback of `common_cryptSessionMaxLive`: most transport sessions alive at once (in memory, or in Redis across
+ * replicas). `POST /crypt/session` is anonymous; past the cap the oldest sessions are evicted (their next responses go
+ * out unencrypted over HTTPS until the client renegotiates). ~300 bytes each: 50 000 ≈ 15 MB.
+ */
+export const DEFAULT_MAX_LIVE_SESSIONS = 50_000;
 export const TRANSPORT_SESSION_HEADER = 'x-crypt-session';
 export const TRANSPORT_ENCRYPTED_HEADER = 'x-crypt-encrypted';
 export const TRANSPORT_VERSION_HEADER = 'x-crypt-version';

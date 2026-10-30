@@ -10,18 +10,12 @@
 import { Request } from 'express';
 
 /**
- * Real client IP behind a reverse proxy that sets X-Forwarded-For
- * ($proxy_add_x_forwarded_for). Takes the first hop (original client) and
- * falls back to the raw socket address for direct/local connections.
+ * Client IP as Express resolves it (`req.ip`): the `X-Forwarded-For` chain is walked from the right through the proxies
+ * that `TRUST_PROXY` trusts only, so a client cannot choose it. Never the first `X-Forwarded-For` entry (the client
+ * writes it). Falls back to the socket address, then `null`.
  */
-export function extractClientIp(req: Request): string | null {
-  const forwardedFor = req.headers['x-forwarded-for'];
-  const forwardedValue = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
-  if (forwardedValue) {
-    const firstHop = forwardedValue.split(',')[0]?.trim();
-    if (firstHop) return firstHop;
-  }
-  return req.socket?.remoteAddress ?? null;
+export function extractClientIp(req: Pick<Request, 'ip' | 'socket'>): string | null {
+  return req.ip || req.socket?.remoteAddress || null;
 }
 
 /** Provenance headers captured alongside a public sign-up, for auditing and anti-abuse. */

@@ -8,6 +8,7 @@
  */
 
 import { ExecutionContext, Inject, Injectable, Optional } from '@nestjs/common';
+import type { Request } from 'express';
 import { Reflector } from '@nestjs/core';
 import { getOptionsToken, getStorageToken, ThrottlerGuard } from '@nestjs/throttler';
 import type { ThrottlerModuleOptions, ThrottlerOptions, ThrottlerStorage } from '@nestjs/throttler';
@@ -16,19 +17,28 @@ import { AUTH_PORT, type AuthPort } from '../auth/AuthPort';
 import { extractBearerToken, resolveTokenOnce, type AuthRequest } from '../auth/authRequest';
 import type { AuthPrincipal } from '../auth/AuthPrincipal';
 import type { LocalTrustRequest } from '../auth/localTrust';
-import { ThrottleRegistry } from './ThrottleRegistry';
+import { RateLimitedLog } from '../utils/rateLimitedLog';
+import { ThrottleRegistry, type ThrottleTracker } from './ThrottleRegistry';
 
 /**
  * Global rate-limit guard of `common`. A pass-through unless `common_throttleEnabled` is true (read on every
  * request, so it can be switched from the admin without a restart). Throttlers: `default` plus the named ones of
  * {@link ThrottleRegistry}. Tracks the authenticated user, the client IP otherwise: the guard resolves the principal
  * itself through `AUTH_PORT` (the global auth interceptor runs after the guards, so `req.user` is not set yet), and
- * the interceptor reuses that result. Controllers opt out with `@SkipThrottle()`.
+ * the interceptor reuses that result. Controllers opt out with `@SkipThrottle()`; a route sets its own budget with
+ * `@Throttle({ default: { limit, ttl } })`, counted apart from the other routes (the storage key includes the handler).
  */
 @Injectable()
 export class CommonThrottlerGuard extends ThrottlerGuard {
   private baseThrottlers: ThrottlerOptions[] = [];
   private syncedVersion = -1;
+  /** A failing rule tracker is reported at most once a minute per rule (it may fail on every request). */
+  private readonly trackerFailures = new RateLimitedLog({
+    name: '[CommonThrottlerGuard] rule tracker failures',
+    perWindow: 1,
+    windowMs: 60_000,
+    write: (line) => console.warn(line),
+  });
 
   constructor(
     @Inject(getOptionsToken()) options: ThrottlerModuleOptions,
@@ -51,7 +61,7 @@ export class CommonThrottlerGuard extends ThrottlerGuard {
     const enabled: unknown = this.config.get('common_throttleEnabled');
     if (enabled !== true && enabled !== 'true') return true;
     if (this.syncedVersion !== this.registry.version) {
-      this.throttlers = [...this.baseThrottlers, ...this.registry.list()];
+      this.throttlers = [...this.baseThrottlers, ...this.registry.list().map((throttler) => this.withRuleTracker(throttler))];
       this.syncedVersion = this.registry.version;
     }
     return false;
@@ -61,8 +71,29 @@ export class CommonThrottlerGuard extends ThrottlerGuard {
     const principal = (req as AuthRequest).user ?? (await this.resolvePrincipal(req));
     const userId = principal?.id;
     if (userId !== undefined && userId !== null) return `user:${String(userId)}`;
-    const ip = (req as { ip?: string }).ip;
-    return `ip:${ip ?? 'unknown'}`;
+    // `req.ip` (TRUST_PROXY decides what it is), normalized by @nestjs/throttler: an IPv6 client counts per /64 (it
+    // would otherwise rotate addresses inside its own prefix), an IPv4-mapped address as plain IPv4.
+    const ip = await super.getTracker(req);
+    return `ip:${ip || 'unknown'}`;
+  }
+
+  /** A registry rule with its own tracker counts by that key, falling back to {@link getTracker} (user, else IP). */
+  private withRuleTracker(throttler: ThrottlerOptions): ThrottlerOptions {
+    const tracker = this.registry.trackerOf(throttler.name ?? '');
+    if (!tracker) return throttler;
+    return { ...throttler, getTracker: (req, context) => this.ruleTracker(throttler.name ?? '', tracker, req, context) };
+  }
+
+  /** `key:<value>` from the rule's tracker; its fallback (empty value or a throw, never an error answer) is the default tracker. */
+  private async ruleTracker(name: string, tracker: ThrottleTracker, req: Record<string, unknown>, context: ExecutionContext): Promise<string> {
+    try {
+      const key = await tracker(req as unknown as Request, context);
+      if (typeof key === 'string' && key.length > 0) return `key:${key}`;
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.trackerFailures.log(name, `[CommonThrottlerGuard] tracker of throttle rule "${name}" failed (${reason}): counting by user/IP`);
+    }
+    return this.getTracker(req);
   }
 
   /** The principal of the request without touching it; `null` (so: the IP) for a missing or rejected credential. */

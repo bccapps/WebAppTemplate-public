@@ -20,6 +20,7 @@ import {
 } from '../constants/donationEvmCatalog';
 import type { DonationQuoteAsset, DonationQuoteChain } from '../dtos/DonationQuoteQueryDto';
 import type { CreateStripeCheckoutDto } from '../dtos/CreateStripeCheckoutDto';
+import { allowedClientOrigins, resolveFrontRedirectUrl } from '../bootstrap/clientOrigins';
 
 const EVM_CHAIN_IDS = Object.keys(DONATION_EVM_CHAINS) as DonationEvmChainId[];
 
@@ -146,9 +147,20 @@ export class DonationService {
     throw new BadRequestException(`Unsupported chain: ${chain}`);
   }
 
+  /**
+   * Creates a Stripe Checkout session. Anonymous route: the redirect URLs must be pages of this app's front (an
+   * absolute URL of an allowed `CLIENT_ORIGINS` origin, or a `/path` resolved against the first one), otherwise the
+   * operator's Checkout page would redirect to any site (open redirect).
+   */
   async createStripeCheckoutSession(dto: CreateStripeCheckoutDto): Promise<{ url: string }> {
     const secretKey = this.moduleConfigService.getDecryptedSecretValue('common', 'donations_stripeSecretKey');
     if (!secretKey) throw new BadRequestException('Stripe donations are not configured');
+    const amountUsd = Number(dto.amountUsd);
+    if (!Number.isFinite(amountUsd) || amountUsd < 0.5 || amountUsd > 999_999) {
+      throw new BadRequestException('amountUsd must be between 0.5 and 999999');
+    }
+    const successUrl = frontRedirectUrl(dto.successUrl, 'successUrl');
+    const cancelUrl = frontRedirectUrl(dto.cancelUrl, 'cancelUrl');
 
     // Pinned: unpinned, the API version would follow every SDK major (it was the SDK 22 default).
     // @ts-expect-error — apiVersion's type tracks the installed SDK's latest, not this pin.
@@ -160,13 +172,13 @@ export class DonationService {
           price_data: {
             currency: 'usd',
             product_data: { name: 'Donation' },
-            unit_amount: Math.round(dto.amountUsd * 100),
+            unit_amount: Math.round(amountUsd * 100),
           },
           quantity: 1,
         },
       ],
-      success_url: dto.successUrl,
-      cancel_url: dto.cancelUrl,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
     });
     if (!session.url) throw new ServiceUnavailableException('Stripe did not return a checkout URL');
     return { url: session.url };
@@ -178,6 +190,13 @@ export class DonationService {
     if (!price) throw new ServiceUnavailableException(`${asset} price is temporarily unavailable`);
     return price;
   }
+}
+
+/** A redirect URL of the front (see `resolveFrontRedirectUrl`), or a 400 naming the refused field. */
+function frontRedirectUrl(value: string, field: string): string {
+  const url = resolveFrontRedirectUrl(value, allowedClientOrigins());
+  if (!url) throw new BadRequestException(`${field} must be a page of this site (an allowed front origin or a path starting with /)`);
+  return url;
 }
 
 /** Removes a BIP21/Solana-Pay amount's trailing zeros (and a trailing dot) — cosmetic only. */

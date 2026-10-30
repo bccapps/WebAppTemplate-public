@@ -63,3 +63,31 @@ describe('LocaleService.getAllLocales — memoized, ?lang filter (PERFORMANCE_PL
     expect(result).toEqual({});
   });
 });
+
+describe('LocaleService.getLocale — memoized per category (public route)', () => {
+  it('reads a category from disk once within the TTL, again after clearAllLocalesCache(), and caches no unknown category', async () => {
+    const service = new LocaleService();
+    const readFileSpy = jest.spyOn(fs, 'readFileSync');
+    const readdirSpy = jest.spyOn(fs, 'readdirSync');
+    try {
+      const first = await service.getLocale('common');
+      expect(first).toBeDefined();
+      expect(readFileSpy).toHaveBeenCalled();
+      readFileSpy.mockClear();
+      readdirSpy.mockClear();
+      expect(await service.getLocale('common')).toEqual(first);
+      expect(readFileSpy).not.toHaveBeenCalled();
+      expect(readdirSpy).not.toHaveBeenCalled();
+
+      service.clearAllLocalesCache();
+      await service.getLocale('common');
+      expect(readFileSpy).toHaveBeenCalled();
+
+      await expect(service.getLocale('zz-no-such-category')).rejects.toThrow();
+      expect((service as unknown as { categoryCache: Map<string, unknown> }).categoryCache.has('zz-no-such-category')).toBe(false);
+    } finally {
+      readFileSpy.mockRestore();
+      readdirSpy.mockRestore();
+    }
+  });
+});

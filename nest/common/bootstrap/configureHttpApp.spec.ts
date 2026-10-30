@@ -6,8 +6,10 @@
  *
  * Licensed under the MIT License. See LICENSE in the project root.
  */
-import { describe, expect, it } from '@jest/globals';
-import { Body, Controller, Get, Module, Post, Req } from '@nestjs/common';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { Body, Controller, Get, INestApplication, Logger, Module, Post, Put, Req } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
+import { AppExceptionFilter } from '../exceptions/AppExceptionFilter';
 import { Test } from '@nestjs/testing';
 import { IsString } from 'class-validator';
 import request from 'supertest';
@@ -16,10 +18,12 @@ import {
   configureHttpApp,
   HttpAppOptions,
   isPublicCorsPath,
+  isRawBodyPath,
   parseTrustProxy,
   resolveHttpAppOptions,
   resolveListenHost,
 } from './configureHttpApp';
+import { allowedClientOrigins, resetAllowedClientOrigins } from './clientOrigins';
 
 class EchoDto {
   @IsString()
@@ -31,6 +35,21 @@ class EchoController {
   @Post('/hook/webhook')
   hook(@Req() req: { rawBody?: Buffer }, @Body() body: unknown) {
     return { raw: req.rawBody?.toString('utf8') ?? null, body };
+  }
+
+  @Put('/hook/webhook')
+  hookPut(@Req() req: { rawBody?: Buffer }, @Body() body: unknown) {
+    return { raw: req.rawBody?.toString('utf8') ?? null, body };
+  }
+
+  @Post('/wallet/webhooks/evm/1')
+  walletHook(@Req() req: { rawBody?: Buffer }) {
+    return { raw: req.rawBody?.toString('utf8') ?? null };
+  }
+
+  @Post('/me/test-webhook')
+  notAHook(@Req() req: { rawBody?: Buffer }) {
+    return { raw: req.rawBody?.toString('utf8') ?? null };
   }
 
   @Post('/plain')
@@ -61,12 +80,20 @@ async function createApp(options: HttpAppOptions) {
 }
 
 describe('resolveHttpAppOptions', () => {
-  it('falls back to the front dev origin and the /webhook raw-body path', () => {
+  it('falls back to the front dev origin, the /webhook and /webhooks raw-body paths and a 1mb webhook limit', () => {
     const r = resolveHttpAppOptions({}, { FRONT_PORT: '5173' });
     expect(r.allowedOrigins).toEqual(['http://localhost:5173']);
-    expect(r.rawBodyPaths).toEqual(['/webhook']);
+    expect(r.rawBodyPaths).toEqual(['/webhook', '/webhooks']);
+    expect(r.rawBodyLimit).toBe('1mb');
+    expect(r.jsonLimit).toBe('5mb');
     expect(r.production).toBe(false);
     expect(r.trustProxy).toBe(false);
+  });
+
+  it('reads WEBHOOK_BODY_LIMIT, an explicit rawBodyLimit option winning', () => {
+    expect(resolveHttpAppOptions({}, { FRONT_PORT: '1', WEBHOOK_BODY_LIMIT: ' 512kb ' }).rawBodyLimit).toBe('512kb');
+    expect(resolveHttpAppOptions({ rawBodyLimit: '50mb' }, { FRONT_PORT: '1', WEBHOOK_BODY_LIMIT: '512kb' }).rawBodyLimit).toBe('50mb');
+    expect(resolveHttpAppOptions({}, { FRONT_PORT: '1', WEBHOOK_BODY_LIMIT: '  ' }).rawBodyLimit).toBe('1mb');
   });
 
   it('reads CLIENT_ORIGINS and RAW_BODY_PATHS, trimming blanks', () => {
@@ -114,11 +141,38 @@ describe('parseTrustProxy', () => {
     [undefined, false, false],
     [undefined, true, 1],
     ['true', false, true],
+    ['TRUE', false, true],
     ['false', true, false],
     ['2', false, 2],
     ['loopback', false, 'loopback'],
+    // The deployment form: a list of trusted proxies, normalized (blanks and empty entries dropped).
+    ['loopback,linklocal,uniquelocal,62.171.135.125,92.130.213.98', true, 'loopback,linklocal,uniquelocal,62.171.135.125,92.130.213.98'],
+    [' loopback , ,10.0.0.0/8, 2001:db8::/32 ', true, 'loopback,10.0.0.0/8,2001:db8::/32'],
   ])('parses %p (production=%p) as %p', (value, production, expected) => {
     expect(parseTrustProxy(value, production)).toBe(expected);
+  });
+});
+
+describe('isRawBodyPath (whole path segments, not substrings)', () => {
+  const defaults = ['/webhook', '/webhooks'];
+  it.each([
+    ['/api/v1/commerce/payments/stripe/webhook', true],
+    ['/api/v1/communications/webhook/brevo/s3cret', true],
+    ['/api/v1/wallet-intelligence/webhooks/evm/1', true],
+    ['/API/V1/X/WEBHOOK', true],
+    ['/api/v1/agenthub/api-keys/1/test-webhook', false],
+    ['/api/v1/webhookz', false],
+    ['/api/v1/mywebhook', false],
+    ['/webhook-anything/x', false],
+    ['/', false],
+  ])('%p → %p', (path, expected) => {
+    expect(isRawBodyPath(path, defaults)).toBe(expected);
+  });
+
+  it('matches a multi-segment fragment as consecutive segments, never an empty one', () => {
+    expect(isRawBodyPath('/api/v1/commerce/payments/stripe/webhook', ['/stripe/webhook'])).toBe(true);
+    expect(isRawBodyPath('/api/v1/stripe/other/webhook', ['/stripe/webhook'])).toBe(false);
+    expect(isRawBodyPath('/api/v1/anything', ['/', ''])).toBe(false);
   });
 });
 
@@ -365,5 +419,154 @@ describe('configureHttpApp', () => {
       expect(pub.headers['access-control-allow-credentials']).toBeUndefined();
       await app.close();
     });
+  });
+});
+
+describe('configureHttpApp: webhook raw bodies', () => {
+  const json = (n: number) => JSON.stringify({ pad: 'x'.repeat(n) });
+
+  it('keeps the raw body of a POST on a /webhooks/ segment path, not of a PUT nor of a look-alike segment', async () => {
+    const app = await createApp({ clientOrigins: 'https://a.io' });
+    const server = app.getHttpServer();
+    const wallet = await request(server).post('/wallet/webhooks/evm/1').set('Content-Type', 'application/json').send('{"a": 1}');
+    expect(wallet.body.raw).toBe('{"a": 1}');
+    const put = await request(server).put('/hook/webhook').set('Content-Type', 'application/json').send('{"a": 1}');
+    expect(put.body).toEqual({ raw: null, body: { a: 1 } });
+    const lookAlike = await request(server).post('/me/test-webhook').set('Content-Type', 'application/json').send('{"a": 1}');
+    expect(lookAlike.body.raw).toBeNull();
+    await app.close();
+  });
+
+  it('caps a webhook body at the webhook limit (1mb by default), also on a webhook path that has no route', async () => {
+    const app = await createApp({ clientOrigins: 'https://a.io' });
+    const server = app.getHttpServer();
+    const big = json(1_100_000);
+    expect((await request(server).post('/hook/webhook').set('Content-Type', 'application/json').send(big)).status).toBe(413);
+    expect((await request(server).post('/no/such/webhook').set('Content-Type', 'application/json').send(big)).status).toBe(413);
+    const ok = await request(server).post('/hook/webhook').set('Content-Type', 'application/json').send(json(900_000));
+    expect(ok.status).toBe(201);
+    await app.close();
+  });
+
+  it('honours WEBHOOK_BODY_LIMIT and refuses to boot on an invalid one', async () => {
+    const previous = process.env.WEBHOOK_BODY_LIMIT;
+    try {
+      process.env.WEBHOOK_BODY_LIMIT = '1kb';
+      const app = await createApp({ clientOrigins: 'https://a.io' });
+      const res = await request(app.getHttpServer()).post('/hook/webhook').set('Content-Type', 'application/json').send(json(2000));
+      expect(res.status).toBe(413);
+      await app.close();
+      process.env.WEBHOOK_BODY_LIMIT = 'lots';
+      await expect(createApp({ clientOrigins: 'https://a.io' })).rejects.toThrow(/limit/);
+    } finally {
+      if (previous === undefined) delete process.env.WEBHOOK_BODY_LIMIT;
+      else process.env.WEBHOOK_BODY_LIMIT = previous;
+    }
+  });
+});
+
+/**
+ * Production chain: client → reverse proxy (62.171.135.125 or 92.130.213.98, appends the client to X-Forwarded-For)
+ * → back-lb (compose nginx on the docker network, appends the reverse proxy) → back (sees back-lb as its TCP peer).
+ * The client may send its own X-Forwarded-For first: proxies append, they never clear it.
+ */
+describe('client IP behind reverse proxy → back-lb → back (TRUST_PROXY)', () => {
+  const PROXIES = 'loopback,linklocal,uniquelocal,62.171.135.125,92.130.213.98';
+  const CLIENT = '203.0.113.50';
+  const SPOOFED = '6.6.6.6';
+  const chain = (reverseProxy: string) => `${SPOOFED}, ${CLIENT}, ${reverseProxy}`;
+
+  type ExpressApp = { request: object };
+  /** `req.ip` as Express computes it for one TCP peer and X-Forwarded-For, with the app's real `trust proxy` setting. */
+  const ipOf = (app: INestApplication, peer: string, xff: string): string => {
+    const express = app.getHttpAdapter().getInstance() as ExpressApp;
+    const req = Object.create(express.request, {
+      socket: { value: { remoteAddress: peer } },
+      headers: { value: { 'x-forwarded-for': xff } },
+    }) as { ip: string };
+    return req.ip;
+  };
+  const appWith = (trustProxy: string | undefined) =>
+    createApp({ clientOrigins: 'https://a.io', trustProxy: parseTrustProxy(trustProxy, true) });
+
+  it('with the proxy list, req.ip is the real client through either reverse proxy, whatever the client wrote', async () => {
+    const app = await appWith(PROXIES);
+    expect(ipOf(app, '172.18.0.5', chain('62.171.135.125'))).toBe(CLIENT);
+    expect(ipOf(app, '172.18.0.5', chain('92.130.213.98'))).toBe(CLIENT);
+    expect(ipOf(app, '::ffff:172.18.0.5', chain('62.171.135.125'))).toBe(CLIENT);
+    // Over a real socket (supertest: loopback stands for back-lb).
+    const res = await request(app.getHttpServer()).get('/ip').set('X-Forwarded-For', chain('62.171.135.125'));
+    expect(res.body.ip).toBe(CLIENT);
+    await app.close();
+  });
+
+  it('a client bypassing the reverse proxy (straight to back-lb) gets its own address, not the one it forged', async () => {
+    const app = await appWith(PROXIES);
+    expect(ipOf(app, '172.18.0.5', `${SPOOFED}, 198.51.100.7`)).toBe('198.51.100.7');
+    // Writing a trusted proxy address into its own header does not help: the walk stops at the first untrusted hop.
+    expect(ipOf(app, '172.18.0.5', `${SPOOFED}, 62.171.135.125, 198.51.100.7`)).toBe('198.51.100.7');
+    await app.close();
+  });
+
+  it('the hop-count default (1) makes req.ip the reverse proxy for every client; true lets the client choose', async () => {
+    const one = await appWith(undefined);
+    expect(ipOf(one, '172.18.0.5', chain('62.171.135.125'))).toBe('62.171.135.125');
+    await one.close();
+    const all = await appWith('true');
+    expect(ipOf(all, '172.18.0.5', chain('62.171.135.125'))).toBe(SPOOFED);
+    await all.close();
+  });
+
+  it('refuses to boot on an invalid entry of the list', async () => {
+    await expect(appWith('loopback,not-an-ip')).rejects.toThrow(/invalid IP address/);
+  });
+});
+
+describe('configureHttpApp records the CORS allow-list for allowedClientOrigins()', () => {
+  afterEach(() => resetAllowedClientOrigins());
+
+  it('exposes the applied list (explicit option over the environment)', async () => {
+    const app = await createApp({ clientOrigins: 'https://front.example, https://admin.example' });
+    expect(allowedClientOrigins({ CLIENT_ORIGINS: 'https://other.example' })).toEqual(['https://front.example', 'https://admin.example']);
+    await app.close();
+  });
+});
+
+describe('configureHttpApp + AppExceptionFilter: client body errors in the logs', () => {
+  it('logs malformed JSON, an oversized body and an unsupported charset as one WARN line each, no stack, no ERROR', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [EchoModule],
+      providers: [{ provide: APP_FILTER, useValue: new AppExceptionFilter({ safeNotify: jest.fn() } as never) }],
+    }).compile();
+    const app = moduleRef.createNestApplication();
+    configureHttpApp(app, { clientOrigins: 'https://a.io', jsonLimit: '1kb' });
+    await app.init();
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const nestError = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    try {
+      const server = app.getHttpServer();
+      const bad = await request(server).post('/plain?k=v').set('Content-Type', 'application/json').send('{"name": }');
+      expect(bad.status).toBe(400);
+      expect(bad.body).toMatchObject({ code: 'ERR', statusCode: 400, path: '/plain?k=v' });
+      const big = await request(server).post('/plain').set('Content-Type', 'application/json').send(JSON.stringify({ name: 'x'.repeat(5000) }));
+      expect(big.status).toBe(413);
+      const charset = await request(server).post('/plain').set('Content-Type', 'application/json; charset=klingon').send('{"name":"x"}');
+      expect(charset.status).toBe(415);
+      const lines = warn.mock.calls.map((call) => call.join(' '));
+      expect(lines).toEqual([
+        expect.stringMatching(/^\[AppExceptionFilter\] Client body error \(400 entity\.parse\.failed\) \| ip=\S+ \| endpoint=POST \/plain$/),
+        expect.stringMatching(/Client body error \(413 entity\.too\.large\) \| ip=\S+ \| endpoint=POST \/plain$/),
+        expect.stringMatching(/Client body error \(415 charset\.unsupported\)/),
+      ]);
+      expect(warn.mock.calls.every((call) => call.length === 1)).toBe(true);
+      expect(error).not.toHaveBeenCalled();
+      expect(nestError).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+      nestError.mockRestore();
+      await app.close();
+    }
   });
 });
