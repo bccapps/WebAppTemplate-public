@@ -79,7 +79,6 @@ describe('CommonThrottlerGuard', () => {
       options,
       storage as unknown as ThrottlerStorage,
       new Reflector(),
-      { get: (k: string) => config[k] } as never,
       registry,
       authPort,
     );
@@ -100,14 +99,8 @@ describe('CommonThrottlerGuard', () => {
   };
   const ctx = (user?: { id: string }): ExecutionContext => request({ ip: '1.2.3.4', headers: {}, user }).ctx;
 
-  it('is a pass-through while common_throttleEnabled is not true', async () => {
-    const guard = build({ common_throttleDefaultLimit: 1 });
-    await guard.onModuleInit();
-    for (let i = 0; i < 5; i += 1) expect(await guard.canActivate(ctx())).toBe(true);
-  });
-
-  it('rejects above the limit once enabled (also accepts the string "true")', async () => {
-    const guard = build({ common_throttleEnabled: 'true', common_throttleDefaultLimit: 2 });
+  it('rejects above the limit (always on: no switch since 2026-10-30)', async () => {
+    const guard = build({ common_throttleDefaultLimit: 2 });
     await guard.onModuleInit();
     expect(await guard.canActivate(ctx())).toBe(true);
     expect(await guard.canActivate(ctx())).toBe(true);
@@ -115,7 +108,7 @@ describe('CommonThrottlerGuard', () => {
   });
 
   it('tracks users apart from each other', async () => {
-    const guard = build({ common_throttleEnabled: true, common_throttleDefaultLimit: 1 });
+    const guard = build({ common_throttleDefaultLimit: 1 });
     await guard.onModuleInit();
     expect(await guard.canActivate(ctx({ id: 'u1' }))).toBe(true);
     expect(await guard.canActivate(ctx({ id: 'u2' }))).toBe(true);
@@ -177,7 +170,7 @@ describe('CommonThrottlerGuard', () => {
         mode: 'users',
         resolveToken: async (token) => ({ id: Number(token), admin: false, kind: 'user' }),
       };
-      const guard = build({ common_throttleEnabled: true, common_throttleDefaultLimit: 1 }, authPort);
+      const guard = build({ common_throttleDefaultLimit: 1 }, authPort);
       await guard.onModuleInit();
       const as = (token: string, ip: string): ExecutionContext => request({ ip, headers: { authorization: `Bearer ${token}` } }).ctx;
       expect(await guard.canActivate(as('1', '10.0.0.1'))).toBe(true);
@@ -197,7 +190,7 @@ describe('CommonThrottlerGuard', () => {
         switchToHttp: () => ({ getRequest: () => req, getResponse: () => ({ header: jest.fn() }) }),
       } as unknown as ExecutionContext;
     };
-    const enabled = () => build({ common_throttleEnabled: true, common_throttleDefaultLimit: 1000 });
+    const enabled = () => build({ common_throttleDefaultLimit: 1000 });
 
     it('applies @Throttle of the Stripe checkout per IP, apart from the other routes', async () => {
       const guard = enabled();
@@ -224,7 +217,7 @@ describe('CommonThrottlerGuard', () => {
     });
 
     it('lets a @SkipThrottle() controller through whatever the limit', async () => {
-      const guard = build({ common_throttleEnabled: true, common_throttleDefaultLimit: 1 });
+      const guard = build({ common_throttleDefaultLimit: 1 });
       await guard.onModuleInit();
       const stream = EventStreamController.prototype.stream as Handler;
       for (let i = 0; i < 5; i += 1) expect(await guard.canActivate(on(EventStreamController, stream, '203.0.113.9'))).toBe(true);
@@ -242,7 +235,7 @@ describe('CommonThrottlerGuard', () => {
 
   describe('named throttlers', () => {
     const build2 = (registry: ThrottleRegistry) =>
-      build({ common_throttleEnabled: true, common_throttleDefaultLimit: 1000 }, undefined, registry);
+      build({ common_throttleDefaultLimit: 1000 }, undefined, registry);
     const at = (path: string, ip = '1.2.3.4'): { ctx: ExecutionContext; res: { header: jest.Mock } } =>
       request({ ip, path, headers: {} });
 
@@ -302,7 +295,7 @@ describe('CommonThrottlerGuard', () => {
   });
 
   describe('named throttlers with their own tracker (ThrottleRule.tracker)', () => {
-    const enabledGuard = (registry: ThrottleRegistry) => build({ common_throttleEnabled: true, common_throttleDefaultLimit: 1000 }, undefined, registry);
+    const enabledGuard = (registry: ThrottleRegistry) => build({ common_throttleDefaultLimit: 1000 }, undefined, registry);
     const call = (ip: string, headers: Record<string, string> = {}): ExecutionContext => request({ ip, path: '/api/v1/mcp', headers }).ctx;
     const byKeyHeader = (req: { headers: Record<string, unknown> }) => req.headers['x-key'] as string | undefined;
 
@@ -351,7 +344,7 @@ describe('CommonThrottlerGuard', () => {
       const registry = new ThrottleRegistry();
       registry.register({ name: 'plain', limit: 1, ttlMs: 60_000 });
       registry.register({ name: 'keyed', limit: 100, ttlMs: 60_000, tracker: byKeyHeader });
-      const guard = build({ common_throttleEnabled: true, common_throttleDefaultLimit: 2 }, undefined, registry);
+      const guard = build({ common_throttleDefaultLimit: 2 }, undefined, registry);
       await guard.onModuleInit();
       expect(registry.trackerOf('plain')).toBeUndefined();
       expect(await guard.canActivate(call('10.0.0.1', { 'x-key': 'a' }))).toBe(true);
@@ -386,8 +379,8 @@ describe('ThrottleRegistry', () => {
 });
 
 describe('Nest wiring (throttleProviders + guard, as in CommonModule)', () => {
-  it('resolves the guard through the dependency injector and honours the switch', async () => {
-    const config = { get: (k: string): unknown => (k === 'common_throttleEnabled' ? true : k === 'common_throttleDefaultLimit' ? 1 : undefined) };
+  it('resolves the guard through the dependency injector', async () => {
+    const config = { get: (k: string): unknown => (k === 'common_throttleDefaultLimit' ? 1 : undefined) };
     const moduleRef = await Test.createTestingModule({
       providers: [
         ...throttleProviders,

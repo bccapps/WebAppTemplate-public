@@ -176,12 +176,12 @@ Back plugin format (`NestModulePlugin`, details in `nest/common/README.md`, « P
 (created empty by the template, typed `PluginOptions`, keyed by plugin id); a missing option stops the app at startup with the plugin id
 and the missing keys. Listed modules without a plugin are libraries imported by other modules: never write a plugin for them.
 
-**Rate limiter**: `common` ships a global limiter (`@nestjs/throttler`, in `package.base.json`), OFF in the library
-(`common_throttleEnabled`, admin configuration) but ON for a new app: `create-project` seeds `common_throttleEnabled = true` in
-`back/src/config/defaultConfig.ts` (limits `common_throttleDefaultLimit` 300 / `common_throttleDefaultTtlMs` 60000, plus the route
-budgets of `common`'s anonymous routes); `REDIS_URL` shares the counters between replicas. An existing app switches it on from the
-admin (a value already in the database is never reseeded). An app that already registers its own global `ThrottlerModule` +
-`ThrottlerGuard` must keep it off (or drop its own and switch the key on), otherwise each request is counted twice.
+**Rate limiter**: `common` ships a global limiter (`@nestjs/throttler`, in `package.base.json`), ALWAYS ON since 2026-10-30 (the
+`common_throttleEnabled` switch was removed: an existing app comes under it at its first update of `common`) — limits
+`common_throttleDefaultLimit` 300 / `common_throttleDefaultTtlMs` 60000 (admin configuration), plus the route budgets of `common`'s
+anonymous routes; `REDIS_URL` shares the counters between replicas. It counts per user, else per `req.ip`: deploy `TRUST_PROXY` =
+the list of the app's proxies with it (Ansible role `webapp-env-update`). An app must not register its own global `ThrottlerModule` +
+`ThrottlerGuard` (each request would be counted twice).
 
 ## Optional shared modules (`infra`, `commerce`, `oauth`)
 

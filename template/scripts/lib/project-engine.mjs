@@ -566,12 +566,10 @@ const serializeConfigValue = (v) => (typeof v === 'string' ? v : Array.isArray(v
 
 /**
  * Entries every NEW project starts with, whatever the answers (create-project only: add-module never adds them to an
- * existing app, which may keep its own ThrottlerModule). `common_throttleEnabled`: the global rate limiter of `common`
- * is off in the library (older apps), on for a new app (`nest/common/README.md`, « Limiteur de débit »).
+ * existing app). None today: `common_throttleEnabled`, seeded here until 2026-10-30, was removed (the global rate limiter
+ * of `common` is always on, `nest/common/README.md` « Limiteur de débit »).
  */
-export const NEW_PROJECT_CONFIG_ENTRIES = Object.freeze([
-  { name: 'common_throttleEnabled', value: 'true', description: 'Global rate limiter of common on (create-project)' },
-]);
+export const NEW_PROJECT_CONFIG_ENTRIES = Object.freeze([]);
 
 /** `defaultConfigEntries` of a project being created: {@link NEW_PROJECT_CONFIG_ENTRIES}, then those of the answers. */
 export function buildNewProjectConfigEntries(catalog, rawAnswers, resolvedIds) {

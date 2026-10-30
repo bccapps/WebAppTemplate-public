@@ -18,7 +18,7 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 | Démarrage complet | `bootstrap/startApp.ts` : `startApp({ appModule, swagger, http?, early?, beforeCreate?, beforeInit? })` enchaîne toutes les étapes communes dans le bon ordre (voir « Démarrage de l'app » plus bas). |
 | Arrêt avec le parent | `bootstrap/watchParentProcess.ts` : `exitWhenParentGone()`, active si `DESKTOP_PARENT_PID` est défini (voir « Arrêt si le parent disparaît » plus bas). |
 | Santé | `HealthController` : `GET /api/v1/health` public, agrège les contributeurs `HEALTH_CONTRIBUTORS`. |
-| Limiteur de débit | `throttle/` : garde globale `CommonThrottlerGuard`, inerte sauf `common_throttleEnabled`, stockage Redis à échec ouvert. Voir « Limiteur de débit » plus bas. |
+| Limiteur de débit | `throttle/` : garde globale `CommonThrottlerGuard`, toujours active, stockage Redis à échec ouvert. Voir « Limiteur de débit » plus bas. |
 | Plugins | `plugins/` : `NestModulePlugin` (`module` ou fabrique, `modules`, `order`), `resolvePluginModules`. Voir « Plugins » plus bas. |
 | Flux d'événements | `EventStreamService` + `EventStreamController` (`event-stream/`) : poussée serveur → navigateur en SSE (`GET /api/v1/events/stream`). Voir « Flux d'événements serveur » plus bas. |
 | Stockage d'images | `ImageStorageService` écrit sur disque local (défaut) ou sur un bucket Cloudflare R2, configurable depuis l'admin via `storageConfigSchema`. Voir « Stockage R2 » plus bas.
@@ -834,12 +834,11 @@ interface NestModulePlugin<TOptions = never> {
 ## Limiteur de débit (`throttle/`)
 
 `CommonModule` enregistre une garde globale (`APP_GUARD`, `CommonThrottlerGuard`, dérivée de `ThrottlerGuard` de `@nestjs/throttler`,
-dépendance de `package.base.json`). Elle est **inerte tant que `common_throttleEnabled` n'est pas vrai** (lu à chaque requête :
-bascule depuis l'admin sans redémarrage).
+dépendance de `package.base.json`). Elle est **toujours active** depuis le 2026-10-30 (l'interrupteur `common_throttleEnabled` a été
+retiré ; une ligne restée en base n'a plus d'effet). Ses budgets se règlent dans l'admin sans redémarrage (lus à chaque requête).
 
 | Clé | Défaut | Rôle |
 | --- | --- | --- |
-| `common_throttleEnabled` | `false` (bibliothèque) ; `true` dans le `defaultConfig.ts` d'une app créée par `create-project` | interrupteur général |
 | `common_throttleDefaultLimit` | `300` | requêtes par identité et par fenêtre |
 | `common_throttleDefaultTtlMs` | `60000` | fenêtre, en ms |
 
@@ -852,7 +851,7 @@ bascule depuis l'admin sans redémarrage).
   (`resolveTokenOnce`, `auth/authRequest.ts`) : l'intercepteur ne résout pas le jeton une seconde fois et relève la même erreur. Un contrôleur s'exclut avec `@SkipThrottle()` (le flux SSE `EventStreamController` l'est) ; une route peut
   surcharger la limite avec `@Throttle({ default: { limit, ttl } })`. Les compteurs sont **par route** (la clé de stockage contient
   la classe et la méthode) : un budget de route ne consomme pas celui des autres routes.
-- **Budgets des routes anonymes de `common`** (constantes exportées, appliquées seulement quand l'interrupteur est vrai) :
+- **Budgets des routes anonymes de `common`** (constantes exportées) :
 
   | Route | Constante | Budget |
   | --- | --- | --- |
@@ -862,7 +861,7 @@ bascule depuis l'admin sans redémarrage).
   | `POST /api/v1/common/bug-report` | `BUG_REPORT_THROTTLE` | 5 / h |
 
   Les autres routes publiques (`/health`, `/configurations`, `/locales`, `/themes/*`, `/donations/config|quote`) gardent le budget
-  `default` ; le plafond des sessions de transport (`common_cryptSessionMaxLive`) s'applique, lui, même interrupteur éteint.
+  `default` ; le plafond des sessions de transport (`common_cryptSessionMaxLive`) est une limite à part, du service.
 - **Throttlers nommés** (`ThrottleRegistry`, exporté par `CommonModule`) : en plus de `default`, une app déclare des limiteurs supplémentaires,
   chacun avec ses compteurs, ses en-têtes (`X-RateLimit-Limit-<nom>`, `Retry-After-<nom>`) et sa clé (utilisateur ou IP). Enregistrement
   au démarrage, avant la première requête (constructeur d'un module de l'app, ou `app.get(ThrottleRegistry)` dans `main.ts` avant `app.init()`) :
@@ -907,17 +906,21 @@ bascule depuis l'admin sans redémarrage).
 - **Stockage** : `FailOpenThrottlerStorage` compte dans Redis (client partagé `RedisService`, script Lua atomique, fenêtre fixe) quand
   `REDIS_URL` est définie, sinon (ou si une commande Redis échoue) dans une table en mémoire du processus : **échec ouvert**, jamais
   de rejet à cause du stockage. Sans Redis et avec N réplicas, la limite effective est N fois la limite configurée.
-- **Pourquoi `false` par défaut dans la bibliothèque** : une app qui déclare encore son propre `ThrottlerModule` + `ThrottlerGuard`
-  global compterait chaque requête deux fois (TradeKong et PapangWorkspace ont depuis basculé : `common_throttleEnabled = true` dans
-  leur `defaultConfig.ts`). Les fournisseurs de `common` (options, stockage) sont limités à `CommonModule` : ils ne touchent pas à
+- **Toujours active (2026-10-30)** : l'interrupteur `common_throttleEnabled` (éteint par défaut jusqu'au 2026-10-29, allumé le
+  2026-10-30, puis retiré le même jour) servait aux apps qui déclaraient leur propre `ThrottlerModule` + `ThrottlerGuard` global (chaque
+  requête comptée deux fois) : il n'y en a plus dans la flotte (TradeKong et PapangWorkspace ont basculé) ; une app qui en garde un doit
+  le retirer. **Une app passe donc sous le limiteur à sa première mise à jour de `common`** : déployer avec elle `TRUST_PROXY` = la
+  liste de ses proxys (rôle Ansible `webapp-env-update`) — le comptage par IP lit `req.ip`, qui vaudrait sinon l'adresse du proxy pour
+  tous les visiteurs anonymes (un seul budget partagé ; front Cloudflare ou non, même condition ; un utilisateur connecté compte à
+  part). `configureHttpApp` l'annonce au démarrage en production quand `TRUST_PROXY` est un nombre de sauts (ou absent : 1). En cas
+  de besoin, les budgets se relèvent depuis l'admin (`common_throttleDefaultLimit`, et ceux des règles nommées de l'app) ; les
+  `@Throttle` des routes, eux, sont dans le code. Les fournisseurs de `common` (options, stockage) sont limités à `CommonModule` : ils ne touchent pas à
   `ThrottlerModule` de l'app. Une garde de route (`@UseGuards`, ex. `AgentHubApiKeyThrottlerGuard`) n'est pas globale : elle s'ajoute.
 - **Bascule d'une app existante** (tâches D9 et D10) : supprimer `ThrottlerModule.forRoot(...)`, `ThrottlerRedisStorage` et
-  l'`APP_GUARD ThrottlerGuard` de son `AppModule`, puis régler `common_throttleEnabled = true` (et limite/fenêtre) dans la
-  configuration. Les `@Throttle()` / `@SkipThrottle()` déjà posés sur les routes continuent de s'appliquer. Les variables
+  l'`APP_GUARD ThrottlerGuard` de son `AppModule` (limite/fenêtre dans la configuration). Les `@Throttle()` / `@SkipThrottle()` déjà posés sur les routes continuent de s'appliquer. Les variables
   `THROTTLE_DEFAULT_TTL` / `THROTTLE_DEFAULT_LIMIT` de TradeKong sont remplacées par les clés de configuration.
-- **Nouvelle app** : `create-project` écrit `common_throttleEnabled = true` dans `back/src/config/defaultConfig.ts`
-  (`NEW_PROJECT_CONFIG_ENTRIES`, `template/scripts/lib/project-engine.mjs`) ; `add-module` ne l'ajoute jamais à une app existante.
-  Une valeur déjà en base n'est jamais écrasée : une app existante l'active depuis l'admin (Configuration › `common`).
+- **Nouvelle app** : rien à régler (`create-project` écrivait `common_throttleEnabled = true` dans son `defaultConfig.ts` jusqu'au
+  2026-10-30 ; une telle ligne, dans une app plus ancienne, est inerte et peut être retirée).
 
 ## Redis partagé (`RedisService`)
 

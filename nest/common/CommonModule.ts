@@ -117,7 +117,7 @@ import ConfigurationEntity from './entities/ConfigurationEntity';
     ThrottleRegistry,
     CommonThrottlerGuard,
     {
-      // Pass-through unless `common_throttleEnabled` is true (off by default: apps with their own limiter).
+      // Always on (the `common_throttleEnabled` switch was removed on 2026-10-30): an app must not register its own global ThrottlerGuard.
       provide: APP_GUARD,
       useExisting: CommonThrottlerGuard,
     },

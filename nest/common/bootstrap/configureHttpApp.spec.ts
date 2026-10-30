@@ -520,6 +520,21 @@ describe('client IP behind reverse proxy → back-lb → back (TRUST_PROXY)', ()
   it('refuses to boot on an invalid entry of the list', async () => {
     await expect(appWith('loopback,not-an-ip')).rejects.toThrow(/invalid IP address/);
   });
+
+  it('warns at boot in production about a hop count (unset included), never about the list', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const counted = await createApp({ clientOrigins: 'https://a.io', production: true, trustProxy: parseTrustProxy(undefined, true) });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('TRUST_PROXY is a hop count (1'));
+      await counted.close();
+      warn.mockClear();
+      const listed = await createApp({ clientOrigins: 'https://a.io', production: true, trustProxy: parseTrustProxy(PROXIES, true) });
+      expect(warn.mock.calls.some(([message]) => String(message).includes('TRUST_PROXY'))).toBe(false);
+      await listed.close();
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 describe('configureHttpApp records the CORS allow-list for allowedClientOrigins()', () => {

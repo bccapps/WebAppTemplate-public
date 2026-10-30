@@ -151,16 +151,14 @@ test('env helpers: manifest variables appended once, values uncomment or append,
   libs.cleanup();
 });
 
-test('a new project starts with the rate limiter of common on; add-module entries never add it', () => {
+test('a new project starts with the entries of its answers only (common_throttleEnabled removed on 2026-10-30)', () => {
   const libs = makeLibs();
   const catalog = loadCatalog({ public: libs.pub, private: libs.priv });
   const answers = withQuestionDefaults(catalog, { ...base, privateAccess: true, multiUser: true });
   const ids = resolveProject(catalog, answers).ids;
   const created = buildNewProjectConfigEntries(catalog, answers, ids);
-  assert.deepEqual(created[0], { name: 'common_throttleEnabled', value: 'true', description: 'Global rate limiter of common on (create-project)' });
-  assert.equal(created.filter((e) => e.name === 'common_throttleEnabled').length, 1);
-  assert.deepEqual(created.slice(1), buildConfigEntries(catalog, answers, ids), 'then the entries of the answers, unchanged');
-  assert.equal(buildConfigEntries(catalog, answers, ids).some((e) => e.name === 'common_throttleEnabled'), false, 'add-module path');
+  assert.deepEqual(created, buildConfigEntries(catalog, answers, ids));
+  assert.equal(created.some((e) => e.name === 'common_throttleEnabled'), false);
   libs.cleanup();
 });
 

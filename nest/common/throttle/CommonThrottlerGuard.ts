@@ -12,7 +12,6 @@ import type { Request } from 'express';
 import { Reflector } from '@nestjs/core';
 import { getOptionsToken, getStorageToken, ThrottlerGuard } from '@nestjs/throttler';
 import type { ThrottlerModuleOptions, ThrottlerOptions, ThrottlerStorage } from '@nestjs/throttler';
-import { ConfigurationService } from '../services/ConfigurationService';
 import { AUTH_PORT, type AuthPort } from '../auth/AuthPort';
 import { extractBearerToken, resolveTokenOnce, type AuthRequest } from '../auth/authRequest';
 import type { AuthPrincipal } from '../auth/AuthPrincipal';
@@ -21,8 +20,8 @@ import { RateLimitedLog } from '../utils/rateLimitedLog';
 import { ThrottleRegistry, type ThrottleTracker } from './ThrottleRegistry';
 
 /**
- * Global rate-limit guard of `common`. A pass-through unless `common_throttleEnabled` is true (read on every
- * request, so it can be switched from the admin without a restart). Throttlers: `default` plus the named ones of
+ * Global rate-limit guard of `common`, always on (the `common_throttleEnabled` switch was removed on 2026-10-30; the
+ * budgets stay in the configuration: `common_throttleDefaultLimit` / `…TtlMs`). Throttlers: `default` plus the named ones of
  * {@link ThrottleRegistry}. Tracks the authenticated user, the client IP otherwise: the guard resolves the principal
  * itself through `AUTH_PORT` (the global auth interceptor runs after the guards, so `req.user` is not set yet), and
  * the interceptor reuses that result. Controllers opt out with `@SkipThrottle()`; a route sets its own budget with
@@ -44,7 +43,6 @@ export class CommonThrottlerGuard extends ThrottlerGuard {
     @Inject(getOptionsToken()) options: ThrottlerModuleOptions,
     @Inject(getStorageToken()) storageService: ThrottlerStorage,
     reflector: Reflector,
-    private readonly config: ConfigurationService,
     private readonly registry: ThrottleRegistry,
     @Optional() @Inject(AUTH_PORT) private readonly authPort?: AuthPort,
   ) {
@@ -58,8 +56,6 @@ export class CommonThrottlerGuard extends ThrottlerGuard {
   }
 
   protected override async shouldSkip(_context: ExecutionContext): Promise<boolean> {
-    const enabled: unknown = this.config.get('common_throttleEnabled');
-    if (enabled !== true && enabled !== 'true') return true;
     if (this.syncedVersion !== this.registry.version) {
       this.throttlers = [...this.baseThrottlers, ...this.registry.list().map((throttler) => this.withRuleTracker(throttler))];
       this.syncedVersion = this.registry.version;

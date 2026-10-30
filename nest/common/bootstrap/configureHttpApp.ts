@@ -283,6 +283,13 @@ export function configureHttpApp(app: INestApplication, options: HttpAppOptions 
       'TRUST_PROXY=true trusts every X-Forwarded-For hop: any client can choose its own req.ip (rate limits, audit). ' +
         'Set TRUST_PROXY to the list of your proxies, e.g. loopback,uniquelocal,<reverse proxy IPs>.'
     );
+  } else if (resolved.production && typeof resolved.trustProxy === 'number') {
+    new Logger('configureHttpApp').warn(
+      `TRUST_PROXY is a hop count (${resolved.trustProxy}; unset = 1 in production): behind a reverse proxy that appends its own ` +
+        'address to X-Forwarded-For (the template back-lb does), req.ip is that proxy for every client and the per-IP rate limits ' +
+        'of common share one budget. Set TRUST_PROXY to the list of your proxies, e.g. ' +
+        'loopback,linklocal,uniquelocal,<reverse proxy IPs> (the Ansible role webapp-env-update writes it).'
+    );
   }
   // Throws on an invalid address in a TRUST_PROXY list (proxy-addr): the app refuses to boot instead of trusting garbage.
   (app.getHttpAdapter().getInstance() as ExpressLike).set('trust proxy', resolved.trustProxy);

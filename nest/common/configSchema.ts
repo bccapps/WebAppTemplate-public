@@ -107,17 +107,6 @@ export const commonConfigSchema: ModuleConfigSchema = {
       group: 'monitoring',
     },
     {
-      // Master switch of the global rate limiter of `common` (throttle/). Off by default so that an app keeping
-      // its own ThrottlerModule + ThrottlerGuard does not count every request twice; create-project seeds it ON
-      // in the defaultConfig.ts of a new app (see README, "Limiteur de débit").
-      key: 'common_throttleEnabled',
-      label: 'common.throttleEnabled',
-      description: 'common.throttleEnabled.description',
-      type: 'boolean',
-      defaultValue: false,
-      group: 'performance',
-    },
-    {
       // App-wide default rate limit (ThrottlerModule, keyed by authenticated
       // user when a valid token is present, IP otherwise — see AppModule).
       // Generous on purpose: this is the safety net for every route, not the
