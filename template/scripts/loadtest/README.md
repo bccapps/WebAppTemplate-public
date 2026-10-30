@@ -176,7 +176,7 @@ l'ouverture, deflate + AES-GCM par réponse, **une lecture Redis de la session p
 
 ## Limiteur de débit : ce que le test mesure vraiment
 
-Si le back active `common_throttleEnabled`, l'identité est `user:<id>` pour un jeton, l'IP sinon. Conséquences prises en
+Le limiteur de `common` est toujours actif (depuis le 2026-10-30) : l'identité est `user:<id>` pour un jeton, l'IP sinon. Conséquences prises en
 compte par `plan` :
 
 - Les comptes de test ont chacun leur seau : réaliste tant que les VUs enregistrés ≤ `userCount` (sinon des VUs partagent un compte,
