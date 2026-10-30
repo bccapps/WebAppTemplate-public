@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { RULE_TAG, allowException, checkAccess, buildSkipRule, createCloudflareClient, findZoneId, revokeException, verifyToken } from './cloudflare.mjs';
+import { RULE_TAG, allowException, checkAccess, findBypassRule, buildSkipRule, createCloudflareClient, findZoneId, revokeException, verifyToken } from './cloudflare.mjs';
 
 function fakeApi(routes) {
   const calls = [];
@@ -123,4 +123,34 @@ test('checkAccess keeps the diagnosis when the zone is not visible (no throw)', 
   assert.match(access.zoneError, /not found/);
   assert.deepEqual({ read: access.looksAbleToReadZones, write: access.looksAbleToWrite, rules: access.canReadRules }, { read: false, write: false, rules: null });
   assert.deepEqual(access.permissions, ['Workers Scripts Write', 'Pages Write']);
+});
+
+test('findBypassRule locates the rule by its header, reports position/action/state, and never returns the expression', () => {
+  const ruleset = { rules: [
+    { expression: '(ip.src eq 1.2.3.4)', action: 'block' },
+    { expression: '(any(http.request.headers["x-loadtest-key"][*] eq "s3cr3t"))', action: 'skip', enabled: true },
+  ] };
+  const found = findBypassRule(ruleset, 'x-loadtest-key');
+  assert.deepEqual(found, { position: 2, total: 2, action: 'skip', enabled: true });
+  assert.ok(!JSON.stringify(found).includes('s3cr3t'));
+  assert.equal(findBypassRule({ rules: [{ expression: '(true)', action: 'log' }] }, 'x-loadtest-key'), null);
+  assert.equal(findBypassRule(null, 'x'), null);
+  assert.equal(findBypassRule({ rules: [{ expression: '(http.request.headers["X-LoadTest-Key"])', enabled: false }] }, 'x-loadtest-key').enabled, false);
+});
+
+test('checkAccess reports the bypass rule of the entrypoint ruleset', async () => {
+  const { client } = fakeApi({
+    'GET /user/tokens/verify': { status: 'active', id: 'tk' },
+    'GET /zones?name=ex.com': [{ id: 'z1' }],
+    'GET /zones/z1/rulesets/phases/http_request_firewall_custom/entrypoint': { id: 'rs', rules: [{ expression: '(http.request.headers["x-loadtest-key"][0] eq "v")', action: 'skip' }] },
+  });
+  const access = await checkAccess(client, 'ex.com');
+  assert.deepEqual(access.bypassRule, { position: 1, total: 1, action: 'skip', enabled: true });
+  assert.equal(access.customRules, 1);
+});
+
+test('checkAccess counts zero custom rules when the zone has no entrypoint ruleset at all', async () => {
+  const { client } = fakeApi({ 'GET /user/tokens/verify': { status: 'active', id: 'tk' }, 'GET /zones?name=ex.com': [{ id: 'z1' }] });
+  const access = await checkAccess(client, 'ex.com');
+  assert.deepEqual({ rules: access.customRules, bypass: access.bypassRule, readable: access.canReadRules }, { rules: 0, bypass: null, readable: true });
 });

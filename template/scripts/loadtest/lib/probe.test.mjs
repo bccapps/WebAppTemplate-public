@@ -46,3 +46,11 @@ test('probeJourneys reports network errors; isProbeFailure classifies rows', asy
   assert.equal(isProbeFailure({ status: 200 }), false);
   assert.equal(isProbeFailure({ status: 'skipped (not GET)' }), false);
 });
+
+test('probeJourneys sends the Cloudflare bypass header when given (so the probe crosses the WAF like the test will)', async () => {
+  const seen = [];
+  const fetchImpl = async (url, init) => { seen.push(init.headers['x-loadtest-key']); return { status: 200 }; };
+  await probeJourneys(cfg, { kind: 'anonymous', token: null, bypass: { header: 'x-loadtest-key', key: 'k' }, fetchImpl });
+  await probeJourneys(cfg, { kind: 'anonymous', token: null, fetchImpl });
+  assert.deepEqual(seen, ['k', undefined]);
+});

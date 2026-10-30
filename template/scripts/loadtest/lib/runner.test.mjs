@@ -95,3 +95,21 @@ test('runTier marks a k6 threshold abort (exit code 99)', async () => {
   assert.equal(meta.aborted, true);
   assert.match(meta.abortReason, /threshold/);
 });
+
+test('runTier: k6 killed by a signal ends the loop and fails the tier (no endless sampling)', async () => {
+  const runDir = mkdtempSync(path.join(tmpdir(), 'lt-run-'));
+  const child = new EventEmitter();
+  child.kill = () => {};
+  setTimeout(() => child.emit('exit', null, 'SIGKILL'), 30);
+  const meta = await runTier({ cfg: baseCfg(), tier: { name: 'k', concurrent: 5, rampSec: 0, holdSec: 5 }, runDir, mon: {}, deps: { spawnImpl: () => child }, log: () => {} });
+  assert.equal(meta.exitCode, 137);
+  assert.equal(meta.aborted, true);
+  assert.match(meta.abortReason, /exit code 137/);
+});
+
+test('runTier: any other non-zero k6 exit code is reported, not silently treated as success', async () => {
+  const runDir = mkdtempSync(path.join(tmpdir(), 'lt-run-'));
+  const meta = await runTier({ cfg: baseCfg(), tier: { name: 'e', concurrent: 5, rampSec: 0, holdSec: 5 }, runDir, mon: {}, deps: { spawnImpl: () => fakeK6({ exitAfterMs: 30, code: 107 }) }, log: () => {} });
+  assert.equal(meta.aborted, true);
+  assert.match(meta.abortReason, /exit code 107/);
+});

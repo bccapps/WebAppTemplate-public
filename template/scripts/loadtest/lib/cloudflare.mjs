@@ -119,7 +119,18 @@ async function permissionNames(client, token, accountId) {
  * Read-only access check: token active, its own permissions (when it may describe itself), zone visible, custom rules
  * readable. Never throws on a missing zone: the permissions found so far are the diagnosis. Creates nothing.
  */
-export async function checkAccess(client, zone, accountId) {
+/**
+ * The rule of an entrypoint ruleset whose expression mentions the bypass header: where it stands, what it does, whether it is on.
+ * The expression holds the secret: it is only searched, never returned.
+ */
+export function findBypassRule(ruleset, headerName) {
+  const rules = ruleset?.rules ?? [];
+  const index = rules.findIndex((rule) => String(rule.expression ?? '').toLowerCase().includes(headerName.toLowerCase()));
+  if (index === -1) return null;
+  return { position: index + 1, total: rules.length, action: rules[index].action, enabled: rules[index].enabled !== false };
+}
+
+export async function checkAccess(client, zone, accountId, headerName = 'x-loadtest-key') {
   const token = await verifyToken(client, accountId);
   const permissions = await permissionNames(client, token, accountId);
   const out = {
@@ -131,6 +142,8 @@ export async function checkAccess(client, zone, accountId) {
     zoneId: null,
     zoneError: null,
     canReadRules: null,
+    bypassRule: null,
+    customRules: null,
   };
   try {
     out.zoneId = await findZoneId(client, zone);
@@ -138,6 +151,11 @@ export async function checkAccess(client, zone, accountId) {
     out.zoneError = error.message;
     return out;
   }
-  try { await getEntrypoint(client, out.zoneId); out.canReadRules = true; } catch (error) { if (error.status === 403) out.canReadRules = false; else throw error; }
+  try {
+    const entrypoint = await getEntrypoint(client, out.zoneId);
+    out.customRules = (entrypoint?.rules ?? []).length;
+    out.bypassRule = findBypassRule(entrypoint, headerName);
+    out.canReadRules = true;
+  } catch (error) { if (error.status === 403) out.canReadRules = false; else throw error; }
   return out;
 }

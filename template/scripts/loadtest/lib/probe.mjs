@@ -21,18 +21,18 @@ export function journeySteps(cfg, kind) {
 }
 
 /** Probes every distinct URL of every step (all alternatives of a `path` array), one GET each. */
-export async function probeJourneys(cfg, { kind, token, fetchImpl = fetch }) {
+export async function probeJourneys(cfg, { kind, token, bypass = null, fetchImpl = fetch }) {
   const rows = [];
   for (const { page, step } of journeySteps(cfg, kind)) {
     const target = step.target || 'api';
-    for (const path of allPaths(step.path)) rows.push(await probeOne(cfg, { kind, page, step, target, url: cfg.targets[target] + path, token, fetchImpl }));
+    for (const path of allPaths(step.path)) rows.push(await probeOne(cfg, { kind, page, step, target, url: cfg.targets[target] + path, token, bypass, fetchImpl }));
   }
   return rows;
 }
 
-async function probeOne(cfg, { kind, page, step, target, url, token, fetchImpl }) {
+async function probeOne(cfg, { kind, page, step, target, url, token, bypass, fetchImpl }) {
   if ((step.method || 'GET') !== 'GET') return { kind, page, url, status: 'skipped (not GET)', ms: null };
-  const headers = { ...cfg.headers.all, ...cfg.headers[target], ...step.headers, ...(token && step.auth !== false ? { Authorization: `Bearer ${token}` } : {}) };
+  const headers = { ...cfg.headers.all, ...cfg.headers[target], ...step.headers, ...(token && step.auth !== false ? { Authorization: `Bearer ${token}` } : {}), ...(bypass ? { [bypass.header]: bypass.key } : {}) };
   const started = Date.now();
   try {
     const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(20000) });

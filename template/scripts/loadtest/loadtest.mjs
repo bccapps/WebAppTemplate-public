@@ -122,6 +122,7 @@ async function cmdCheck({ root, paths, cfg }) {
   await checkScrapeAndBudget(root, config, mon, add);
   await closeMonitors(mon);
   add('rate limit raised by this tool', !existsSync(paths.throttle), existsSync(paths.throttle) ? 'yes: throttle restore when done' : 'no');
+  add('Cloudflare bypass secret configured (LOADTEST_BYPASS_KEY or cloudflare allow)', Boolean(resolveBypassKey(paths)), 'requests will cross the Cloudflare protections: the test would measure them', true);
   add('test accounts file', existsSync(paths.users), existsSync(paths.users) ? `${readJson(paths.users).length} accounts` : 'run `setup`');
   if (results.includes(false)) process.exitCode = 1;
 }
@@ -167,13 +168,20 @@ async function cmdSetup({ paths, cfg }, args) {
   log(`${users.length} test accounts ready (${path.relative(process.cwd(), paths.users)}, mode 600). Remove them with: teardown`);
 }
 
+/** Secret of the Cloudflare skip rule: the variable (rule added by hand) first, else the one `cloudflare allow` recorded. */
+function resolveBypassKey(paths) {
+  return process.env.LOADTEST_BYPASS_KEY || (existsSync(paths.cloudflare) ? readJson(paths.cloudflare).secret : '');
+}
+
 async function cmdProbe({ paths, cfg }) {
   const config = cfg();
   const token = existsSync(paths.users) ? readJson(paths.users)[0]?.token : null;
   let failures = 0;
   for (const kind of ['anonymous', 'registered']) {
     if (kind === 'registered' && !token) { log('registered journeys skipped: run `setup` first'); continue; }
-    for (const row of await probeJourneys(config, { kind, token: kind === 'registered' ? token : null })) {
+    const bypassKey = resolveBypassKey(paths);
+    const bypass = bypassKey ? { header: BYPASS_HEADER, key: bypassKey } : null;
+    for (const row of await probeJourneys(config, { kind, token: kind === 'registered' ? token : null, bypass })) {
       if (isProbeFailure(row)) failures++;
       log(`${isProbeFailure(row) ? '✖' : '✓'}  [${kind}/${row.page}] ${row.status}${row.ms === null ? '' : ` ${row.ms}ms`}  ${row.url}`);
     }
@@ -232,7 +240,7 @@ async function cmdRun({ root, paths, cfg }, args) {
   if (refusal) fail(refusal);
   if (spawnSync('k6', ['version']).status !== 0) fail('k6 is not installed (brew install k6)');
   if (config.model.mix.registered > 0 && !existsSync(paths.users)) fail('no test accounts: run `setup` first');
-  const bypassKey = existsSync(paths.cloudflare) ? readJson(paths.cloudflare).secret : '';
+  const bypassKey = resolveBypassKey(paths);
   const mon = await openMonitors(root, config, process.env);
   const baseline = checkGuards(await takeSample(mon), config);
   if (baseline.length) { await closeMonitors(mon); fail(`baseline already above a guard: ${baseline.map(describeBreach).join('; ')}`); }
@@ -240,10 +248,12 @@ async function cmdRun({ root, paths, cfg }, args) {
   const runDir = path.join(paths.runs, runId);
   mkdirSync(runDir, { recursive: true });
   log(`run ${runId} → ${path.relative(process.cwd(), runDir)}`);
-  process.once('SIGINT', () => { log('\nInterrupted: k6 stops, artefacts so far are kept.'); });
+  let interrupted = false;
+  process.once('SIGINT', () => { interrupted = true; log('\nInterrupted: k6 stops, the remaining tiers are cancelled, artefacts so far are kept.'); });
   for (const [index, tier] of tiers.entries()) {
     log(`\n=== tier ${tier.name} (${tier.concurrent} sessions) ===`);
     const meta = await runTier({ cfg: config, tier, runDir, mon, usersFile: paths.users, bypassKey });
+    if (interrupted && !meta.aborted) markInterrupted(runDir, tier.name, meta);
     if (meta.aborted) log(`tier ${tier.name} aborted: ${meta.abortReason}`);
     if (meta.aborted) break;
     if (index < tiers.length - 1) await new Promise((resolve) => setTimeout(resolve, config.monitor.cooldownSec * 1000));
@@ -252,6 +262,11 @@ async function cmdRun({ root, paths, cfg }, args) {
   writeReport(runDir, config, runId);
   if (existsSync(paths.throttle)) log('REMINDER: the rate limit is still raised: node scripts/loadtest/loadtest.mjs throttle restore');
   if (existsSync(paths.cloudflare)) log('REMINDER: the Cloudflare exception is still active: node scripts/loadtest/loadtest.mjs cloudflare revoke');
+}
+
+function markInterrupted(runDir, tierName, meta) {
+  Object.assign(meta, { aborted: true, abortReason: 'interrupted by the operator' });
+  writeFileSync(path.join(runDir, tierName, 'meta.json'), JSON.stringify(meta, null, 2));
 }
 
 function writeReport(runDir, config, runId) {
@@ -313,11 +328,12 @@ async function cmdCloudflare({ paths, cfg }, args) {
   const client = createCloudflareClient({ token });
   const accountId = process.env[cf.accountIdEnv ?? 'CLOUDFLARE_ACCOUNT_ID'];
   if (action === 'check') {
-    const access = await checkAccess(client, cf.zone, accountId);
+    const access = await checkAccess(client, cf.zone, accountId, BYPASS_HEADER);
     log(`token ${access.tokenStatus} (${access.tokenScope}-owned)`);
     log(access.permissions ? `permissions: ${access.permissions.join(', ') || 'none'}` : 'permissions: not readable by this token');
     log(access.zoneId ? `zone ${cf.zone}: visible, custom rules ${access.canReadRules ? 'readable' : 'NOT readable'}` : `zone ${cf.zone}: NOT visible — ${access.zoneError}`);
     if (!access.zoneId) log(`  → needs a "Zone Read" permission AND "Zone Resources" including ${cf.zone} (or "All zones") on this token${access.looksAbleToReadZones === false ? ' (its permissions list has none)' : ''}`);
+    if (access.zoneId) log(access.bypassRule ? `bypass rule (header ${BYPASS_HEADER}): found, position ${access.bypassRule.position}/${access.bypassRule.total}, action ${access.bypassRule.action}, ${access.bypassRule.enabled ? 'enabled' : 'DISABLED'}` : `bypass rule (header ${BYPASS_HEADER}): NOT found (the zone has ${access.customRules} custom rule${access.customRules === 1 ? '' : 's'}) — check it was saved on THIS zone, or add the rule printed by \`cloudflare plan\``);
     log(access.looksAbleToWrite === null ? 'write access: unknown (only `allow` can tell)' : `write access to WAF rules: ${access.looksAbleToWrite ? 'looks OK' : 'MISSING — needs "Zone WAF Edit/Write"; or use `cloudflare plan` and add the rule by hand'}`);
     return;
   }

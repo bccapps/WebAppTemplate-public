@@ -134,7 +134,8 @@ export async function runTier({ cfg, tier, runDir, mon, usersFile, bypassKey, k6
   const meta = { startedAt: new Date().toISOString(), aborted: false, abortReason: '', breaches: [] };
 
   const child = spawnImpl(k6Bin, ['run', '--no-usage-report', K6_SCRIPT], { env: k6Env(tierDir, usersFile, bypassKey), stdio: ['ignore', 'inherit', 'inherit'] });
-  const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
+  // A process ended by a signal reports a null code: map it, or the sampling loop below would never end.
+  const exited = new Promise((resolve) => child.on('exit', (code, signal) => resolve(code ?? (signal ? 137 : 1))));
   let exitCode = null;
   exited.then((code) => { exitCode = code; });
 
@@ -157,6 +158,7 @@ export async function runTier({ cfg, tier, runDir, mon, usersFile, bypassKey, k6
   if (mon.pg) meta.statements = diffStatements(before, await snapshotStatements(mon.pg));
   Object.assign(meta, { endedAt: new Date().toISOString(), exitCode });
   if (exitCode === 99 && !meta.aborted) Object.assign(meta, { aborted: true, abortReason: 'k6 threshold (error rate or p95) crossed' });
+  else if (exitCode !== 0 && !meta.aborted) Object.assign(meta, { aborted: true, abortReason: `k6 ended abnormally (exit code ${exitCode})` });
   writeFileSync(path.join(tierDir, 'meta.json'), JSON.stringify(meta, null, 2));
   return meta;
 }

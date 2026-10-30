@@ -9,6 +9,8 @@ ce n'est ni un module `nest/` ni un module `react/`.
 Le moteur est générique. Tout ce qui est propre à un projet (URL, parcours, requêtes Prometheus, paliers) vit dans
 `loadtest.config.json` à la racine du projet.
 
+> **Lancer un test, pas à pas** : [`PROCEDURE.md`](PROCEDURE.md) — validation à blanc, armer, lancer, désarmer, nettoyer, analyser, dépannage, check-list.
+
 ## Principe
 
 ```
@@ -58,6 +60,7 @@ Dans **`.loadtest/secrets.env`** (créé par `init`, droits 600, ignoré par git
 |---|---|
 | `LOADTEST_ADMIN_TOKEN` | Token admin de l'API cible (`auth.adminTokenEnv`) : création/suppression des comptes. Jamais transmis à k6 |
 | `LOADTEST_PROM_USER` / `LOADTEST_PROM_PASSWORD` | Basic auth du Prometheus interrogé |
+| `LOADTEST_BYPASS_KEY` | Valeur de l'en-tête `x-loadtest-key` de la règle Cloudflare **posée à la main** (même valeur que dans la règle). Inutile si `cloudflare allow` l'a créée (il enregistre son secret). Sans l'un ou l'autre, les requêtes traversent la protection Cloudflare |
 | `LOADTEST_PG_URL` | Connexion Postgres de supervision (sinon assemblée depuis les `DB_*` de `monitor.postgres.envFile`) |
 | `LOADTEST_REDIS_URL` | Connexion Redis de supervision (sinon `REDIS_URL` de `monitor.redis.envFile`) |
 | `CLOUDFLARE_API_TOKEN` | Token API Cloudflare avec **Zone → Zone → Read** et **Zone → Zone WAF → Edit** sur la zone testée, pour `cloudflare allow\|revoke`. Un token sans accès à la zone est refusé par `cloudflare check` |
@@ -248,6 +251,7 @@ factice (jusqu'au rapport) ; il est sauté si k6 n'est pas installé.
 
 | Fichier | Rôle |
 |---|---|
+| `PROCEDURE.md` | Procédure de lancement d'un test, dans l'ordre, avec le désarmement de tout ce qui a été armé |
 | `loadtest.mjs` | CLI |
 | `k6/scenario.js` | Scénario k6 piloté par la config d'exécution générée |
 | `lib/config.mjs` | Défauts, fusion, validation |
