@@ -253,7 +253,7 @@ const AdminThemesContent = () => {
           <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell sx={{ width: 1, whiteSpace: 'nowrap' }}>ID</TableCell>
+                <TableCell sx={{ width: '1%', whiteSpace: 'nowrap' }}>ID</TableCell>
                 <TableCell><I18nLabel id="common.themes.name" /></TableCell>
                 <TableCell><I18nLabel id="common.themes.code" /></TableCell>
                 <TableCell><I18nLabel id="common.themes.description" /></TableCell>
