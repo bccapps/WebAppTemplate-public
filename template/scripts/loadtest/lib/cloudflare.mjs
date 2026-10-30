@@ -52,7 +52,19 @@ export function createCloudflareClient({ token, fetchImpl = fetch }) {
   return { call };
 }
 
-export const verifyToken = (client) => client.call('GET', '/user/tokens/verify');
+/**
+ * Verifies the token. A user token answers on `/user/tokens/verify`, an account-owned one only on
+ * `/accounts/<id>/tokens/verify`: the account endpoint is tried when the user one refuses and an account id is known.
+ * The result carries `scope` (`user` | `account`).
+ */
+export async function verifyToken(client, accountId) {
+  try {
+    return { ...(await client.call('GET', '/user/tokens/verify')), scope: 'user' };
+  } catch (error) {
+    if (!accountId) throw error;
+    return { ...(await client.call('GET', `/accounts/${accountId}/tokens/verify`)), scope: 'account' };
+  }
+}
 
 export async function findZoneId(client, zoneName) {
   const zones = await client.call('GET', `/zones?name=${encodeURIComponent(zoneName)}`);
@@ -86,4 +98,37 @@ export async function allowException(client, { zone, headerName, secret }) {
 export async function revokeException(client, { zoneId, rulesetId, ruleId }) {
   if (!ruleId) throw new Error('No rule id recorded: remove the rule tagged "vx-loadtest" from the Cloudflare dashboard');
   await client.call('DELETE', `/zones/${zoneId}/rulesets/${rulesetId}/rules/${ruleId}`);
+}
+
+const WRITE_PERMISSION = /(waf|firewall|ruleset).*(write|edit)|(write|edit).*(waf|firewall|ruleset)/i;
+
+/** Permission-group names of the token's policies, or null when the token cannot describe itself. */
+async function permissionNames(client, token, accountId) {
+  const path = token.scope === 'account' ? `/accounts/${accountId}/tokens/${token.id}` : `/user/tokens/${token.id}`;
+  try {
+    const described = await client.call('GET', path);
+    return (described.policies ?? []).flatMap((p) => (p.permission_groups ?? []).map((g) => g.name));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read-only access check: token active, zone visible, custom rules readable, and (heuristic, from the token's own
+ * policies) whether it looks allowed to write WAF rules. Creates nothing.
+ */
+export async function checkAccess(client, zone, accountId) {
+  const token = await verifyToken(client, accountId);
+  const zoneId = await findZoneId(client, zone);
+  let canReadRules = true;
+  try { await getEntrypoint(client, zoneId); } catch (error) { if (error.status === 403) canReadRules = false; else throw error; }
+  const permissions = await permissionNames(client, token, accountId);
+  return {
+    tokenStatus: token.status,
+    tokenScope: token.scope,
+    zoneId,
+    canReadRules,
+    permissions,
+    looksAbleToWrite: permissions ? permissions.some((name) => WRITE_PERMISSION.test(name)) : null,
+  };
 }

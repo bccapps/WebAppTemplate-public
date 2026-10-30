@@ -19,7 +19,8 @@
  *   node scripts/loadtest/loadtest.mjs run --tier <name> [--tier <name>...] --confirm <api host>
  *   node scripts/loadtest/loadtest.mjs report <runId>
  *   node scripts/loadtest/loadtest.mjs teardown [--hard [--apply]]
- *   node scripts/loadtest/loadtest.mjs cloudflare <plan|allow|revoke>
+ *   node scripts/loadtest/loadtest.mjs throttle <show|raise|restore> [--tier <name>...]
+ *   node scripts/loadtest/loadtest.mjs cloudflare <plan|check|allow|revoke>
  *
  * Options: --root <dir> (default: current directory), --config <file> (default: loadtest.config.json).
  * Nothing contacts a target except `check`, `setup`, `run`, `teardown` and `cloudflare allow|revoke`; `run` never
@@ -33,15 +34,19 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createAdminClient, createUsers, issueMissingTokens, revokeAndRemove } from './lib/adminApi.mjs';
-import { allowException, buildSkipRule, createCloudflareClient, revokeException, verifyToken } from './lib/cloudflare.mjs';
+import { allowException, buildSkipRule, checkAccess, createCloudflareClient, revokeException, verifyToken } from './lib/cloudflare.mjs';
 import { CONFIG_FILE, findTier, loadConfig } from './lib/config.mjs';
 import { checkGuards, describeBreach } from './lib/guards.mjs';
 import { hardDeleteUsers } from './lib/hardDelete.mjs';
 import { isProbeFailure, probeJourneys } from './lib/probe.mjs';
 import { estimateTier, planTier, planWarnings } from './lib/profile.mjs';
+import { basicAuthHeader, scrapeInterval } from './lib/prometheus.mjs';
 import { k6Digest, peaks, renderReport } from './lib/report.mjs';
+import { connectionBudget } from './lib/samplers.mjs';
+import { neededLimit, needsRaise, raiseLimit, readLimit, restoreLimit } from './lib/throttle.mjs';
+import { fetchPublicTiers, pickTier } from './lib/tiers.mjs';
 import { BYPASS_HEADER, closeMonitors, loadRun, openMonitors, projectPaths, readJson, runTier, takeSample, writeSecretJson } from './lib/runner.mjs';
-import { fmt, hostOf, isLocalHost, listFlag, loadEnvFile, parseArgs } from './lib/util.mjs';
+import { fmt, hostOf, isLocalHost, listFlag, loadEnvFile, parseArgs, parseEnvFile } from './lib/util.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const log = (message = '') => console.log(message);
@@ -93,7 +98,10 @@ function cmdPlan({ cfg }, args) {
 async function cmdCheck({ root, paths, cfg }) {
   const config = cfg();
   const results = [];
-  const add = (name, ok, detail = '') => { results.push(ok); log(`${ok ? '✓' : '✖'}  ${name}${detail ? ` — ${detail}` : ''}`); };
+  const add = (name, ok, detail = '', advisory = false) => {
+    if (!advisory) results.push(ok);
+    log(`${ok ? '✓' : advisory ? '⚠' : '✖'}  ${name}${detail ? ` — ${detail}` : ''}`);
+  };
   const k6 = spawnSync('k6', ['version'], { encoding: 'utf8' });
   add('k6 installed', k6.status === 0, k6.status === 0 ? k6.stdout.trim() : 'install it: brew install k6');
   for (const [name, url] of Object.entries(config.targets)) {
@@ -111,15 +119,44 @@ async function cmdCheck({ root, paths, cfg }) {
     const breaches = checkGuards(sample, config);
     add('baseline within guards', breaches.length === 0, breaches.map(describeBreach).join('; '));
   }
+  await checkScrapeAndBudget(root, config, mon, add);
   await closeMonitors(mon);
+  add('rate limit raised by this tool', !existsSync(paths.throttle), existsSync(paths.throttle) ? 'yes: throttle restore when done' : 'no');
   add('test accounts file', existsSync(paths.users), existsSync(paths.users) ? `${readJson(paths.users).length} accounts` : 'run `setup`');
   if (results.includes(false)) process.exitCode = 1;
+}
+
+/** Fills `auth.tierId` from the public tier list unless the config or `--tier-id` already names an id. */
+async function resolveTier(config, args) {
+  const selector = args.flags['tier-id'] ?? (config.auth.tierId ?? config.auth.tier);
+  const tier = pickTier(await fetchPublicTiers(config.targets.api), selector);
+  config.auth.tierId = tier.id;
+  log(`accounts get tier "${tier.name}" (id ${tier.id}, level ${tier.tierLevel}); override with --tier-id <id|name> or auth.tier`);
+}
+
+async function checkScrapeAndBudget(root, config, mon, add) {
+  const prom = config.monitor.prometheus;
+  const maxScrape = prom?.maxScrapeSec ?? 20;
+  for (const job of mon.prom ? prom.jobs ?? [] : []) {
+    try {
+      const sec = await scrapeInterval(mon.prom, job, { headers: mon.prom.headers });
+      add(`Prometheus job "${job}" scraped every ${sec ? Math.round(sec) : '?'} s`, sec !== null && sec <= maxScrape, sec > maxScrape ? `guards on this job lag by up to ~${Math.round(sec * 3)} s: keep rate windows >= 2 scrapes, or lower the scrape interval during the test` : '', true);
+    } catch (error) { add(`Prometheus job "${job}"`, false, error.message); }
+  }
+  const pgCfg = config.monitor.postgres;
+  if (mon.pg && pgCfg.appProcesses) {
+    const map = pgCfg.envFile && existsSync(path.join(root, pgCfg.envFile)) ? parseEnvFile(readFileSync(path.join(root, pgCfg.envFile), 'utf8')) : {};
+    const sample = await takeSample({ pg: mon.pg });
+    const budget = connectionBudget({ maxConnections: sample.pg?.maxConnections ?? 0, poolSize: Number(map.DB_POOLSIZE || 10), processes: pgCfg.appProcesses, ratio: config.limits.pgConnectionsRatio });
+    add(`Postgres connections: up to ${budget.theoretical} from the app vs guard at ${Math.round(budget.limit)} of ${sample.pg?.maxConnections}`, !budget.exceeds, budget.exceeds ? 'pool x processes exceeds the guard: lower DB_POOLSIZE or expect an early stop (max_connections is fixed by the plan)' : '', true);
+  }
 }
 
 async function cmdSetup({ paths, cfg }, args) {
   const config = cfg();
   if (args.flags.count) config.auth.userCount = Number(args.flags.count);
   const client = adminClientOf(config);
+  await resolveTier(config, args);
   ensureDir(paths.dir);
   const existing = existsSync(paths.users) ? readJson(paths.users) : [];
   const save = (_entry, users) => writeSecretJson(paths.users, users);
@@ -144,6 +181,36 @@ async function cmdProbe({ paths, cfg }) {
   if (failures) process.exitCode = 1;
 }
 
+async function cmdThrottle({ paths, cfg }, args) {
+  const config = cfg();
+  const client = adminClientOf(config);
+  const action = args._[1];
+  const state = existsSync(paths.throttle) ? readJson(paths.throttle) : null;
+  if (action === 'show') {
+    log(`current limit: ${await readLimit(client, config)} per minute${state ? ` (raised by this tool from ${state.previous} at ${state.at})` : ''}`);
+  } else if (action === 'raise') {
+    const names = listFlag(args.flags.tier);
+    const tiers = (names.length ? names : config.tiers.map((t) => t.name)).map((n) => findTier(config, n));
+    const target = Number(args.flags.to ?? neededLimit(config, tiers));
+    const next = await raiseLimit(client, config, target, state);
+    ensureDir(paths.dir);
+    writeSecretJson(paths.throttle, next);
+    log(`limit raised ${next.previous} → ${next.raisedTo} per minute. RESTORE IT after the test: throttle restore`);
+  } else if (action === 'restore') {
+    if (!state) fail('no recorded raise: nothing to restore');
+    log(`limit restored to ${await restoreLimit(client, config, state)} per minute`);
+    unlinkSync(paths.throttle);
+  } else fail('usage: throttle <show|raise|restore> [--tier <name>...] [--to <n>]');
+}
+
+function throttleRefusal(config, tiers, paths, args) {
+  if (args.flags['ignore-throttle'] || !needsRaise(config, tiers)) return null;
+  const need = neededLimit(config, tiers);
+  const state = existsSync(paths.throttle) ? readJson(paths.throttle) : null;
+  if (state && state.raisedTo >= need) return null;
+  return `these tiers need a rate limit of ~${need}/min (production: ${config.limits.throttlePerMinute}) or they measure the limiter: run \`throttle raise ${tiers.map((t) => `--tier ${t.name}`).join(' ')}\` first (or pass --ignore-throttle)`;
+}
+
 function runIdOf(tiers) {
   return `${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}_${tiers.map((t) => t.name).join('+')}`;
 }
@@ -161,7 +228,7 @@ async function cmdRun({ root, paths, cfg }, args) {
   const names = listFlag(args.flags.tier);
   if (!names.length) fail('run needs at least one explicit --tier <name> (see: plan)');
   const tiers = names.map((n) => findTier(config, n));
-  const refusal = preflightFail(config, args);
+  const refusal = preflightFail(config, args) ?? throttleRefusal(config, tiers, paths, args);
   if (refusal) fail(refusal);
   if (spawnSync('k6', ['version']).status !== 0) fail('k6 is not installed (brew install k6)');
   if (config.model.mix.registered > 0 && !existsSync(paths.users)) fail('no test accounts: run `setup` first');
@@ -183,6 +250,8 @@ async function cmdRun({ root, paths, cfg }, args) {
   }
   await closeMonitors(mon);
   writeReport(runDir, config, runId);
+  if (existsSync(paths.throttle)) log('REMINDER: the rate limit is still raised: node scripts/loadtest/loadtest.mjs throttle restore');
+  if (existsSync(paths.cloudflare)) log('REMINDER: the Cloudflare exception is still active: node scripts/loadtest/loadtest.mjs cloudflare revoke');
 }
 
 function writeReport(runDir, config, runId) {
@@ -198,6 +267,14 @@ function cmdReport({ paths, cfg }, args) {
   writeReport(path.join(paths.runs, runId), cfg(), runId);
 }
 
+async function restoreThrottleIfRaised(client, config, paths) {
+  if (!existsSync(paths.throttle)) return;
+  try {
+    log(`rate limit restored to ${await restoreLimit(client, config, readJson(paths.throttle))} per minute`);
+    unlinkSync(paths.throttle);
+  } catch (error) { log(`⚠  could not restore the rate limit (${error.message}): run \`throttle restore\``); }
+}
+
 async function cmdTeardown({ root, paths, cfg }, args) {
   const config = cfg();
   if (!existsSync(paths.users)) fail('no test accounts file: nothing to tear down');
@@ -208,6 +285,7 @@ async function cmdTeardown({ root, paths, cfg }, args) {
     for (const f of result.failed) log(`  ✖ #${f.id}: ${f.error}`);
     const ids = users.filter((u) => !result.failed.some((f) => f.id === u.id)).map(({ id, nickname }) => ({ id, nickname }));
     writeSecretJson(paths.users, result.failed.length ? users : ids);
+    await restoreThrottleIfRaised(adminClientOf(config), config, paths);
     return;
   }
   const mon = await openMonitors(root, { ...config, monitor: { ...config.monitor, postgres: { ...config.monitor.postgres, enabled: true } } }, process.env);
@@ -233,8 +311,16 @@ async function cmdCloudflare({ paths, cfg }, args) {
   const token = process.env[cf.tokenEnv];
   if (!token) fail(`${cf.tokenEnv} is not set`);
   const client = createCloudflareClient({ token });
+  const accountId = process.env[cf.accountIdEnv ?? 'CLOUDFLARE_ACCOUNT_ID'];
+  if (action === 'check') {
+    const access = await checkAccess(client, cf.zone, accountId);
+    log(`token ${access.tokenStatus} (${access.tokenScope}-owned); zone ${cf.zone} visible; custom rules ${access.canReadRules ? 'readable' : 'NOT readable'}`);
+    log(access.permissions ? `permissions: ${access.permissions.join(', ') || 'none'}` : 'permissions: not readable by this token');
+    log(access.looksAbleToWrite === null ? 'write access: unknown (only `allow` can tell)' : `write access to WAF rules: ${access.looksAbleToWrite ? 'looks OK' : 'MISSING — use `cloudflare plan` and add the rule by hand'}`);
+    return;
+  }
   if (action === 'allow') {
-    await verifyToken(client);
+    await verifyToken(client, accountId);
     const secret = randomBytes(24).toString('hex');
     const state = await allowException(client, { zone: cf.zone, headerName: BYPASS_HEADER, secret });
     ensureDir(paths.dir);
@@ -245,10 +331,10 @@ async function cmdCloudflare({ paths, cfg }, args) {
     await revokeException(client, readJson(paths.cloudflare));
     renameSync(paths.cloudflare, `${paths.cloudflare}.revoked`);
     log('exception removed');
-  } else fail('usage: cloudflare <plan|allow|revoke>');
+  } else fail('usage: cloudflare <plan|check|allow|revoke>');
 }
 
-const COMMANDS = { init: cmdInit, plan: cmdPlan, check: cmdCheck, setup: cmdSetup, probe: cmdProbe, run: cmdRun, report: cmdReport, teardown: cmdTeardown, cloudflare: cmdCloudflare };
+const COMMANDS = { init: cmdInit, plan: cmdPlan, check: cmdCheck, setup: cmdSetup, probe: cmdProbe, throttle: cmdThrottle, run: cmdRun, report: cmdReport, teardown: cmdTeardown, cloudflare: cmdCloudflare };
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));

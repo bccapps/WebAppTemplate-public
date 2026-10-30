@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { basicAuthHeader, instantQuery, sampleQueries, seriesKey, summarizeVector } from './prometheus.mjs';
+import { basicAuthHeader, instantQuery, intervalFromSamples, sampleQueries, scrapeInterval, seriesKey, summarizeVector } from './prometheus.mjs';
 
 const vector = [
   { metric: { instance: 'back1' }, value: [0, '42.5'] },
@@ -55,4 +55,19 @@ test('sampleQueries isolates failures', async () => {
   const out = await sampleQueries({ url: 'https://p', queries: [{ name: 'a', query: 'ok' }, { name: 'b', query: 'boom' }] }, { fetchImpl });
   assert.equal(out.a.max, 67);
   assert.equal(out.b, null);
+});
+
+test('intervalFromSamples', () => {
+  assert.equal(intervalFromSamples(5), 60);
+  assert.equal(intervalFromSamples(30), 10);
+  assert.equal(intervalFromSamples(0), null);
+  assert.equal(intervalFromSamples(undefined), null);
+});
+
+test('scrapeInterval queries the slowest target of a job and rejects odd job names', async () => {
+  let url;
+  const fetchImpl = async (u) => { url = u; return okFetch([{ metric: {}, value: [0, '5'] }])(); };
+  assert.equal(await scrapeInterval({ url: 'https://p' }, 'exporter', { fetchImpl }), 60);
+  assert.ok(decodeURIComponent(url).includes('min(count_over_time(up{job="exporter"}[5m]))'));
+  await assert.rejects(scrapeInterval({ url: 'https://p' }, 'x"}) or vector(1', { fetchImpl }), /invalid Prometheus job name/);
 });

@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { RULE_TAG, allowException, buildSkipRule, createCloudflareClient, findZoneId, revokeException, verifyToken } from './cloudflare.mjs';
+import { RULE_TAG, allowException, checkAccess, buildSkipRule, createCloudflareClient, findZoneId, revokeException, verifyToken } from './cloudflare.mjs';
 
 function fakeApi(routes) {
   const calls = [];
@@ -65,4 +65,49 @@ test('revokeException deletes the recorded rule and refuses without an id', asyn
   await revokeException(client, { zoneId: 'z1', rulesetId: 'rs1', ruleId: 'r1' });
   assert.equal(calls[0].key, 'DELETE /zones/z1/rulesets/rs1/rules/r1');
   await assert.rejects(revokeException(client, { zoneId: 'z1', rulesetId: 'rs1' }), /remove the rule/);
+});
+
+test('checkAccess reads token, zone, rules and permissions without writing', async () => {
+  const { client, calls } = fakeApi({
+    'GET /user/tokens/verify': { status: 'active', id: 'tok1' },
+    'GET /zones?name=ex.com': [{ id: 'z1' }],
+    'GET /zones/z1/rulesets/phases/http_request_firewall_custom/entrypoint': { id: 'rs' },
+    'GET /user/tokens/tok1': { policies: [{ permission_groups: [{ name: 'Zone WAF Write' }, { name: 'Zone Read' }] }] },
+  });
+  const access = await checkAccess(client, 'ex.com');
+  assert.deepEqual({ status: access.tokenStatus, canRead: access.canReadRules, write: access.looksAbleToWrite }, { status: 'active', canRead: true, write: true });
+  assert.ok(calls.every((c) => c.key.startsWith('GET ')));
+});
+
+test('checkAccess flags a read-only token and tolerates a token that cannot describe itself', async () => {
+  const readOnly = fakeApi({
+    'GET /user/tokens/verify': { status: 'active', id: 't' },
+    'GET /zones?name=ex.com': [{ id: 'z1' }],
+    'GET /user/tokens/t': { policies: [{ permission_groups: [{ name: 'Zone Read' }] }] },
+  });
+  const a = await checkAccess(readOnly.client, 'ex.com');
+  assert.equal(a.canReadRules, true, 'a missing entrypoint (404) is readable');
+  assert.equal(a.looksAbleToWrite, false);
+  const opaque = fakeApi({ 'GET /user/tokens/verify': { status: 'active', id: 't' }, 'GET /zones?name=ex.com': [{ id: 'z1' }] });
+  assert.equal((await checkAccess(opaque.client, 'ex.com')).looksAbleToWrite, null);
+});
+
+test('verifyToken falls back to the account endpoint for an account-owned token', async () => {
+  const account = fakeApi({ 'GET /accounts/acc1/tokens/verify': { status: 'active', id: 'tk' } });
+  const out = await verifyToken(account.client, 'acc1');
+  assert.deepEqual({ status: out.status, scope: out.scope }, { status: 'active', scope: 'account' });
+  await assert.rejects(verifyToken(account.client), /not found/, 'without an account id the user-endpoint error is reported');
+  const user = fakeApi({ 'GET /user/tokens/verify': { status: 'active', id: 'tk' } });
+  assert.equal((await verifyToken(user.client, 'acc1')).scope, 'user');
+});
+
+test('checkAccess describes an account-owned token through its account endpoint', async () => {
+  const { client } = fakeApi({
+    'GET /accounts/acc1/tokens/verify': { status: 'active', id: 'tk' },
+    'GET /zones?name=ex.com': [{ id: 'z1' }],
+    'GET /accounts/acc1/tokens/tk': { policies: [{ permission_groups: [{ name: 'Firewall Services Write' }] }] },
+  });
+  const access = await checkAccess(client, 'ex.com', 'acc1');
+  assert.equal(access.tokenScope, 'account');
+  assert.equal(access.looksAbleToWrite, true);
 });

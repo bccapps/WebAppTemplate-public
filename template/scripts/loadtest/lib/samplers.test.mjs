@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { diffStatements, openPostgres, openRedis, parseInfo, pgConnectionOptions, redisSampleFromInfo, sampleGenerator, samplePostgres, sampleRedis, snapshotStatements } from './samplers.mjs';
+import { connectionBudget, diffStatements, openPostgres, openRedis, parseInfo, pgConnectionOptions, redisSampleFromInfo, sampleGenerator, samplePostgres, sampleRedis, snapshotStatements } from './samplers.mjs';
 
 test('parseInfo ignores sections and blank lines', () => {
   assert.deepEqual(parseInfo('# Memory\r\nused_memory:100\r\n\r\n# Stats\r\ninstantaneous_ops_per_sec:7\r\n'), { used_memory: '100', instantaneous_ops_per_sec: '7' });
@@ -81,4 +81,9 @@ test('openPostgres and openRedis connect their client', async () => {
   const redis = await openRedis(Redis, 'rediss://:pw@h:6379');
   assert.equal(redis.ok, true);
   assert.deepEqual(redisArgs[1].tls, {});
+});
+
+test('connectionBudget compares pool x processes with the guarded share of max_connections', () => {
+  assert.deepEqual(connectionBudget({ maxConnections: 60, poolSize: 10, processes: 4, ratio: 0.7 }), { theoretical: 40, limit: 42, exceeds: false });
+  assert.equal(connectionBudget({ maxConnections: 60, poolSize: 20, processes: 4, ratio: 0.7 }).exceeds, true);
 });

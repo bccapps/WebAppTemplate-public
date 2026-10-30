@@ -28,9 +28,11 @@ loadtest.mjs run ─┬─ k6 (scripts/loadtest/k6/scenario.js)  ──►  fron
 - Node ≥ 20 (le CLI n'a aucune dépendance : `pg` et `ioredis` sont pris dans le `node_modules` du `back/` du projet).
 - [k6](https://k6.io) : `brew install k6` (macOS) ou le paquet officiel Linux.
 - Un token **admin** de l'environnement cible (utilisateur technique admin, `POST /users/admin/technical` puis `/:id/api-token`).
-- Pour plus de ~300 sessions : exécuter le CLI **depuis une VM jetable** proche de la cible (pas depuis un portable). Le
-  générateur surveille sa propre charge (`limits.generatorLoadRatio`) et arrête le test s'il sature : des résultats
-  mesurés sur un générateur saturé ne valent rien.
+- **Générateur** : le trafic simulé est faible (≈ 200 req/s pour 1000 sessions avec temps de réflexion) : un portable
+  suffit tant qu'il est au calme (fermer navigateur et IDE lourds pendant un palier). Le CLI surveille la charge de la
+  machine (`limits.generatorLoadRatio`, charge 1 min ÷ cœurs) et arrête le test si elle sature : des résultats mesurés
+  sur un générateur chargé ne valent rien. Une VM jetable n'apporte que la proximité réseau avec la cible et la
+  diversité d'IP (voir `model.generatorIps`).
 
 ## Démarrage rapide
 
@@ -40,10 +42,11 @@ $EDITOR .loadtest/secrets.env loadtest.config.json # secrets puis cibles / parco
 node scripts/loadtest/loadtest.mjs plan            # trafic estimé, opérations Redis, avertissements — rien n'est contacté
 node scripts/loadtest/loadtest.mjs check           # lecture seule : k6, cibles, token, Prometheus/Postgres/Redis, baseline
 node scripts/loadtest/loadtest.mjs setup           # crée les comptes de test + jetons (.loadtest/users.json, mode 600)
-node scripts/loadtest/loadtest.mjs probe           # 1 GET par étape de parcours : valide les chemins avant la charge
+node scripts/loadtest/loadtest.mjs probe           # 1 GET par URL de parcours : valide chemins, droits et formats avant la charge
 node scripts/loadtest/loadtest.mjs run --tier smoke --confirm api.example.com
-node scripts/loadtest/loadtest.mjs run --tier u50 --tier u200 --confirm api.example.com
-node scripts/loadtest/loadtest.mjs teardown        # révoque les jetons, supprime les comptes
+node scripts/loadtest/loadtest.mjs throttle raise --tier u200 --tier u500   # si `plan` le demande (anonymes)
+node scripts/loadtest/loadtest.mjs run --tier u200 --tier u500 --confirm api.example.com
+node scripts/loadtest/loadtest.mjs teardown        # révoque les jetons, supprime les comptes, restaure le limiteur
 ```
 
 ### Où mettre les secrets
@@ -57,7 +60,8 @@ Dans **`.loadtest/secrets.env`** (créé par `init`, droits 600, ignoré par git
 | `LOADTEST_PROM_USER` / `LOADTEST_PROM_PASSWORD` | Basic auth du Prometheus interrogé |
 | `LOADTEST_PG_URL` | Connexion Postgres de supervision (sinon assemblée depuis les `DB_*` de `monitor.postgres.envFile`) |
 | `LOADTEST_REDIS_URL` | Connexion Redis de supervision (sinon `REDIS_URL` de `monitor.redis.envFile`) |
-| `CLOUDFLARE_API_TOKEN` | Token API Cloudflare (Zone → Zone WAF → Edit) pour `cloudflare allow\|revoke` |
+| `CLOUDFLARE_API_TOKEN` | Token API Cloudflare avec **Zone → Zone → Read** et **Zone → Zone WAF → Edit** sur la zone testée, pour `cloudflare allow\|revoke`. Un token sans accès à la zone est refusé par `cloudflare check` |
+| `CLOUDFLARE_ACCOUNT_ID` | Seulement pour un token *possédé par un compte* (vérifié sur `/accounts/<id>/tokens/verify` quand `/user/tokens/verify` le refuse) |
 
 ## Commandes
 
@@ -65,13 +69,14 @@ Dans **`.loadtest/secrets.env`** (créé par `init`, droits 600, ignoré par git
 |---|---|---|
 | `init` | non | Crée config, dossier `.loadtest/` (700), `secrets.env`, entrée `.gitignore` |
 | `plan [--tier n]` | non | Sessions, VUs, req/s, opérations Redis estimées par palier + avertissements |
-| `check` | lecture seule | k6, `GET <api>/health`, présence du token, connexion des échantillonneurs, baseline sous les garde-fous |
-| `setup [--count N]` | **écrit** | Crée les comptes `<prefix>-NNN` et leurs jetons ; reprenable (journal écrit après chaque compte) |
-| `probe` | lecture | Une requête GET par étape de chaque parcours (POST ignorés), tableau de statuts |
-| `run --tier <n>... --confirm <hôte>` | **charge** | Exécute les paliers listés, dans l'ordre, avec `monitor.cooldownSec` entre eux ; écrit le rapport |
+| `check` | lecture seule | k6, `GET <api>/health`, présence du token, connexion Prometheus/Postgres/Redis, baseline sous les garde-fous, intervalle de scrape des jobs (`monitor.prometheus.jobs`), budget de connexions Postgres, limiteur resté relevé. Les ⚠ sont consultatifs |
+| `setup [--count N] [--tier-id id\|nom]` | **écrit** | Choisit le tier (`auth.tier`, défaut `highest` = le tier public de plus haut niveau, via `GET /tiers/public`), crée les comptes `<prefix>-NNN` et leurs jetons ; reprenable (journal écrit après chaque compte) |
+| `probe` | lecture | Une requête GET par **URL** de chaque parcours (toutes les variantes d'un `path` tableau ; POST ignorés), tableau de statuts. Les parcours enregistrés utilisent le premier compte de test |
+| `run --tier <n>... --confirm <hôte>` | **charge** | Exécute les paliers listés, dans l'ordre, avec `monitor.cooldownSec` entre eux ; écrit le rapport. Refuse de démarrer si les paliers exigent un limiteur relevé et qu'il ne l'est pas (`--ignore-throttle` pour passer outre) |
 | `report <runId>` | non | Régénère `report.md` d'un run (`.loadtest/runs/<runId>/`) |
-| `teardown [--hard [--apply]]` | **écrit** | Révoque les `jti`, supprime les comptes via l'API admin. `--hard` : suppression SQL (voir plus bas) |
-| `cloudflare plan\|allow\|revoke` | `allow`/`revoke` écrivent | Exception WAF temporaire (voir plus bas) |
+| `teardown [--hard [--apply]]` | **écrit** | Révoque les `jti`, supprime les comptes via l'API admin et restaure le limiteur s'il a été relevé. `--hard` : suppression SQL (voir plus bas) |
+| `throttle show\|raise\|restore` | **écrit** | Relève / restaure temporairement la limite globale du back (voir « Limiteur de débit ») |
+| `cloudflare plan\|check\|allow\|revoke` | `allow`/`revoke` écrivent | Exception WAF temporaire (voir plus bas). `check` est en lecture seule |
 
 Options communes : `--root <dir>`, `--config <fichier>`.
 
@@ -84,13 +89,14 @@ Fusionné avec les défauts de `lib/config.mjs` (un objet se fusionne clé par c
 |---|---|
 | `targets` | `api` (obligatoire, **base incluant `/api/v1`**), `front`, et toute autre cible nommée utilisable par `step.target` |
 | `headers` | En-têtes ajoutés : `all` et/ou par cible. Ne pas envoyer l'en-tête de transport chiffré/compressé si le back le négocie (`x-crypt-accept-encoding`) : la réponse reste en clair |
-| `auth` | `userCount`, `prefix`, `tierId` (tier donnant accès aux pages testées), `userTable`/`nicknameColumn` (suppression SQL), `adminTokenEnv`, `paths` des routes admin |
+| `auth` | `userCount`, `prefix`, `tier` (`highest` \| `lowest` \| id \| nom ; défaut `highest`) ou `tierId` (id imposé), `userTable`/`nicknameColumn` (suppression SQL), `adminTokenEnv`, `paths` des routes admin |
 | `model` | `mix` (somme = 1), `thinkSec` `[min, max]`, `avgPageSec`, `coldLoadRatio` `{ registered, anonymous }` (part des sessions qui téléchargent index + assets du front), `redisOpsPerRequest`, `generatorIps` |
-| `tiers` | `[{ name, concurrent, rampSec, holdSec, optional? }]` — défauts : `smoke` 5, `u50`, `u200`, `u500`, `u1000` (optionnel) |
+| `tiers` | `[{ name, concurrent, rampSec, holdSec, rampDownSec?, optional? }]` — défauts : `smoke` 5, `u50`, `u200`, `u500`, `u1000` (optionnel). Les montées en charge sont lentes à dessein (jusqu'à 5 min) : les garde-fous machine voient avec le retard du scrape (voir plus bas) |
 | `journeys` | `registered` / `anonymous` : `[{ name, weight, requests }]` |
 | `limits` | `maxErrorRate`, `maxP95Ms`, `throttlePerMinute`, `pgConnectionsRatio`, `redisMemoryRatio`, `generatorLoadRatio` |
-| `monitor` | `sampleSec`, `cooldownSec`, `prometheus { url, userEnv, passwordEnv, queries }`, `postgres`, `redis` |
-| `cloudflare` | `{ zone, tokenEnv }` |
+| `throttle` | `{ moduleId, key, safetyFactor }` — clé de config du limiteur relevée par `throttle raise` (défaut `common` / `common_throttleDefaultLimit` / ×1,5) |
+| `monitor` | `sampleSec`, `cooldownSec`, `prometheus { url, userEnv, passwordEnv, queries, jobs, maxScrapeSec }`, `postgres { enabled, envFile, appProcesses, verifySsl }`, `redis { enabled, envFile, maxOpsPerSec }` |
+| `cloudflare` | `{ zone, tokenEnv, accountIdEnv? }` |
 
 ### Parcours (`journeys`)
 
@@ -114,9 +120,19 @@ chemin contient des identifiants variables, sinon cardinalité de métriques exp
 haute fait foi, son `instance` est rapportée. Avec `guard.max`, franchir le seuil arrête le test. Sans `guard`, la valeur
 est seulement reportée.
 
-> **Délai de détection.** Une requête ne voit que ce que Prometheus a scrapé : si un `node_exporter` est scrapé toutes les
-> 60 s, utiliser `rate(...[3m])` (une fenêtre de `[1m]` ne renvoie rien) et accepter un garde-fou machine qui réagit avec
-> 1 à 3 minutes de retard. Pour un test serré, descendre temporairement l'intervalle de scrape à 10–15 s.
+> **Délai de détection.** Une requête ne voit que ce que Prometheus a scrapé : avec un scrape à 60 s, une fenêtre de `[1m]`
+> ne renvoie rien (il faut ≥ 2 scrapes : `[3m]`) et un garde-fou machine réagit avec 1 à 3 minutes de retard.
+> `check` mesure l'intervalle réel de chaque job de `monitor.prometheus.jobs` et avertit au-delà de `maxScrapeSec`
+> (défaut 20 s). Deux parades : des montées en charge lentes (c'est pourquoi les paliers hauts montent en 4–5 min) et, pour
+> un test serré, un intervalle de scrape de 10–15 s sur les jobs gardés pendant le test. Les seuils natifs de k6
+> (erreurs, p95) restent immédiats quel que soit le scrape.
+
+## Postgres : `max_connections` est une donnée du plan
+
+Le garde-fou lit `max_connections` en direct (`SHOW max_connections`) et compte **toutes** les connexions de la base, y compris
+celles des services internes du fournisseur : il se déclenche à `pgConnectionsRatio` × `max_connections` (70 % par défaut). Si le plan
+fige cette valeur, c'est elle qui plafonne les paliers hauts. `check` affiche le pic théorique de l'application
+(`DB_POOLSIZE` × `monitor.postgres.appProcesses`) face à ce seuil ; le rapport donne le pic mesuré sous la forme `x / max`.
 
 ## Garde-fous
 
@@ -144,8 +160,15 @@ compte par `plan` :
 - Les comptes de test ont chacun leur seau : réaliste tant que les VUs enregistrés ≤ `userCount` (sinon des VUs partagent un compte,
   avertissement).
 - Les anonymes d'un seul générateur partagent **une** IP : au-delà de `limits.throttlePerMinute` par minute, ils prennent des
-  429 qui mesurent le limiteur. Relever temporairement `common_throttleDefaultLimit` (admin, sans redémarrage) pendant les paliers
-  concernés, ou répartir sur plusieurs générateurs (`model.generatorIps`). Tout 429 rend le palier `FAIL` dans le rapport.
+  429 qui mesurent le limiteur, et tout 429 rend le palier `FAIL`.
+
+`throttle raise [--tier n]...` règle ça sans toucher à l'interface d'admin : il calcule la limite nécessaire (le taux le plus
+élevé entre l'IP anonyme et un compte, ×`throttle.safetyFactor`, arrondi à la centaine, jamais sous la limite de production),
+lit la valeur actuelle (`GET /admin/module-configs/common`), l'enregistre dans `.loadtest/throttle.json`, puis l'écrit
+(`PUT /admin/module-configs/common`). La limite est lue à chaque requête par le back : aucun redémarrage. `run` **refuse de
+démarrer** tant que le limiteur n'est pas assez relevé pour les paliers demandés ; `throttle restore` (ou `teardown`) remet la valeur
+d'origine, même après un plantage (la valeur d'origine est conservée si on relève deux fois). Tant que le limiteur est relevé,
+`run` et `check` le rappellent.
 
 ## Cloudflare (exception temporaire)
 
@@ -154,6 +177,7 @@ Derrière Cloudflare, un test depuis une IP déclenche règles WAF / rate limiti
 requêtes portant l'en-tête `x-loadtest-key` = secret aléatoire (stocké dans `.loadtest/cloudflare.json`, ajouté
 automatiquement par `run`). `cloudflare revoke` la supprime. **À retirer dès la fin du test.**
 
+- `cloudflare check` (lecture seule) vérifie le token, la visibilité de la zone, la lecture des règles et, d'après les politiques du token, l'accès en écriture au WAF ; il ne crée rien. Un token qui ne voit pas la zone est refusé.
 - `cloudflare plan` imprime la règle JSON exacte à poser à la main si le token n'a pas la permission.
 - Le *Bot Fight Mode* du plan gratuit n'est contournable par aucune règle.
 - L'écriture dans l'API Cloudflare n'est exécutée que par `allow`/`revoke`, jamais par `run`.
@@ -195,8 +219,11 @@ latence et chaque métrique gardée atteindraient leur limite (indicative, ≥ 3
 ## Tests
 
 ```bash
-node --test scripts/loadtest/lib/*.test.mjs scripts/loadtest/k6/*.test.mjs   # aucune cible contactée, k6 non requis
+node --test scripts/loadtest/lib/*.test.mjs scripts/loadtest/k6/*.test.mjs scripts/loadtest/loadtest.e2e.test.mjs
 ```
+
+Aucune cible distante n'est contactée. `loadtest.e2e.test.mjs` fait tourner le vrai CLI avec le vrai k6 contre un serveur local
+factice (jusqu'au rapport) ; il est sauté si k6 n'est pas installé.
 
 ## Fichiers
 
@@ -213,5 +240,7 @@ node --test scripts/loadtest/lib/*.test.mjs scripts/loadtest/k6/*.test.mjs   # a
 | `lib/hardDelete.mjs` | Suppression SQL optionnelle (transaction, dry run) |
 | `lib/cloudflare.mjs` | Exception WAF temporaire |
 | `lib/probe.mjs` | Validation des parcours |
+| `lib/throttle.mjs` | Relèvement / restauration temporaires du limiteur de débit |
+| `lib/tiers.mjs` | Choix du tier des comptes de test (`GET /tiers/public`) |
 | `lib/report.mjs` | Digest k6, pics, verdict, extrapolation, Markdown |
 | `loadtest.config.example.json`, `secrets.env.example` | Modèles copiés par `init` |

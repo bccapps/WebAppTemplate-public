@@ -21,7 +21,7 @@ const summary = {
     status_429: { values: { count: 0 } },
     status_5xx: { values: { count: 2 } },
     data_received: { values: { count: 2097152 } },
-    page_ms_home: { values: { count: 50, avg: 400, 'p(95)': 700 } },
+    page_ms_home: { values: { avg: 400, 'p(95)': 700 } },
   },
 };
 
@@ -31,6 +31,7 @@ test('k6Digest extracts the headline numbers and page timings', () => {
   assert.equal(digest.p95, 300);
   assert.equal(digest.receivedMb, 2);
   assert.deepEqual(Object.keys(digest.pages), ['home']);
+  assert.equal(digest.pages.home.p95, 700);
   assert.equal(k6Digest(null).requests, 0);
 });
 

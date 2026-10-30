@@ -22,7 +22,8 @@ export function k6Digest(summary, pageNames = []) {
   const pages = {};
   for (const name of pageNames) {
     const v = metricValues(summary, `page_ms_${slug(name)}`);
-    if (v.count) pages[name] = { count: v.count, avg: v.avg, p95: v['p(95)'] };
+    // k6 only exports the configured trend stats (no `count`): a page that ran has at least a p95.
+    if (v['p(95)'] !== undefined) pages[name] = { avg: v.avg, p95: v['p(95)'] };
   }
   return {
     requests: metricValues(summary, 'http_reqs').count ?? 0,
@@ -121,7 +122,7 @@ function resourcesSection(tiers, cfg) {
   return table(header, tiers.map((t) => [
     t.plan.name,
     ...queries.map((q) => { const p = t.peaks.prom[q.name]; return p ? `${fmt(p.max)}${q.unit ?? ''} (${p.worst})` : '–'; }),
-    fmt(t.peaks.pg.connections, 0), fmt(t.peaks.redis.opsPerSec, 0), fmt((t.peaks.redis.usedMemory ?? NaN) / 1048576), fmt(t.peaks.gen.loadRatio, 2),
+    `${fmt(t.peaks.pg.connections, 0)}${t.peaks.pg.maxConnections ? ` / ${fmt(t.peaks.pg.maxConnections, 0)}` : ''}`, fmt(t.peaks.redis.opsPerSec, 0), fmt((t.peaks.redis.usedMemory ?? NaN) / 1048576), fmt(t.peaks.gen.loadRatio, 2),
   ]));
 }
 

@@ -60,11 +60,10 @@ const PG_CACHE_SQL = `
   FROM pg_stat_database WHERE datname = current_database()`;
 
 export async function samplePostgres(client) {
-  const [activity, cache, max] = await Promise.all([
-    client.query(PG_ACTIVITY_SQL),
-    client.query(PG_CACHE_SQL),
-    client.query('SHOW max_connections'),
-  ]);
+  // Sequential: a pg client runs one query at a time (concurrent calls are deprecated).
+  const activity = await client.query(PG_ACTIVITY_SQL);
+  const cache = await client.query(PG_CACHE_SQL);
+  const max = await client.query('SHOW max_connections');
   const row = activity.rows[0];
   return {
     connections: row.connections,
@@ -124,4 +123,14 @@ export async function openRedis(IORedis, url) {
   });
   await client.connect();
   return client;
+}
+
+/**
+ * Connections the application processes could open at most (pool size x processes) against the share of
+ * `max_connections` the guard tolerates. Informational: a pooler in front of Postgres multiplexes them.
+ */
+export function connectionBudget({ maxConnections, poolSize, processes, ratio }) {
+  const theoretical = poolSize * processes;
+  const limit = maxConnections * ratio;
+  return { theoretical, limit, exceeds: theoretical > limit };
 }

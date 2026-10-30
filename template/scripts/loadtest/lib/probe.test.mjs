@@ -26,11 +26,11 @@ test('journeySteps flattens batches', () => {
   assert.deepEqual(journeySteps(cfg, 'none'), []);
 });
 
-test('probeJourneys sends one GET per step, with the token only where allowed, and skips non-GET', async () => {
+test('probeJourneys sends one GET per URL (every alternative of a path array), with the token only where allowed, and skips non-GET', async () => {
   const seen = [];
   const fetchImpl = async (url, init) => { seen.push({ url, auth: init.headers.Authorization }); return { status: url.endsWith('/c') ? 200 : url.endsWith('/b') ? 404 : 200 }; };
   const rows = await probeJourneys(cfg, { kind: 'registered', token: 'T', fetchImpl });
-  assert.deepEqual(rows.map((r) => r.status), [200, 404, 'skipped (not GET)', 200]);
+  assert.deepEqual(rows.map((r) => r.status), [200, 404, 200, 'skipped (not GET)', 200]);
   assert.equal(seen[0].auth, 'Bearer T');
   assert.equal(seen.at(-1).auth, undefined);
   assert.equal(seen[1].url, 'https://a.io/api/b');

@@ -24,12 +24,12 @@ export function splitConcurrent(concurrent, mix) {
 export const accountReuse = (registeredVus, userCount) => (registeredVus === 0 ? 0 : Math.ceil(registeredVus / userCount));
 
 /** k6 `ramping-vus` stages: ramp up, hold, ramp down. No stage at all for a zero target. */
-export function buildStages(target, { rampSec, holdSec }) {
+export function buildStages(target, { rampSec, holdSec, rampDownSec = RAMP_DOWN_SEC }) {
   if (target <= 0) return [];
   const stages = [];
   if (rampSec > 0) stages.push({ duration: `${rampSec}s`, target });
   stages.push({ duration: `${holdSec}s`, target });
-  stages.push({ duration: `${RAMP_DOWN_SEC}s`, target: 0 });
+  stages.push({ duration: `${rampDownSec}s`, target: 0 });
   return stages;
 }
 
@@ -42,7 +42,8 @@ export function planTier(cfg, tier) {
     anonymous,
     accountReuse: accountReuse(registered, cfg.auth.userCount),
     stages: { registered: buildStages(registered, tier), anonymous: buildStages(anonymous, tier) },
-    durationSec: tier.rampSec + tier.holdSec + RAMP_DOWN_SEC,
+    rampDownSec: tier.rampDownSec ?? RAMP_DOWN_SEC,
+    durationSec: tier.rampSec + tier.holdSec + (tier.rampDownSec ?? RAMP_DOWN_SEC),
   };
 }
 
@@ -71,7 +72,7 @@ export function estimateTier(cfg, plan) {
   const anonRps = cfg.journeys?.anonymous ? (plan.anonymous / cycleSec) * requestsPerPage(cfg.journeys.anonymous) : 0;
   const ops = cfg.model.redisOpsPerRequest;
   const redisOpsPerSec = regRps * ops.registered + anonRps * ops.anonymous;
-  const steadyShare = (plan.durationSec - RAMP_DOWN_SEC) / plan.durationSec;
+  const steadyShare = Math.max(plan.durationSec - (plan.rampDownSec ?? RAMP_DOWN_SEC), 0) / plan.durationSec;
   return {
     cycleSec,
     registeredRps: regRps,
@@ -96,7 +97,7 @@ export function planWarnings(cfg, plan, estimate) {
     warnings.push(`Per-account rate (${estimate.perAccountPerMin.toFixed(0)}/min) exceeds half of the rate limiter (${limit}/min): 429 will appear and measure the limiter, not the capacity.`);
   }
   if (estimate.anonymousPerMinPerIp > limit) {
-    warnings.push(`Anonymous traffic is ${estimate.anonymousPerMinPerIp.toFixed(0)} req/min per generator IP, above the limiter (${limit}/min): raise the limit during this tier or add generator IPs (model.generatorIps).`);
+    warnings.push(`Anonymous traffic is ${estimate.anonymousPerMinPerIp.toFixed(0)} req/min per generator IP, above the limiter (${limit}/min): run 'throttle raise' for this tier (temporary, restored afterwards) or add generator IPs (model.generatorIps).`);
   }
   return warnings;
 }

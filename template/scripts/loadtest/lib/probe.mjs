@@ -13,29 +13,33 @@
  */
 
 const flatten = (requests) => requests.flatMap((step) => (Array.isArray(step) ? step : [step]));
-const firstPath = (path) => (Array.isArray(path) ? path[0] : path);
+const allPaths = (path) => (Array.isArray(path) ? path : [path]);
 
 /** Every step of a journey kind as `{ kind, page, step }`. */
 export function journeySteps(cfg, kind) {
   return (cfg.journeys?.[kind] ?? []).flatMap((page) => flatten(page.requests).map((step) => ({ kind, page: page.name, step })));
 }
 
+/** Probes every distinct URL of every step (all alternatives of a `path` array), one GET each. */
 export async function probeJourneys(cfg, { kind, token, fetchImpl = fetch }) {
   const rows = [];
   for (const { page, step } of journeySteps(cfg, kind)) {
     const target = step.target || 'api';
-    const url = cfg.targets[target] + firstPath(step.path);
-    if ((step.method || 'GET') !== 'GET') { rows.push({ kind, page, url, status: 'skipped (not GET)', ms: null }); continue; }
-    const headers = { ...cfg.headers.all, ...cfg.headers[target], ...step.headers, ...(token && step.auth !== false ? { Authorization: `Bearer ${token}` } : {}) };
-    const started = Date.now();
-    try {
-      const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(20000) });
-      rows.push({ kind, page, url, status: response.status, ms: Date.now() - started });
-    } catch (error) {
-      rows.push({ kind, page, url, status: `error: ${error.message}`, ms: null });
-    }
+    for (const path of allPaths(step.path)) rows.push(await probeOne(cfg, { kind, page, step, target, url: cfg.targets[target] + path, token, fetchImpl }));
   }
   return rows;
+}
+
+async function probeOne(cfg, { kind, page, step, target, url, token, fetchImpl }) {
+  if ((step.method || 'GET') !== 'GET') return { kind, page, url, status: 'skipped (not GET)', ms: null };
+  const headers = { ...cfg.headers.all, ...cfg.headers[target], ...step.headers, ...(token && step.auth !== false ? { Authorization: `Bearer ${token}` } : {}) };
+  const started = Date.now();
+  try {
+    const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(20000) });
+    return { kind, page, url, status: response.status, ms: Date.now() - started };
+  } catch (error) {
+    return { kind, page, url, status: `error: ${error.message}`, ms: null };
+  }
 }
 
 export const isProbeFailure = (row) => typeof row.status === 'number' ? row.status >= 400 : row.status.startsWith('error');

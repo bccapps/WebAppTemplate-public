@@ -53,3 +53,16 @@ export async function sampleQueries(prom, options) {
   }));
   return out;
 }
+
+/** Scrape interval deduced from the number of `up` samples a target produced over `windowSec`. */
+export const intervalFromSamples = (count, windowSec = 300) => (count > 0 ? windowSec / count : null);
+
+/**
+ * Slowest scrape interval (seconds) among the targets of `job`, or null when the job is unknown. A guard on a host
+ * metric only sees the world through this interval: a 60 s scrape means a stop up to a few minutes late.
+ */
+export async function scrapeInterval(prom, job, options) {
+  if (!/^[A-Za-z0-9_:-]+$/.test(job)) throw new Error(`invalid Prometheus job name "${job}"`);
+  const result = await instantQuery(prom, `min(count_over_time(up{job="${job}"}[5m]))`, options);
+  return intervalFromSamples(result?.max);
+}

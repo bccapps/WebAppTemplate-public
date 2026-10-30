@@ -47,12 +47,12 @@ export function parseEnvFile(text) {
   return env;
 }
 
-/** Reads an env file into `env` without overriding variables that are already set. Returns the keys it added. */
+/** Reads an env file into `env` without overriding variables that are already set; empty values count as unset. Returns the keys it added. */
 export function loadEnvFile(file, env = process.env) {
   if (!existsSync(file)) return [];
   const added = [];
   for (const [key, value] of Object.entries(parseEnvFile(readFileSync(file, 'utf8')))) {
-    if (env[key] === undefined || env[key] === '') { env[key] = value; added.push(key); }
+    if (value !== '' && (env[key] === undefined || env[key] === '')) { env[key] = value; added.push(key); }
   }
   return added;
 }

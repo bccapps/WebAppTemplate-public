@@ -29,7 +29,7 @@ export const BYPASS_HEADER = 'x-loadtest-key';
 
 export function projectPaths(root) {
   const dir = path.join(root, '.loadtest');
-  return { dir, users: path.join(dir, 'users.json'), secrets: path.join(dir, 'secrets.env'), runs: path.join(dir, 'runs'), cloudflare: path.join(dir, 'cloudflare.json') };
+  return { dir, users: path.join(dir, 'users.json'), secrets: path.join(dir, 'secrets.env'), runs: path.join(dir, 'runs'), cloudflare: path.join(dir, 'cloudflare.json'), throttle: path.join(dir, 'throttle.json') };
 }
 
 export const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'));
@@ -37,7 +37,7 @@ export const writeSecretJson = (file, value) => writeFileSync(file, JSON.stringi
 
 /** Connection URL of the database: explicit variable first, else assembled from the back's `DB_*` variables. */
 export function pgUrlFrom(env, fileEnv) {
-  const explicit = env[fileEnv.urlEnv] ?? fileEnv.map?.DATABASE_URL;
+  const explicit = env[fileEnv.urlEnv] || fileEnv.map?.DATABASE_URL;
   if (explicit) return explicit;
   const m = fileEnv.map ?? {};
   if (!m.DB_HOST) return null;
@@ -72,7 +72,7 @@ export async function openMonitors(root, cfg, env, log = console.warn) {
   await attach('redis', redisCfg.enabled, async () => {
     const IORedis = requireFromProject(root, 'ioredis');
     if (!IORedis) throw new Error('`ioredis` not found in the project');
-    const url = env[redisCfg.urlEnv] ?? envFileMap(root, redisCfg.envFile).REDIS_URL;
+    const url = env[redisCfg.urlEnv] || envFileMap(root, redisCfg.envFile).REDIS_URL;
     if (!url) throw new Error(`no ${redisCfg.urlEnv} and no REDIS_URL in ${redisCfg.envFile ?? 'envFile'}`);
     const client = await openRedis(IORedis, url);
     mon.closers.push(() => client.quit());

@@ -39,6 +39,7 @@ test('buildStages: ramp, hold, ramp down; nothing for zero', () => {
   ]);
   assert.equal(buildStages(10, { rampSec: 0, holdSec: 60 }).length, 2);
   assert.deepEqual(buildStages(0, { rampSec: 30, holdSec: 60 }), []);
+  assert.equal(buildStages(10, { rampSec: 0, holdSec: 5, rampDownSec: 2 }).at(-1).duration, '2s');
 });
 
 test('weightedMean / requestCount / requestsPerPage count batches by their size', () => {
@@ -54,6 +55,7 @@ test('planTier builds the stages and duration', () => {
   assert.equal(plan.accountReuse, 1);
   assert.equal(plan.durationSec, 60 + 300 + RAMP_DOWN_SEC);
   assert.equal(plan.stages.registered.length, 3);
+  assert.equal(planTier(cfg(), { name: 'q', concurrent: 10, rampSec: 0, holdSec: 10, rampDownSec: 1 }).durationSec, 11);
 });
 
 test('estimateTier: closed model and Redis operations', () => {

@@ -37,6 +37,7 @@ test('pgUrlFrom: explicit URL, DATABASE_URL, assembled DB_* (encoded) or null', 
   );
   assert.match(pgUrlFrom({}, { urlEnv: 'X', map: { DB_HOST: 'h' } }), /sslmode=disable$/);
   assert.equal(pgUrlFrom({}, { urlEnv: 'X', map: {} }), null);
+  assert.equal(pgUrlFrom({ X: '' }, { urlEnv: 'X', map: { DATABASE_URL: 'postgres://dbu' } }), 'postgres://dbu', 'an empty variable is ignored');
 });
 
 test('pageNames lists each page once', () => {

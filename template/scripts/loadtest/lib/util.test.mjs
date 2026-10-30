@@ -36,9 +36,10 @@ test('parseEnvFile: comments, quotes, export', () => {
 test('loadEnvFile does not override set variables and returns added keys', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'lt-'));
   const file = path.join(dir, 'e.env');
-  writeFileSync(file, 'A=file\nB=file\nC=');
+  writeFileSync(file, 'A=file\nB=file\nC=\nD=');
   const env = { A: 'shell' };
-  assert.deepEqual(loadEnvFile(file, env).sort(), ['B', 'C']);
+  assert.deepEqual(loadEnvFile(file, env), ['B']);
+  assert.equal(env.C, undefined, 'an empty value is not set');
   assert.equal(env.A, 'shell');
   assert.deepEqual(loadEnvFile(path.join(dir, 'missing'), env), []);
 });
