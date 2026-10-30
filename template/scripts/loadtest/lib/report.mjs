@@ -32,6 +32,8 @@ export function k6Digest(summary, pageNames = []) {
     p50: duration.med, p90: duration['p(90)'], p95: duration['p(95)'], p99: duration['p(99)'], max: duration.max,
     status429: metricValues(summary, 'status_429').count ?? 0,
     status5xx: metricValues(summary, 'status_5xx').count ?? 0,
+    cryptCoverage: metricValues(summary, 'crypt_covered').rate,
+    cryptRefused: metricValues(summary, 'crypt_session_refused').count ?? 0,
     receivedMb: (metricValues(summary, 'data_received').count ?? 0) / 1048576,
     pages,
   };
@@ -106,12 +108,12 @@ const table = (header, rows) => [`| ${header.join(' | ')} |`, `|${header.map(() 
 
 function summarySection(tiers, limits) {
   return table(
-    ['Tier', 'Sessions', 'Req', 'req/s', 'p50 ms', 'p95 ms', 'p99 ms', 'Errors %', '429', '5xx', 'Verdict'],
+    ['Tier', 'Sessions', 'Req', 'req/s', 'p50 ms', 'p95 ms', 'p99 ms', 'Errors %', '429', '5xx', 'Encrypted %', 'Verdict'],
     tiers.map((t) => {
       const v = verdict(t.digest, t.meta, limits);
       const d = t.digest;
       return [t.plan.name, t.plan.concurrent, d.requests, fmt(d.rps), fmt(d.p50, 0), fmt(d.p95, 0), fmt(d.p99, 0),
-        fmt(d.errorRate * 100, 2), d.status429, d.status5xx, v.ok ? 'OK' : `FAIL — ${v.reasons.join('; ')}`];
+        fmt(d.errorRate * 100, 2), d.status429, d.status5xx, d.cryptCoverage === undefined ? '–' : fmt(d.cryptCoverage * 100, 0), v.ok ? 'OK' : `FAIL — ${v.reasons.join('; ')}`];
     }),
   );
 }
@@ -156,6 +158,6 @@ export function renderReport({ cfg, runId, tiers }) {
     '## Quota consumption', quotaSection(tiers),
     '## Heaviest SQL statements during the tier', statementsSection(tiers),
     '## Extrapolation (linear fit over the tiers run — indicative only, needs ≥ 3 tiers)', extra.join('\n'),
-    '## Reading notes\n- Prometheus values are instant queries sampled every few seconds; the peak is the highest sample.\n- A 429 means the rate limiter answered: the tier measured the limiter, not the capacity.\n- Supabase egress and the provider dashboards are not readable from here: compare them before and after the run.',
+    '## Reading notes\n- Prometheus values are instant queries sampled every few seconds; the peak is the highest sample.\n- `Encrypted %` is the share of sessions that ran with transport encryption (a refused session runs in clear: below 100 % the tier under-measures the encryption cost).\n- A 429 means the rate limiter answered: the tier measured the limiter, not the capacity.\n- Supabase egress and the provider dashboards are not readable from here: compare them before and after the run.',
   ].join('\n\n') + '\n';
 }

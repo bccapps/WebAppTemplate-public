@@ -22,6 +22,8 @@ const summary = {
     status_5xx: { values: { count: 2 } },
     data_received: { values: { count: 2097152 } },
     page_ms_home: { values: { avg: 400, 'p(95)': 700 } },
+    crypt_covered: { values: { rate: 0.8 } },
+    crypt_session_refused: { values: { count: 4 } },
   },
 };
 
@@ -32,6 +34,9 @@ test('k6Digest extracts the headline numbers and page timings', () => {
   assert.equal(digest.receivedMb, 2);
   assert.deepEqual(Object.keys(digest.pages), ['home']);
   assert.equal(digest.pages.home.p95, 700);
+  assert.equal(digest.cryptCoverage, 0.8);
+  assert.equal(digest.cryptRefused, 4);
+  assert.equal(k6Digest({ metrics: {} }).cryptCoverage, undefined);
   assert.equal(k6Digest(null).requests, 0);
 });
 
@@ -79,4 +84,6 @@ test('renderReport produces every section', () => {
   }
   assert.ok(md.includes('back1') && md.includes('1234') && md.includes('SELECT 1 \\| x'));
   assert.match(md, /simultaneous sessions/);
+  assert.match(md, /Encrypted %/);
+  assert.ok(md.includes('| 80 |'), 'crypt coverage is shown');
 });

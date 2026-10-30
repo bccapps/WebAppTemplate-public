@@ -12,13 +12,20 @@
  * Closed model: every VU loops "pick a page, issue its requests, think". Registered VUs authenticate with the
  * static API token of one synthetic account; anonymous VUs send no credentials.
  *
+ * Transport encryption: the real front opens an ECDH session (`POST /crypt/session`) and sends `x-crypt-session` on its
+ * API calls, so the back encrypts (and compresses) every non-exempt response. Without that header a series payload would
+ * be answered in clear and the heaviest server-side work (ECDH, AES-GCM, deflate, one Redis lookup per request) would not
+ * be measured. With `model.crypt.enabled`, each VU opens its own session (renewed before it expires) and sends the headers;
+ * the answers are NOT decrypted (only the server's cost matters). The session route is rate-limited per identity: when it
+ * refuses, the VU runs in clear for a while and the tier reports a coverage below 100 %.
+ *
  * Environment: LOADTEST_CONFIG (run config JSON), LOADTEST_USERS (accounts JSON), LOADTEST_SUMMARY (output file),
  * LOADTEST_BYPASS_KEY (optional Cloudflare skip-rule secret).
  */
 
 import http from 'k6/http';
 import { sleep } from 'k6';
-import { Counter, Trend } from 'k6/metrics';
+import { Counter, Rate, Trend } from 'k6/metrics';
 import exec from 'k6/execution';
 
 const CFG = JSON.parse(open(__ENV.LOADTEST_CONFIG));
@@ -30,6 +37,11 @@ const pageTrends = {};
 for (const kind of ['registered', 'anonymous']) {
   for (const page of CFG.journeys[kind] || []) pageTrends[page.name] = pageTrends[page.name] || new Trend(`page_ms_${slug(page.name)}`, true);
 }
+// Uncompressed P-256 public key, generated once; its private half was discarded (answers are never decrypted).
+const CRYPT_CLIENT_PUBLIC_KEY = 'BPyQ0nkadRo65ySh2lq20r9elIELBrCKDgYThBcHaZQ47BLisi2xoLHw55ZSF3megCsLXwDAxSlV8KHPiWux9jM=';
+const CRYPT = CFG.model.crypt || { enabled: false };
+const cryptCovered = new Rate('crypt_covered');
+const cryptRefused = new Counter('crypt_session_refused');
 const status429 = new Counter('status_429');
 const status5xx = new Counter('status_5xx');
 const status4xx = new Counter('status_4xx');
@@ -65,12 +77,16 @@ function pickPage(pages) {
   return pages[pages.length - 1];
 }
 
-function toRequest(step, pageName, token) {
+function toRequest(step, pageName, token, cryptId) {
   const target = step.target || 'api';
   const path = Array.isArray(step.path) ? step.path[Math.floor(Math.random() * step.path.length)] : step.path;
   const headers = Object.assign({}, CFG.headers.all, CFG.headers[target], step.headers);
   if (BYPASS) headers[CFG.bypassHeader] = BYPASS;
   if (token && step.auth !== false) headers.Authorization = `Bearer ${token}`;
+  if (cryptId && target === 'api' && step.crypt !== false) {
+    headers['x-crypt-session'] = cryptId;
+    headers['x-crypt-accept-encoding'] = CRYPT.acceptEncoding || 'deflate';
+  }
   if (step.body) headers['Content-Type'] = 'application/json';
   return {
     method: step.method || 'GET',
@@ -86,13 +102,13 @@ function record(response) {
   else if (response.status >= 400) status4xx.add(1);
 }
 
-function runStep(step, pageName, token) {
+function runStep(step, pageName, token, cryptId) {
   if (Array.isArray(step)) {
-    const responses = http.batch(step.map((s) => toRequest(s, pageName, token)));
+    const responses = http.batch(step.map((s) => toRequest(s, pageName, token, cryptId)));
     responses.forEach(record);
     return;
   }
-  const req = toRequest(step, pageName, token);
+  const req = toRequest(step, pageName, token, cryptId);
   record(http.request(req.method, req.url, req.body, req.params));
 }
 
@@ -111,12 +127,42 @@ function coldLoad() {
   }
 }
 
+let cryptSession = null; // per VU: { id, expiresAt }
+let cryptRetryAt = 0;
+
+/** Session id to send, opening or renewing it when needed; null when disabled or refused (the VU then runs in clear). */
+function ensureCryptSession(token) {
+  if (!CRYPT.enabled) return null;
+  const now = Date.now();
+  if (cryptSession && cryptSession.expiresAt - 30000 > now) return cryptSession.id;
+  if (cryptRetryAt > now) return null;
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (BYPASS) headers[CFG.bypassHeader] = BYPASS;
+  const res = http.post(`${CFG.targets.api}/crypt/session`, JSON.stringify({ clientPublicKey: CRYPT_CLIENT_PUBLIC_KEY }), {
+    headers,
+    tags: { name: 'api:crypt/session', page: 'crypt' },
+    // A refusal is an expected, counted outcome here (not an error of the tier).
+    responseCallback: http.expectedStatuses(201, { min: 400, max: 499 }),
+  });
+  if (res.status !== 201) {
+    cryptRefused.add(1);
+    cryptRetryAt = now + 30000;
+    return null;
+  }
+  const body = res.json();
+  cryptSession = { id: body.sessionId, expiresAt: now + (body.ttlMs || 600000) };
+  return cryptSession.id;
+}
+
 function session(kind, token) {
   const [thinkMin, thinkMax] = CFG.model.thinkSec;
   if (Math.random() < CFG.model.coldLoadRatio[kind]) coldLoad();
+  const cryptId = ensureCryptSession(token);
+  if (CRYPT.enabled) cryptCovered.add(cryptId !== null);
   const page = pickPage(CFG.journeys[kind]);
   const started = Date.now();
-  for (const step of page.requests) runStep(step, page.name, token);
+  for (const step of page.requests) runStep(step, page.name, token, cryptId);
   pageTrends[page.name].add(Date.now() - started);
   sleep(thinkMin + Math.random() * (thinkMax - thinkMin));
 }

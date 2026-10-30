@@ -314,9 +314,11 @@ async function cmdCloudflare({ paths, cfg }, args) {
   const accountId = process.env[cf.accountIdEnv ?? 'CLOUDFLARE_ACCOUNT_ID'];
   if (action === 'check') {
     const access = await checkAccess(client, cf.zone, accountId);
-    log(`token ${access.tokenStatus} (${access.tokenScope}-owned); zone ${cf.zone} visible; custom rules ${access.canReadRules ? 'readable' : 'NOT readable'}`);
+    log(`token ${access.tokenStatus} (${access.tokenScope}-owned)`);
     log(access.permissions ? `permissions: ${access.permissions.join(', ') || 'none'}` : 'permissions: not readable by this token');
-    log(access.looksAbleToWrite === null ? 'write access: unknown (only `allow` can tell)' : `write access to WAF rules: ${access.looksAbleToWrite ? 'looks OK' : 'MISSING — use `cloudflare plan` and add the rule by hand'}`);
+    log(access.zoneId ? `zone ${cf.zone}: visible, custom rules ${access.canReadRules ? 'readable' : 'NOT readable'}` : `zone ${cf.zone}: NOT visible — ${access.zoneError}`);
+    if (!access.zoneId) log(`  → needs a "Zone Read" permission AND "Zone Resources" including ${cf.zone} (or "All zones") on this token${access.looksAbleToReadZones === false ? ' (its permissions list has none)' : ''}`);
+    log(access.looksAbleToWrite === null ? 'write access: unknown (only `allow` can tell)' : `write access to WAF rules: ${access.looksAbleToWrite ? 'looks OK' : 'MISSING — needs "Zone WAF Edit/Write"; or use `cloudflare plan` and add the rule by hand'}`);
     return;
   }
   if (action === 'allow') {

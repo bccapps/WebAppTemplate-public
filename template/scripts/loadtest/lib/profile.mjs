@@ -42,6 +42,7 @@ export function planTier(cfg, tier) {
     anonymous,
     accountReuse: accountReuse(registered, cfg.auth.userCount),
     stages: { registered: buildStages(registered, tier), anonymous: buildStages(anonymous, tier) },
+    rampSec: tier.rampSec,
     rampDownSec: tier.rampDownSec ?? RAMP_DOWN_SEC,
     durationSec: tier.rampSec + tier.holdSec + (tier.rampDownSec ?? RAMP_DOWN_SEC),
   };
@@ -70,8 +71,10 @@ export function estimateTier(cfg, plan) {
   const cycleSec = (cfg.model.thinkSec[0] + cfg.model.thinkSec[1]) / 2 + cfg.model.avgPageSec;
   const regRps = cfg.journeys?.registered ? (plan.registered / cycleSec) * requestsPerPage(cfg.journeys.registered) : 0;
   const anonRps = cfg.journeys?.anonymous ? (plan.anonymous / cycleSec) * requestsPerPage(cfg.journeys.anonymous) : 0;
+  // With transport encryption every API request also costs one Redis lookup of its session.
+  const cryptOps = cfg.model.crypt?.enabled ? 1 : 0;
   const ops = cfg.model.redisOpsPerRequest;
-  const redisOpsPerSec = regRps * ops.registered + anonRps * ops.anonymous;
+  const redisOpsPerSec = regRps * (ops.registered + cryptOps) + anonRps * (ops.anonymous + cryptOps);
   const steadyShare = Math.max(plan.durationSec - (plan.rampDownSec ?? RAMP_DOWN_SEC), 0) / plan.durationSec;
   return {
     cycleSec,
@@ -83,6 +86,10 @@ export function estimateTier(cfg, plan) {
     requestsTotal: Math.round((regRps + anonRps) * plan.durationSec * steadyShare * 0.9),
     perAccountPerMin: plan.registered ? (regRps * 60 * Math.max(plan.accountReuse, 1)) / plan.registered : 0,
     anonymousPerMinPerIp: (anonRps * 60) / Math.max(cfg.model.generatorIps, 1),
+    // New sessions an IP must open per minute: every VU once during the ramp, then a renewal every session TTL (10 min).
+    anonymousCryptSessionsPerMinPerIp: cfg.model.crypt?.enabled
+      ? (plan.anonymous / Math.max((plan.rampSec ?? 0) / 60, 1) + plan.anonymous / 10) / Math.max(cfg.model.generatorIps, 1)
+      : 0,
   };
 }
 
@@ -98,6 +105,9 @@ export function planWarnings(cfg, plan, estimate) {
   }
   if (estimate.anonymousPerMinPerIp > limit) {
     warnings.push(`Anonymous traffic is ${estimate.anonymousPerMinPerIp.toFixed(0)} req/min per generator IP, above the limiter (${limit}/min): run 'throttle raise' for this tier (temporary, restored afterwards) or add generator IPs (model.generatorIps).`);
+  }
+  if (estimate.anonymousCryptSessionsPerMinPerIp > cfg.limits.cryptSessionsPerMinute) {
+    warnings.push(`Anonymous VUs must open ~${estimate.anonymousCryptSessionsPerMinPerIp.toFixed(0)} encryption sessions/min per generator IP but the session route allows ${cfg.limits.cryptSessionsPerMinute}/min (its own limit, not affected by 'throttle raise'): part of the anonymous traffic will run in clear (see the crypt coverage column).`);
   }
   return warnings;
 }

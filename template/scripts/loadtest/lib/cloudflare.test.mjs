@@ -75,7 +75,7 @@ test('checkAccess reads token, zone, rules and permissions without writing', asy
     'GET /user/tokens/tok1': { policies: [{ permission_groups: [{ name: 'Zone WAF Write' }, { name: 'Zone Read' }] }] },
   });
   const access = await checkAccess(client, 'ex.com');
-  assert.deepEqual({ status: access.tokenStatus, canRead: access.canReadRules, write: access.looksAbleToWrite }, { status: 'active', canRead: true, write: true });
+  assert.deepEqual({ status: access.tokenStatus, canRead: access.canReadRules, write: access.looksAbleToWrite, zone: access.looksAbleToReadZones }, { status: 'active', canRead: true, write: true, zone: true });
   assert.ok(calls.every((c) => c.key.startsWith('GET ')));
 });
 
@@ -110,4 +110,17 @@ test('checkAccess describes an account-owned token through its account endpoint'
   const access = await checkAccess(client, 'ex.com', 'acc1');
   assert.equal(access.tokenScope, 'account');
   assert.equal(access.looksAbleToWrite, true);
+});
+
+test('checkAccess keeps the diagnosis when the zone is not visible (no throw)', async () => {
+  const { client } = fakeApi({
+    'GET /accounts/acc1/tokens/verify': { status: 'active', id: 'tk' },
+    'GET /zones?name=ex.com': [],
+    'GET /accounts/acc1/tokens/tk': { policies: [{ permission_groups: [{ name: 'Workers Scripts Write' }, { name: 'Pages Write' }] }] },
+  });
+  const access = await checkAccess(client, 'ex.com', 'acc1');
+  assert.equal(access.zoneId, null);
+  assert.match(access.zoneError, /not found/);
+  assert.deepEqual({ read: access.looksAbleToReadZones, write: access.looksAbleToWrite, rules: access.canReadRules }, { read: false, write: false, rules: null });
+  assert.deepEqual(access.permissions, ['Workers Scripts Write', 'Pages Write']);
 });

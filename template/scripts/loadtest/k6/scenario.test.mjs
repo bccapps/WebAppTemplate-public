@@ -23,7 +23,8 @@ const STUBS = {
   'k6/execution': 'export default new Proxy({}, { get: (_, key) => globalThis.__k6.exec[key] });',
   'k6/metrics': `
     export class Counter { constructor(name) { this.name = name; } add(v) { globalThis.__k6.counters[this.name] = (globalThis.__k6.counters[this.name] || 0) + v; } }
-    export class Trend { constructor(name) { this.name = name; } add(v) { (globalThis.__k6.trends[this.name] ||= []).push(v); } }`,
+    export class Trend { constructor(name) { this.name = name; } add(v) { (globalThis.__k6.trends[this.name] ||= []).push(v); } }
+    export class Rate { constructor(name) { this.name = name; } add(v) { (globalThis.__k6.rates[this.name] ||= []).push(v); } }`,
 };
 const hook = `export async function resolve(specifier, context, next) {
   const stubs = ${JSON.stringify(STUBS)};
@@ -33,7 +34,7 @@ const hook = `export async function resolve(specifier, context, next) {
 register(`data:text/javascript,${encodeURIComponent(hook)}`);
 
 const page = (name, requests) => ({ name, weight: 1, requests });
-const config = {
+const baseConfig = {
   targets: { api: 'https://api.test/api/v1', front: 'https://front.test' },
   headers: { all: { 'Accept-Encoding': 'gzip' }, api: { 'X-Api': '1' } },
   journeys: {
@@ -46,12 +47,14 @@ const config = {
   bypassHeader: 'x-loadtest-key',
 };
 
-function setup() {
+function setup(modelOverride = {}, sessionAnswer = { status: 201, body: { sessionId: 'sess-1', ttlMs: 600000 } }) {
+  const config = { ...baseConfig, model: { ...baseConfig.model, ...modelOverride } };
   const calls = [];
-  const state = { calls, counters: {}, trends: {}, sleeps: [], exec: { vu: { idInTest: 1 } } };
+  const state = { calls, counters: {}, trends: {}, rates: {}, sleeps: [], exec: { vu: { idInTest: 1 } } };
   state.http = {
     setResponseCallback() {}, expectedStatuses: () => null,
     request: (method, url, body, params) => { calls.push({ method, url, params }); return { status: url.endsWith('/c') ? 429 : 200, body: '' }; },
+    post: (url, body, params) => { calls.push({ method: 'POST', url, body, params }); return { status: sessionAnswer.status, json: () => sessionAnswer.body }; },
     get: (url) => { calls.push({ method: 'GET', url }); return { status: 200, body: '<script src="/assets/app.js"></script><link href="/assets/app.css">' }; },
     batch: (reqs) => { calls.push({ batch: reqs.map((r) => (Array.isArray(r) ? r[1] : r.url)), auth: reqs.map((r) => r.params?.headers?.Authorization) }); return reqs.map(() => ({ status: 503 })); },
   };
@@ -104,4 +107,38 @@ test('scenario: a registered VU maps to its own account (modulo the account coun
     seen.push(state.calls.find((c) => c.batch).auth[0]);
   }
   assert.deepEqual(seen, ['Bearer tok-1', 'Bearer tok-0', 'Bearer tok-1']);
+});
+
+test('scenario with transport encryption: one session per VU, headers on API calls only, coverage recorded', async () => {
+  const state = setup({ crypt: { enabled: true, acceptEncoding: 'deflate' } });
+  const scenario = await import(`${pathToFileURL(new URL('./scenario.js', import.meta.url).pathname)}?t=${Date.now()}-crypt`);
+  scenario.registered();
+  scenario.registered();
+  const posts = state.calls.filter((c) => c.method === 'POST');
+  assert.equal(posts.length, 1, 'the session is opened once and reused');
+  assert.equal(posts[0].url, 'https://api.test/api/v1/crypt/session');
+  assert.equal(JSON.parse(posts[0].body).clientPublicKey.length, 88, 'uncompressed P-256 key, base64');
+  assert.equal(posts[0].params.headers.Authorization, 'Bearer tok-1', 'a registered VU opens it as itself (per-user limit, not per-IP)');
+  const single = state.calls.find((c) => c.url === 'https://api.test/api/v1/c');
+  assert.equal(single.params.headers['x-crypt-session'], 'sess-1');
+  assert.equal(single.params.headers['x-crypt-accept-encoding'], 'deflate');
+  assert.deepEqual(state.rates.crypt_covered, [true, true]);
+  state.calls.length = 0;
+  scenario.anonymous();
+  const asset = state.calls.find((c) => c.batch?.[0]?.includes('/assets/'));
+  assert.deepEqual(asset.auth, [undefined, undefined]);
+  const front = state.calls.find((c) => c.url === 'https://front.test/');
+  assert.equal(front.params, undefined, 'the front shell is not an encrypted API call');
+});
+
+test('scenario: a refused session runs in clear, is counted, and is retried only after a pause', async () => {
+  const state = setup({ crypt: { enabled: true } }, { status: 429, body: {} });
+  const scenario = await import(`${pathToFileURL(new URL('./scenario.js', import.meta.url).pathname)}?t=${Date.now()}-refused`);
+  scenario.anonymous();
+  scenario.anonymous();
+  assert.equal(state.calls.filter((c) => c.method === 'POST').length, 1, 'no hammering of the refusing route');
+  assert.equal(state.counters.crypt_session_refused, 1);
+  assert.deepEqual(state.rates.crypt_covered, [false, false]);
+  const api = state.calls.find((c) => c.url === 'https://api.test/api/v1/p1');
+  assert.equal(api.params.headers['x-crypt-session'], undefined);
 });

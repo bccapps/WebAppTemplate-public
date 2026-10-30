@@ -100,6 +100,8 @@ export async function revokeException(client, { zoneId, rulesetId, ruleId }) {
   await client.call('DELETE', `/zones/${zoneId}/rulesets/${rulesetId}/rules/${ruleId}`);
 }
 
+// Dashboard labels vary between "Zone Read"/"Zone Edit" and "Zone Read"/"Zone Write" depending on the docs revision.
+const ZONE_PERMISSION = /^zone (read|edit|write)$/i;
 const WRITE_PERMISSION = /(waf|firewall|ruleset).*(write|edit)|(write|edit).*(waf|firewall|ruleset)/i;
 
 /** Permission-group names of the token's policies, or null when the token cannot describe itself. */
@@ -114,21 +116,28 @@ async function permissionNames(client, token, accountId) {
 }
 
 /**
- * Read-only access check: token active, zone visible, custom rules readable, and (heuristic, from the token's own
- * policies) whether it looks allowed to write WAF rules. Creates nothing.
+ * Read-only access check: token active, its own permissions (when it may describe itself), zone visible, custom rules
+ * readable. Never throws on a missing zone: the permissions found so far are the diagnosis. Creates nothing.
  */
 export async function checkAccess(client, zone, accountId) {
   const token = await verifyToken(client, accountId);
-  const zoneId = await findZoneId(client, zone);
-  let canReadRules = true;
-  try { await getEntrypoint(client, zoneId); } catch (error) { if (error.status === 403) canReadRules = false; else throw error; }
   const permissions = await permissionNames(client, token, accountId);
-  return {
+  const out = {
     tokenStatus: token.status,
     tokenScope: token.scope,
-    zoneId,
-    canReadRules,
     permissions,
     looksAbleToWrite: permissions ? permissions.some((name) => WRITE_PERMISSION.test(name)) : null,
+    looksAbleToReadZones: permissions ? permissions.some((name) => ZONE_PERMISSION.test(name)) : null,
+    zoneId: null,
+    zoneError: null,
+    canReadRules: null,
   };
+  try {
+    out.zoneId = await findZoneId(client, zone);
+  } catch (error) {
+    out.zoneError = error.message;
+    return out;
+  }
+  try { await getEntrypoint(client, out.zoneId); out.canReadRules = true; } catch (error) { if (error.status === 403) out.canReadRules = false; else throw error; }
+  return out;
 }

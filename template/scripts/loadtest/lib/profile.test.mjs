@@ -65,7 +65,12 @@ test('estimateTier: closed model and Redis operations', () => {
   assert.equal(est.cycleSec, 6);
   assert.ok(Math.abs(est.registeredRps - (40 / 6) * 2.5) < 1e-9);
   assert.ok(Math.abs(est.anonymousRps - 60 / 6) < 1e-9);
-  assert.ok(Math.abs(est.redisOpsPerSec - (est.registeredRps * 2 + est.anonymousRps)) < 1e-9);
+  // base ops (limiter, revocation) + 1 session lookup per request while transport encryption is on
+  assert.ok(Math.abs(est.redisOpsPerSec - (est.registeredRps * 3 + est.anonymousRps * 2)) < 1e-9);
+  const clear = cfg({ model: { thinkSec: [4, 6], avgPageSec: 1, crypt: { enabled: false } } });
+  const clearEst = estimateTier(clear, planTier(clear, { name: 't', concurrent: 100, rampSec: 0, holdSec: 600 }));
+  assert.ok(Math.abs(clearEst.redisOpsPerSec - (clearEst.registeredRps * 2 + clearEst.anonymousRps)) < 1e-9);
+  assert.equal(clearEst.anonymousCryptSessionsPerMinPerIp, 0);
   assert.ok(est.redisOpsTotal > 0 && est.requestsTotal > 0);
 });
 
@@ -79,4 +84,14 @@ test('planWarnings flags account sharing, per-account and per-IP limiter pressur
   const calm = cfg();
   const calmPlan = planTier(calm, { name: 't', concurrent: 5, rampSec: 0, holdSec: 60 });
   assert.deepEqual(planWarnings(calm, calmPlan, estimateTier(calm, calmPlan)), []);
+});
+
+test('planWarnings flags an encryption-session rate the single-IP generator cannot reach', () => {
+  const config = cfg({ model: { thinkSec: [3, 15] } });
+  const plan = planTier(config, { name: 'big', concurrent: 500, rampSec: 120, holdSec: 300 });
+  const est = estimateTier(config, plan);
+  assert.ok(est.anonymousCryptSessionsPerMinPerIp > config.limits.cryptSessionsPerMinute);
+  assert.match(planWarnings(config, plan, est).join('\n'), /encryption sessions\/min per generator IP/);
+  const small = planTier(config, { name: 's', concurrent: 20, rampSec: 120, holdSec: 300 });
+  assert.ok(!planWarnings(config, small, estimateTier(config, small)).join('').includes('encryption sessions'));
 });

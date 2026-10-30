@@ -27,7 +27,8 @@ const HAS_K6 = spawnSync('k6', ['version']).status === 0;
 
 function mockServer(seen) {
   return http.createServer((req, res) => {
-    seen.push({ url: req.url, auth: req.headers.authorization, bypass: req.headers['x-loadtest-key'] });
+    seen.push({ url: req.url, auth: req.headers.authorization, crypt: req.headers['x-crypt-session'], accept: req.headers['x-crypt-accept-encoding'] });
+    if (req.url === '/api/v1/crypt/session') { res.statusCode = 201; res.setHeader('content-type', 'application/json'); return res.end('{"sessionId":"sess-e2e","ttlMs":600000}'); }
     if (req.url === '/') { res.setHeader('content-type', 'text/html'); return res.end('<script src="/assets/app.js"></script>'); }
     if (req.url.startsWith('/api/v1/private') && !String(req.headers.authorization).startsWith('Bearer tok-')) { res.statusCode = 401; return res.end('{}'); }
     res.setHeader('content-type', 'application/json');
@@ -83,4 +84,8 @@ test('CLI + k6 + report against a local mock server', { skip: !HAS_K6 && 'k6 not
   assert.ok(seen.filter((r) => r.url.startsWith('/api/v1/private')).every((r) => /^Bearer tok-[12]$/.test(r.auth)), 'registered calls carry an account token');
   assert.ok(seen.filter((r) => r.url === '/api/v1/public').every((r) => r.auth === undefined), 'anonymous calls carry no token');
   assert.ok(seen.some((r) => r.url === '/assets/app.js'), 'cold load fetched the assets');
+  const apiCalls = seen.filter((r) => /^\/api\/v1\/(private|public)/.test(r.url));
+  assert.ok(apiCalls.length > 0 && apiCalls.every((r) => r.crypt === 'sess-e2e' && r.accept === 'deflate'), 'API calls carry the encryption session');
+  assert.ok(seen.filter((r) => r.url === '/' || r.url.startsWith('/assets')).every((r) => r.crypt === undefined), 'static front requests do not');
+  assert.match(report, /\| 100 \| OK \|/, 'every session ran encrypted');
 });

@@ -90,10 +90,10 @@ Fusionné avec les défauts de `lib/config.mjs` (un objet se fusionne clé par c
 | `targets` | `api` (obligatoire, **base incluant `/api/v1`**), `front`, et toute autre cible nommée utilisable par `step.target` |
 | `headers` | En-têtes ajoutés : `all` et/ou par cible. Ne pas envoyer l'en-tête de transport chiffré/compressé si le back le négocie (`x-crypt-accept-encoding`) : la réponse reste en clair |
 | `auth` | `userCount`, `prefix`, `tier` (`highest` \| `lowest` \| id \| nom ; défaut `highest`) ou `tierId` (id imposé), `userTable`/`nicknameColumn` (suppression SQL), `adminTokenEnv`, `paths` des routes admin |
-| `model` | `mix` (somme = 1), `thinkSec` `[min, max]`, `avgPageSec`, `coldLoadRatio` `{ registered, anonymous }` (part des sessions qui téléchargent index + assets du front), `redisOpsPerRequest`, `generatorIps` |
+| `model` | `mix` (somme = 1), `thinkSec` `[min, max]`, `avgPageSec`, `coldLoadRatio` `{ registered, anonymous }` (part des sessions qui téléchargent index + assets du front), `redisOpsPerRequest`, `crypt { enabled, acceptEncoding }` (chiffrement de transport, voir ci-dessous), `generatorIps` |
 | `tiers` | `[{ name, concurrent, rampSec, holdSec, rampDownSec?, optional? }]` — défauts : `smoke` 5, `u50`, `u200`, `u500`, `u1000` (optionnel). Les montées en charge sont lentes à dessein (jusqu'à 5 min) : les garde-fous machine voient avec le retard du scrape (voir plus bas) |
 | `journeys` | `registered` / `anonymous` : `[{ name, weight, requests }]` |
-| `limits` | `maxErrorRate`, `maxP95Ms`, `throttlePerMinute`, `pgConnectionsRatio`, `redisMemoryRatio`, `generatorLoadRatio` |
+| `limits` | `maxErrorRate`, `maxP95Ms`, `throttlePerMinute`, `cryptSessionsPerMinute`, `pgConnectionsRatio`, `redisMemoryRatio`, `generatorLoadRatio` |
 | `throttle` | `{ moduleId, key, safetyFactor }` — clé de config du limiteur relevée par `throttle raise` (défaut `common` / `common_throttleDefaultLimit` / ×1,5) |
 | `monitor` | `sampleSec`, `cooldownSec`, `prometheus { url, userEnv, passwordEnv, queries, jobs, maxScrapeSec }`, `postgres { enabled, envFile, appProcesses, verifySsl }`, `redis { enabled, envFile, maxOpsPerSec }` |
 | `cloudflare` | `{ zone, tokenEnv, accountIdEnv? }` |
@@ -151,6 +151,25 @@ Les quotas d'abonnement (commandes Redis par mois, egress Supabase…) ne sont p
 estime les opérations Redis par palier (`model.redisOpsPerRequest` : 1 compteur du limiteur de débit + 1 vérification de
 révocation de jeton par requête authentifiée), le rapport compare avec la mesure (`total_commands_processed`), et
 l'egress des fournisseurs se relève dans leur console avant/après.
+
+## Chiffrement de transport (`model.crypt`)
+
+Le vrai front ouvre une session ECDH (`POST /crypt/session`) puis envoie `x-crypt-session` (et `x-crypt-accept-encoding: deflate`) sur
+ses appels API : le back chiffre alors en AES-GCM — après compression — **toute réponse non exemptée** (`@NoTransportCrypt`), séries
+d'indicateurs comprises. Sans cet en-tête, k6 recevrait les séries en clair et le travail serveur le plus lourd (ECDH + HKDF à
+l'ouverture, deflate + AES-GCM par réponse, **une lecture Redis de la session par requête**) ne serait pas mesuré : c'est
+`model.crypt.enabled` (défaut `true`) qui l'ajoute au scénario.
+
+- Chaque VU ouvre **sa** session (renouvelée avant l'expiration, 10 min par défaut) ; les réponses ne sont **pas** déchiffrées,
+  seul le coût côté serveur compte. Une session d'un compte de test est ouverte avec son jeton (limite par utilisateur).
+- Mesure et limites : la route de session a **sa propre limite** (30/min par identité, `@Throttle` de la route, **non affectée
+  par `throttle raise`**). Les VUs enregistrés ont chacun leur identité ; les VUs anonymes d'un seul générateur partagent une IP
+  et, au-delà de 30 ouvertures par minute, sont refusés : le VU tourne alors **en clair** et réessaie 30 s plus tard. Le rapport
+  donne par palier la part de sessions chiffrées (`Encrypted %`) ; `plan` avertit quand le débit d'ouvertures anonymes dépasse la
+  limite. Le trafic anonyme étant léger (pas de séries), l'écart de mesure reste faible ; pour un anonyme 100 % chiffré,
+  répartir sur plusieurs IP (`model.generatorIps`).
+- Le coût Redis estimé par `plan` intègre la lecture de session (+1 par requête).
+- Mettre `model.crypt.enabled` à `false` pour une app qui n'utilise pas le module de chiffrement de `common`.
 
 ## Limiteur de débit : ce que le test mesure vraiment
 

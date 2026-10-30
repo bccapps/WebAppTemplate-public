@@ -39,6 +39,7 @@ export const DEFAULTS = {
     avgPageSec: 0.8,
     coldLoadRatio: { registered: 0.2, anonymous: 0.9 },
     redisOpsPerRequest: { registered: 2, anonymous: 1 },
+    crypt: { enabled: true, acceptEncoding: 'deflate' },
     generatorIps: 1,
   },
   tiers: [
@@ -53,6 +54,7 @@ export const DEFAULTS = {
     maxErrorRate: 0.05,
     maxP95Ms: 5000,
     throttlePerMinute: 300,
+    cryptSessionsPerMinute: 30,
     pgConnectionsRatio: 0.7,
     redisMemoryRatio: 0.7,
     generatorLoadRatio: 0.8,
