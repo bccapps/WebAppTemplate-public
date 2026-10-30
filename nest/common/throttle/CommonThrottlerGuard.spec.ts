@@ -21,6 +21,8 @@ import { RedisService } from '../services/RedisService';
 import { resolveTokenOnce } from '../auth/authRequest';
 import type { AuthPort } from '../auth/AuthPort';
 import type { AuthPrincipal } from '../auth/AuthPrincipal';
+import type { ServiceKeyAuthenticator, ServiceKeyRequest } from '../auth/ServiceKeyAuth';
+import { ApiScope, ServiceKeyRoute } from '../decorators/ApiScope';
 import { ThrottleRegistry } from './ThrottleRegistry';
 import { DonationController, DONATION_CHECKOUT_THROTTLE } from '../controllers/DonationController';
 import { CookieConsentController } from '../controllers/CookieConsentController';
@@ -375,6 +377,141 @@ describe('ThrottleRegistry', () => {
     registry.registerAll([{ name: 'a', limit: 1, ttlMs: 1 }, { name: 'b', limit: 2, ttlMs: 2 }]);
     expect(registry.list().map((r) => r.name)).toEqual(['a', 'b']);
     expect(registry.version).toBe(2);
+  });
+});
+
+describe('CommonThrottlerGuard: verified service keys go by their own rate limit (2026-10-30)', () => {
+  class KeyRoutes {
+    @ApiScope('market:read')
+    scoped(): void {}
+    @ServiceKeyRoute()
+    billed(): void {}
+    login(): void {}
+  }
+  const keys = (verified: Record<string, number>): ServiceKeyAuthenticator => ({
+    authenticate: jest.fn(async () => null),
+    verifiedKeyId: jest.fn(async (req: ServiceKeyRequest) => verified[String(req.headers?.['x-api-key'])] ?? null),
+  });
+  const guardWith = async (serviceKeys?: ServiceKeyAuthenticator): Promise<CommonThrottlerGuard> => {
+    const config: Record<string, unknown> = { common_throttleDefaultLimit: 1 };
+    const storage = new FailOpenThrottlerStorage({ getClient: () => null });
+    const guard = new CommonThrottlerGuard(
+      buildThrottlerOptions({ get: (k: string) => config[k] }, storage),
+      storage as unknown as ThrottlerStorage,
+      new Reflector(),
+      new ThrottleRegistry(),
+      undefined,
+      serviceKeys,
+    );
+    await guard.onModuleInit();
+    return guard;
+  };
+  const call = (method: keyof KeyRoutes, key?: string): ExecutionContext => {
+    const req = { ip: '203.0.113.9', headers: key ? { 'x-api-key': key } : {} };
+    const res = { header: jest.fn(), setHeader: jest.fn() };
+    return {
+      getClass: () => KeyRoutes,
+      getHandler: () => KeyRoutes.prototype[method],
+      getType: () => 'http',
+      switchToHttp: () => ({ getRequest: () => req, getResponse: () => res }),
+    } as unknown as ExecutionContext;
+  };
+  const passes = async (guard: CommonThrottlerGuard, make: () => ExecutionContext, count: number): Promise<number> => {
+    let ok = 0;
+    for (let i = 0; i < count; i += 1) {
+      try {
+        if (await guard.canActivate(make())) ok += 1;
+      } catch {
+        // 429
+      }
+    }
+    return ok;
+  };
+
+  it('a verified key on an @ApiScope or @ServiceKeyRoute route is not held to the per-address budget', async () => {
+    const guard = await guardWith(keys({ ctd_relay: 9 }));
+    expect(await passes(guard, () => call('scoped', 'ctd_relay'), 5)).toBe(5);
+    expect(await passes(guard, () => call('billed', 'ctd_relay'), 5)).toBe(5);
+  });
+
+  it('an unknown key, no key, or a valid key on any other route (a login route): the per-address budget applies', async () => {
+    const guard = await guardWith(keys({ ctd_relay: 9 }));
+    expect(await passes(guard, () => call('scoped', 'ctd_forged'), 3)).toBe(1);
+    expect(await passes(guard, () => call('billed'), 3)).toBe(1);
+    expect(await passes(guard, () => call('login', 'ctd_relay'), 3)).toBe(1);
+  });
+
+  it('without a provider able to verify a key without counting it, nothing changes', async () => {
+    const guard = await guardWith({ authenticate: jest.fn(async () => null) });
+    expect(await passes(guard, () => call('scoped', 'ctd_relay'), 3)).toBe(1);
+  });
+});
+
+describe('CommonThrottlerGuard: identities vouched for by a module (ThrottleRegistry.registerIdentity)', () => {
+  const guardWith = async (registry: ThrottleRegistry, authPort?: AuthPort): Promise<CommonThrottlerGuard> => {
+    const config: Record<string, unknown> = { common_throttleDefaultLimit: 1 };
+    const storage = new FailOpenThrottlerStorage({ getClient: () => null });
+    const guard = new CommonThrottlerGuard(buildThrottlerOptions({ get: (k: string) => config[k] }, storage), storage as unknown as ThrottlerStorage, new Reflector(), registry, authPort);
+    await guard.onModuleInit();
+    return guard;
+  };
+  class Ctl {
+    handler(): void {}
+  }
+  const call = (headers: Record<string, string>, ip = '172.23.0.1'): ExecutionContext => {
+    const req = { ip, headers };
+    const res = { header: jest.fn(), setHeader: jest.fn() };
+    return {
+      getClass: () => Ctl,
+      getHandler: () => Ctl.prototype.handler,
+      getType: () => 'http',
+      switchToHttp: () => ({ getRequest: () => req, getResponse: () => res }),
+    } as unknown as ExecutionContext;
+  };
+  const passes = async (guard: CommonThrottlerGuard, make: () => ExecutionContext, count: number): Promise<number> => {
+    let ok = 0;
+    for (let i = 0; i < count; i += 1) {
+      try {
+        if (await guard.canActivate(make())) ok += 1;
+      } catch {
+        // 429
+      }
+    }
+    return ok;
+  };
+
+  it('counts each vouched identity apart from the shared address; user:<id> as given, any other key under id:', async () => {
+    const registry = new ThrottleRegistry();
+    registry.registerIdentity((req) => (req.headers['x-agent'] as string | undefined) ?? null);
+    const guard = await guardWith(registry);
+    expect(await passes(guard, () => call({ 'x-agent': 'user:7' }), 2)).toBe(1);
+    expect(await passes(guard, () => call({ 'x-agent': 'user:8' }), 2)).toBe(1);
+    expect(await passes(guard, () => call({}), 2)).toBe(1);
+    // A key that looks like an address is not that address's bucket.
+    expect(await passes(guard, () => call({ 'x-agent': 'ip:10.9.9.9' }), 1)).toBe(1);
+    expect(await passes(guard, () => call({}, '10.9.9.9'), 1)).toBe(1);
+  });
+
+  it('a throwing resolver, or none answering: the address; a signed-in user wins over any identity', async () => {
+    const registry = new ThrottleRegistry();
+    const resolver = jest.fn(async () => {
+      throw new Error('lookup down');
+    });
+    registry.registerIdentity(resolver);
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const guard = await guardWith(registry);
+      expect(await passes(guard, () => call({}), 2)).toBe(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+    const port = { mode: 'jwt', resolveToken: async () => ({ id: 42 }) } as unknown as AuthPort;
+    const withUser = await guardWith(registry, port);
+    resolver.mockClear();
+    expect(await passes(withUser, () => call({ authorization: 'Bearer a.b.c' }), 1)).toBe(1);
+    expect(resolver).not.toHaveBeenCalled();
+    expect(() => registry.registerIdentity('nope' as never)).toThrow('a function is required');
   });
 });
 

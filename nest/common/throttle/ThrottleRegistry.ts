@@ -21,6 +21,12 @@ export type ThrottleValue = number | ((context: ExecutionContext) => number | Pr
  */
 export type ThrottleTracker = (req: Request, context: ExecutionContext) => string | null | undefined | Promise<string | null | undefined>;
 
+/**
+ * Who a request WITHOUT a signed-in user is, for every budget that would otherwise count it by address: see
+ * {@link ThrottleRegistry.registerIdentity}. The key to count under, or nothing (the address then).
+ */
+export type ThrottleIdentity = (req: Request) => string | null | undefined | Promise<string | null | undefined>;
+
 /** An additional, named throttler of the global limiter. */
 export interface ThrottleRule {
   /** Unique name; `default` is reserved. Decorate a route with `@Throttle({ [name]: { limit, ttl } })` to override it there. */
@@ -77,6 +83,7 @@ export function toThrottlerOptions(rule: ThrottleRule): ThrottlerOptions {
 export class ThrottleRegistry {
   private readonly rules = new Map<string, ThrottlerOptions>();
   private readonly trackers = new Map<string, ThrottleTracker>();
+  private readonly identityResolvers: ThrottleIdentity[] = [];
   private current = 0;
 
   /** Incremented on every registration; the guard re-reads {@link list} when it changes. */
@@ -103,6 +110,24 @@ export class ThrottleRegistry {
 
   list(): ThrottlerOptions[] {
     return [...this.rules.values()];
+  }
+
+  /**
+   * Counts the requests presenting a credential the registering module VERIFIED — not a signed-in user: an API key, a runner —
+   * by that credential instead of their address (all the agents of one machine share an address), for `default` and every rule
+   * without its own tracker. Return `user:<id>` for a credential acting for a user (that user's own budgets: creating more
+   * credentials never adds budget), else a key of your own (counted under `id:<key>`); nothing, or a throw, keeps the address.
+   * Asked in registration order, the first answer wins, on every request without a user: memoise the verification on the
+   * request. Never a key read from an unverified header (a client would pick a fresh bucket per request).
+   */
+  registerIdentity(resolver: ThrottleIdentity): void {
+    if (typeof resolver !== 'function') throw new Error('Throttle identity: a function is required');
+    this.identityResolvers.push(resolver);
+  }
+
+  /** The resolvers of {@link registerIdentity}, in registration order. */
+  identities(): readonly ThrottleIdentity[] {
+    return this.identityResolvers;
   }
 
   /** The tracker of the rule `name`, if it declared one (the guard wraps it with its fallback). */

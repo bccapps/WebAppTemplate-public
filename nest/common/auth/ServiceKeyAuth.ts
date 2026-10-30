@@ -37,6 +37,12 @@ export interface ServiceKeyAuthenticator {
    * an invalid / revoked / expired key, 403 when the key lacks `scope`, 429 when it is over its rate limit.
    */
   authenticate(req: ServiceKeyRequest, scope: string): Promise<ServicePrincipal | null>;
+  /**
+   * Optional, for the rate limiter of `common` (`CommonThrottlerGuard`): the id of the service key the request carries when
+   * it is a real, active, unexpired one — else null. Never throws and never counts the call (that stays `authenticate`'s,
+   * or the provider's own route guard's); the lookup is made once per request and reused by them.
+   */
+  verifiedKeyId?(req: ServiceKeyRequest): Promise<number | null>;
 }
 
 /** The service principal `GlobalAuthInterceptor` attached to the request, if any. */

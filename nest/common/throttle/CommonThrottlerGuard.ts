@@ -16,6 +16,8 @@ import { AUTH_PORT, type AuthPort } from '../auth/AuthPort';
 import { extractBearerToken, resolveTokenOnce, type AuthRequest } from '../auth/authRequest';
 import type { AuthPrincipal } from '../auth/AuthPrincipal';
 import type { LocalTrustRequest } from '../auth/localTrust';
+import { SERVICE_KEY_AUTH, type ServiceKeyAuthenticator, type ServiceKeyRequest } from '../auth/ServiceKeyAuth';
+import { API_SCOPE_KEY, SERVICE_KEY_ROUTE_KEY } from '../decorators/ApiScope';
 import { RateLimitedLog } from '../utils/rateLimitedLog';
 import { ThrottleRegistry, type ThrottleTracker } from './ThrottleRegistry';
 
@@ -26,6 +28,7 @@ import { ThrottleRegistry, type ThrottleTracker } from './ThrottleRegistry';
  * itself through `AUTH_PORT` (the global auth interceptor runs after the guards, so `req.user` is not set yet), and
  * the interceptor reuses that result. Controllers opt out with `@SkipThrottle()`; a route sets its own budget with
  * `@Throttle({ default: { limit, ttl } })`, counted apart from the other routes (the storage key includes the handler).
+ * A VERIFIED service key on a route that accepts one (`@ApiScope`, `@ServiceKeyRoute`) is left to its own rate limit.
  */
 @Injectable()
 export class CommonThrottlerGuard extends ThrottlerGuard {
@@ -45,6 +48,7 @@ export class CommonThrottlerGuard extends ThrottlerGuard {
     reflector: Reflector,
     private readonly registry: ThrottleRegistry,
     @Optional() @Inject(AUTH_PORT) private readonly authPort?: AuthPort,
+    @Optional() @Inject(SERVICE_KEY_AUTH) private readonly serviceKeys?: ServiceKeyAuthenticator,
   ) {
     super(options, storageService, reflector);
   }
@@ -55,18 +59,37 @@ export class CommonThrottlerGuard extends ThrottlerGuard {
     this.syncedVersion = -1;
   }
 
-  protected override async shouldSkip(_context: ExecutionContext): Promise<boolean> {
+  protected override async shouldSkip(context: ExecutionContext): Promise<boolean> {
     if (this.syncedVersion !== this.registry.version) {
       this.throttlers = [...this.baseThrottlers, ...this.registry.list().map((throttler) => this.withRuleTracker(throttler))];
       this.syncedVersion = this.registry.version;
     }
-    return false;
+    return this.governedByServiceKey(context);
+  }
+
+  /**
+   * A route that accepts service keys (`@ApiScope`, `@ServiceKeyRoute` — `api-access`'s `@ApiCredit`) called with a VERIFIED key:
+   * the key's own rate limit governs it (`api-access`: `rateLimitPerMin` per key), not these per-user / per-address budgets — a
+   * consumer back-end serving all its users from one address would otherwise share one budget (2026-10-30). An absent, unknown,
+   * revoked or expired key, or any other route (a login route, say): counted as usual. Without a provider able to verify a key
+   * without counting it (`verifiedKeyId`), nothing changes.
+   */
+  private async governedByServiceKey(context: ExecutionContext): Promise<boolean> {
+    if (!this.serviceKeys?.verifiedKeyId) return false;
+    const targets = [context.getHandler(), context.getClass()];
+    const keyRoute = this.reflector.getAllAndOverride<string | undefined>(API_SCOPE_KEY, targets)
+      || this.reflector.getAllAndOverride<boolean | undefined>(SERVICE_KEY_ROUTE_KEY, targets);
+    if (!keyRoute) return false;
+    const req = context.switchToHttp().getRequest<ServiceKeyRequest>();
+    return (await this.serviceKeys.verifiedKeyId(req)) !== null;
   }
 
   protected override async getTracker(req: Record<string, unknown>): Promise<string> {
     const principal = (req as AuthRequest).user ?? (await this.resolvePrincipal(req));
     const userId = principal?.id;
     if (userId !== undefined && userId !== null) return `user:${String(userId)}`;
+    const identity = await this.resolveIdentity(req);
+    if (identity) return identity;
     // `req.ip` (TRUST_PROXY decides what it is), normalized by @nestjs/throttler: an IPv6 client counts per /64 (it
     // would otherwise rotate addresses inside its own prefix), an IPv4-mapped address as plain IPv4.
     const ip = await super.getTracker(req);
@@ -90,6 +113,23 @@ export class CommonThrottlerGuard extends ThrottlerGuard {
       this.trackerFailures.log(name, `[CommonThrottlerGuard] tracker of throttle rule "${name}" failed (${reason}): counting by user/IP`);
     }
     return this.getTracker(req);
+  }
+
+  /**
+   * The identity a module vouches for (`ThrottleRegistry.registerIdentity`): `user:<id>` as given, any other key under `id:` (never
+   * mistaken for an address or a rule key); null — so the address — when none answers or one throws (logged at most once a minute).
+   */
+  private async resolveIdentity(req: Record<string, unknown>): Promise<string | null> {
+    for (const resolver of this.registry.identities()) {
+      try {
+        const key = await resolver(req as unknown as Request);
+        if (typeof key === 'string' && key.length > 0) return /^user:[^:]+$/.test(key) ? key : `id:${key}`;
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        this.trackerFailures.log('identity', `[CommonThrottlerGuard] a throttle identity resolver failed (${reason}): counting by address`);
+      }
+    }
+    return null;
   }
 
   /** The principal of the request without touching it; `null` (so: the IP) for a missing or rejected credential. */

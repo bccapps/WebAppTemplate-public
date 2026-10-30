@@ -842,6 +842,11 @@ retiré ; une ligne restée en base n'a plus d'effet). Ses budgets se règlent d
 | `common_throttleDefaultLimit` | `300` | requêtes par identité et par fenêtre |
 | `common_throttleDefaultTtlMs` | `60000` | fenêtre, en ms |
 
+- **Clés de service** (2026-10-30) : sur une route qui accepte une clé de service (`@ApiScope(scope)`, ou `@ServiceKeyRoute()` que pose
+  l'`@ApiCredit` d'`api-access`), une requête dont la clé est **vérifiée** par le fournisseur `SERVICE_KEY_AUTH` (méthode optionnelle
+  `verifiedKeyId` : une recherche, rien de décompté, réutilisée ensuite par le fournisseur) n'est pas comptée ici : la limite propre de
+  la clé la gouverne (un back consommateur sert tous ses utilisateurs depuis une adresse). Clé absente, inconnue, révoquée, fournisseur
+  sans `verifiedKeyId`, ou toute autre route (une route de connexion) : comptée comme d'habitude.
 - **Identité** : l'utilisateur authentifié (`user:<id>`) sinon l'adresse IP (`ip:<adresse>`, `req.ip` : voir « IP du client derrière les proxys » ;
   normalisée par `@nestjs/throttler` : un client IPv6 compte par /64, une adresse IPv4 mappée en IPv6 comme l'IPv4). La garde
   s'exécute **avant** l'intercepteur d'auth global (`req.user` n'est donc pas encore posé) : elle résout elle-même le principal par
@@ -877,6 +882,14 @@ retiré ; une ligne restée en base n'a plus d'effet). Ses budgets se règlent d
   ```
 
   Sans `paths` ni `skipIf`, la règle s'applique à toutes les routes.
+
+  **Identité d'une requête sans utilisateur** (`registry.registerIdentity(resolver)`, 2026-10-30) : un module qui a VÉRIFIÉ un
+  identifiant présenté par la requête (clé d'API, runner) la fait compter sous cet identifiant au lieu de son adresse, pour `default`
+  et toute règle sans tracker propre — tous les clients d'une machine (ou d'une passerelle Docker) partagent sinon une adresse. Le
+  résolveur rend `user:<id>` pour un identifiant qui agit pour un utilisateur (les budgets de cet utilisateur : multiplier les
+  identifiants n'en ajoute pas), sinon une clé à lui (comptée sous `id:<clé>`, jamais confondue avec une adresse) ; rien, ou une
+  exception (journalisée au plus une fois par minute) : l'adresse. Un utilisateur connecté passe avant. Appelé sur chaque requête
+  sans utilisateur, pour chaque budget : mémoriser la vérification sur la requête. Exemple : `agentApiKeyIdentity` d'AgentHub.
 
   **Clé de comptage propre à une règle** (`tracker?: ThrottleTracker`, optionnel, 2026-10-29) : par défaut une règle compte, comme
   `default`, par utilisateur authentifié sinon par IP. Une règle peut compter par autre chose (clé d'API, runner) :
