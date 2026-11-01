@@ -48,6 +48,23 @@ export type SendEmailResult = {
  */
 export const SMTP_TIMEOUTS = { connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 30_000 } as const;
 
+const EMAIL_IN_TEXT = /([^\s<>,;:"'()@]+)@([^\s<>,;:"'()@]+)/g;
+
+/**
+ * Personal data stays out of the logs: every e-mail address in `text` keeps its first character and its domain only
+ * (`jean.dupont@example.fr` -> `j***@example.fr`). Used for the recipients and for transport error messages, which
+ * often quote the rejected address.
+ */
+export function maskEmailAddresses(text: string): string {
+  return text.replace(EMAIL_IN_TEXT, (_match, local: string, domain: string) => `${local.charAt(0)}***@${domain}`);
+}
+
+/** Masked recipient list for a log line: the addresses only (display names dropped), or `***` when none is found. */
+export function maskRecipients(to: string): string {
+  const addresses = to.match(EMAIL_IN_TEXT);
+  return addresses ? addresses.map(maskEmailAddresses).join(', ') : '***';
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -209,11 +226,11 @@ export class EmailService {
         headers: options?.headers,
         attachments: options?.attachments,
       });
-      this.logger.log(`Email sent to ${to}, messageId: ${info.messageId}`);
+      this.logger.log(`Email sent to ${maskRecipients(to)}, messageId: ${info.messageId}`);
       return { success: true, messageId: info.messageId, response: info.response };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Failed to send email to ${to}: ${errorMsg}`);
+      this.logger.error(`Failed to send email to ${maskRecipients(to)}: ${maskEmailAddresses(errorMsg)}`);
       return { success: false, error: errorMsg };
     }
   }
