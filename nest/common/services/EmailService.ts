@@ -41,6 +41,13 @@ export type SendEmailResult = {
   error?: string;
 };
 
+/**
+ * nodemailer waits 2 minutes to connect and 10 minutes on an idle socket: an unreachable relay (firewall dropping the packets) kept the
+ * calling request open until the proxy cut it with a 504, which the browser reports as a CORS error. Short bounds make the send fail
+ * with a real, logged error while the request is still answerable.
+ */
+export const SMTP_TIMEOUTS = { connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 30_000 } as const;
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -86,7 +93,7 @@ export class EmailService {
    * against, so we cap ourselves conservatively and treat the relay's own 4xx
    * responses as the real back-pressure signal.
    */
-  private getPoolOptions(): { pool: true; maxConnections: number; maxMessages: number; rateDelta: number; rateLimit: number } {
+  private getPoolOptions(): typeof SMTP_TIMEOUTS & { pool: true; maxConnections: number; maxMessages: number; rateDelta: number; rateLimit: number } {
     const maxConnections = parseInt(this.getConfigValue('common_email_maxConnections'), 10) || 5;
     const ratePerSecond = parseInt(this.getConfigValue('common_email_ratePerSecond'), 10) || 10;
     return {
@@ -95,6 +102,7 @@ export class EmailService {
       maxMessages: Infinity,
       rateDelta: 1000,
       rateLimit: ratePerSecond,
+      ...SMTP_TIMEOUTS,
     };
   }
 
