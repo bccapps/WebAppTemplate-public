@@ -162,7 +162,18 @@ describe('PrivateStorageService', () => {
       expect(await service.get('invoices/missing.pdf')).toBeNull();
 
       s3.send.mockRejectedValueOnce(Object.assign(new Error('denied'), { name: 'AccessDenied' }) as never);
-      await expect(service.get('invoices/x.pdf')).rejects.toThrow('denied');
+      await expect(service.get('invoices/x.pdf')).rejects.toThrow(/get "invoices\/x\.pdf", bucket "private-bucket"\) : AccessDenied — denied/);
+    });
+
+    it('put and remove wrap S3 failures with the operation, bucket and S3 error code', async () => {
+      const service = buildService(r2Values);
+      s3.send.mockRejectedValueOnce(Object.assign(new Error('Access Denied'), { name: 'AccessDenied' }) as never);
+      await expect(service.put('k/a', Buffer.from('x'), 'text/plain')).rejects.toThrow(
+        /put "k\/a", bucket "private-bucket"\) : AccessDenied — Access Denied/,
+      );
+
+      s3.send.mockRejectedValueOnce(Object.assign(new Error('missing'), { name: 'NoSuchBucket' }) as never);
+      await expect(service.remove('k/a')).rejects.toThrow(/remove "k\/a".*NoSuchBucket/);
     });
 
     it('remove sends DeleteObjectCommand', async () => {

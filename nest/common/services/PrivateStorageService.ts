@@ -88,11 +88,26 @@ export class PrivateStorageService {
     return path.join(root, key);
   }
 
+  /** Runs an R2 call; any S3 failure becomes a `FunctionalException` naming the operation, bucket, S3 error code and message. */
+  private async r2<T>(op: string, bucket: string, key: string, call: () => Promise<T>): Promise<T> {
+    try {
+      return await call();
+    } catch (err) {
+      const { name, message } = err as { name?: string; message?: string };
+      throw new FunctionalException(
+        'STO',
+        `Stockage privé R2 (${op} "${key}", bucket "${bucket}") : ${name ?? 'Error'} — ${message ?? 'erreur inconnue'}`,
+      );
+    }
+  }
+
   async put(key: string, body: Buffer, contentType: string): Promise<void> {
     this.assertKey(key);
     if (this.getProvider() === 'r2') {
       const { client, bucket } = this.getS3Client();
-      await client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType }));
+      await this.r2('put', bucket, key, () =>
+        client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType })),
+      );
       return;
     }
     const absPath = this.localPath(key);
@@ -105,13 +120,15 @@ export class PrivateStorageService {
     this.assertKey(key);
     if (this.getProvider() === 'r2') {
       const { client, bucket } = this.getS3Client();
-      try {
-        const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-        return res.Body ? Buffer.from(await res.Body.transformToByteArray()) : null;
-      } catch (err) {
-        if ((err as { name?: string }).name === 'NoSuchKey') return null;
-        throw err;
-      }
+      return this.r2('get', bucket, key, async () => {
+        try {
+          const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+          return res.Body ? Buffer.from(await res.Body.transformToByteArray()) : null;
+        } catch (err) {
+          if ((err as { name?: string }).name === 'NoSuchKey') return null;
+          throw err;
+        }
+      });
     }
     return fs.readFile(this.localPath(key)).catch(() => null);
   }
@@ -121,7 +138,7 @@ export class PrivateStorageService {
     this.assertKey(key);
     if (this.getProvider() === 'r2') {
       const { client, bucket } = this.getS3Client();
-      await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+      await this.r2('remove', bucket, key, () => client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })));
       return;
     }
     await fs.unlink(this.localPath(key)).catch(() => undefined);
