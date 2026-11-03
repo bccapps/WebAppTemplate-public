@@ -102,7 +102,8 @@ export interface ResolvedHttpAppOptions {
   corsOriginPolicy?: CorsOriginPolicy;
 }
 
-const BASE_CORS_HEADERS = ['Content-Type', 'Authorization', 'x-crypt-session', 'x-crypt-accept-encoding'];
+/** `Last-Event-ID`: sent by the front `EventStreamClient` when it resumes `/events/stream` (the preflight must allow it). */
+const BASE_CORS_HEADERS = ['Content-Type', 'Authorization', 'x-crypt-session', 'x-crypt-accept-encoding', 'Last-Event-ID'];
 const DEFAULT_VALIDATION: ValidationOptions = { whitelist: true, transform: true };
 /** `/webhooks` keeps the routes that the former substring match (`/webhook`) reached, e.g. `wallet-intelligence/webhooks/…`. */
 const DEFAULT_RAW_BODY_PATHS = ['/webhook', '/webhooks'];

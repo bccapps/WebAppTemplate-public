@@ -125,13 +125,13 @@ describe('resolveHttpAppOptions', () => {
 describe('resolveHttpAppOptions (headers and validation)', () => {
   it('defaults to the built-in headers and the whitelist + transform pipe', () => {
     const r = resolveHttpAppOptions({}, { FRONT_PORT: '1' });
-    expect(r.allowedHeaders).toEqual(['Content-Type', 'Authorization', 'x-crypt-session', 'x-crypt-accept-encoding']);
+    expect(r.allowedHeaders).toEqual(['Content-Type', 'Authorization', 'x-crypt-session', 'x-crypt-accept-encoding', 'Last-Event-ID']);
     expect(r.validation).toEqual({ whitelist: true, transform: true });
   });
 
   it('appends extra headers without duplicates and honours validation: false', () => {
     const r = resolveHttpAppOptions({ extraCorsHeaders: ['x-company-id', ' Authorization ', ''], validation: false }, { FRONT_PORT: '1' });
-    expect(r.allowedHeaders).toEqual(['Content-Type', 'Authorization', 'x-crypt-session', 'x-crypt-accept-encoding', 'x-company-id']);
+    expect(r.allowedHeaders).toEqual(['Content-Type', 'Authorization', 'x-crypt-session', 'x-crypt-accept-encoding', 'Last-Event-ID', 'x-company-id']);
     expect(r.validation).toBe(false);
   });
 });
