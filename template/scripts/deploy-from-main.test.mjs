@@ -61,7 +61,8 @@ const STUBS = {
   npm: '#!/usr/bin/env bash\necho "npm $* @ $(pwd -P)" >> "$STUB_LOG"\nif [ "$1 $2" = "run build" ]; then mkdir -p dist && echo built > dist/main.js; fi\nexit 0\n',
   npx: '#!/usr/bin/env bash\necho "npx $*" >> "$STUB_LOG"\nexit 0\n',
   curl: '#!/usr/bin/env bash\nexit 0\n',
-  envsubst: '#!/usr/bin/env bash\ncat\n',
+  // `--variables` is asked by git's own scripts (eval_gettext in git-sh-setup, when gettext is installed): answer nothing, not the input.
+  envsubst: '#!/usr/bin/env bash\n[ "$1" = "--variables" ] && exit 0\ncat\n',
 };
 
 function write(file, content, mode) {
