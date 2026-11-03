@@ -124,13 +124,6 @@ dfm_assert_exact_tree() {
   dirty="$(git -C "${DFM_TREE}" status --porcelain --ignore-submodules=none 2>&1 || echo 'git status failed')"
   if [[ -n "${subs}" || -n "${dirty}" ]]; then
     err "The clean tree is not exactly origin/main ${DFM_SHA}:"
-    # TEMP-DIAG (ci-debug-submodule-export): find out what makes git-submodule fail on the CI runner.
-    {
-      echo "TEMP-DIAG git: $(git --version) | sh -> $(readlink -f /bin/sh) | exec-path $(git --exec-path)"
-      echo "TEMP-DIAG git-submodule lines 80-95:"; sed -n '80,95p' "$(git --exec-path)/git-submodule" 2>&1 | cat -A | head -20
-      echo "TEMP-DIAG env:"; env | sort | cut -c1-200
-      echo "TEMP-DIAG traced run:"; GIT_TRACE=1 sh -x "$(git --exec-path)/git-submodule" status --recursive 2>&1 </dev/null | tail -40
-    } >&2 || true
     printf '%s\n%s\n' "${subs}" "${dirty}" | sed -e '/^$/d' -e 's/^/    /' >&2
     return 1
   fi
