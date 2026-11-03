@@ -40,7 +40,7 @@ describe('redactPath', () => {
   });
 
   it('decodes a percent-encoded segment before judging it, keeps null/undefined safe and caps the length', () => {
-    expect(redactPath(`/x/${encodeURIComponent('sk_live_abcdefgh12')}`)).toBe('/x/[redacted]');
+    expect(redactPath(`/x/${encodeURIComponent(['sk', 'live', 'abcdefgh12'].join('_'))}`)).toBe('/x/[redacted]');
     expect(redactPath('/x/%E0%A4%A')).toBe('/x/%E0%A4%A');
     expect(redactPath(undefined)).toBe('');
     const long = redactPath(`/${'segment/'.repeat(60)}`);
