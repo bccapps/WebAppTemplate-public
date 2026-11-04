@@ -63,6 +63,20 @@ test('the user module, a Postgres-only module and a missing requirement are refu
   assert.ok(llm.some((e) => /"llm-client".*requires "oauth"/.test(e)));
 });
 
+test('the user module is accepted only when the variant opts in with allowModules', () => {
+  const list = { nestcommon: ['common', 'user'], reactcommon: ['common'] };
+  assert.ok(checkVariantModules(list, reader).some((e) => /"user" module/.test(e)));
+  assert.ok(!checkVariantModules(list, reader, { allowModules: ['user'] }).some((e) => /"user" module/.test(e)));
+  // Opting in changes nothing else: the other rules (SQLite support, requirements) still apply.
+  assert.ok(checkVariantModules({ nestcommon: ['common', 'llm-client'], reactcommon: ['common'] }, reader, { allowModules: ['user'] }).some((e) => /requires "oauth"/.test(e)));
+});
+
+test('allowModules is normalized: a list of ids, merged with the descriptor', () => {
+  assert.deepEqual(normalizeVariant({ sharedModules: 'a.json', allowModules: ['user', 'user'] }).allowModules, ['user']);
+  assert.equal(normalizeVariant('a.json').allowModules, undefined);
+  assert.throws(() => normalizeVariant({ sharedModules: 'a.json', allowModules: 'user' }), /allowModules/);
+});
+
 test('a variant needs a back module list; unknown modules are left to the build', () => {
   assert.ok(checkVariantModules({ reactcommon: ['common'] }, reader).some((e) => /no "nestcommon" list/.test(e)));
   assert.deepEqual(checkVariantModules({ nestcommon: ['mystery'], reactcommon: [] }, reader), []);

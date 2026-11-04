@@ -17,7 +17,8 @@
  *   "desktop": { "enabled": true, ..., "variant": {
  *       "sharedModules": "shared-modules.desktop.json",                       // same format as shared-modules.json
  *       "packageLocal": { "back": "back/package.local.desktop.json" },         // optional overlays merged onto package.local.json
- *       "prune": ["back/src/modules/app/llm"]                                  // optional folders deleted from the staged sources
+ *       "prune": ["back/src/modules/app/llm"],                                 // optional folders deleted from the staged sources
+ *       "allowModules": ["user"]                                               // optional: modules the variant may list although refused by default (`user`)
  *   } }                                                                        //   (code that needs a module the variant does not ship)
  *
  * `<stack>/package.local.desktop.json` is picked up as the overlay of that stack when it exists (no declaration needed).
@@ -73,10 +74,14 @@ export function normalizeVariant(raw) {
     }
   }
   if (spec.prune !== undefined && !Array.isArray(spec.prune)) throw new Error('desktop.variant.prune must be a list of paths');
+  if (spec.allowModules !== undefined && (!Array.isArray(spec.allowModules) || spec.allowModules.some((id) => typeof id !== 'string' || !id))) {
+    throw new Error('desktop.variant.allowModules must be a list of module ids');
+  }
   const variant = {
     ...(spec.sharedModules !== undefined ? { sharedModules: relativePath(spec.sharedModules, 'sharedModules') } : {}),
     packageLocal,
     prune: (spec.prune ?? []).map((p, i) => relativePath(p, `prune[${i}]`)),
+    ...(spec.allowModules?.length ? { allowModules: [...new Set(spec.allowModules)] } : {}),
   };
   if (spec.descriptor !== undefined) variant.descriptor = relativePath(spec.descriptor, 'descriptor');
   return variant;
@@ -123,6 +128,7 @@ function resolveDeclared(root, variant) {
     sharedModules,
     packageLocal: { ...described.packageLocal, ...variant.packageLocal },
     prune: [...new Set([...described.prune, ...variant.prune])],
+    ...(described.allowModules || variant.allowModules ? { allowModules: [...new Set([...(described.allowModules ?? []), ...(variant.allowModules ?? [])])] } : {}),
     descriptor: variant.descriptor,
     env: isPlainObject(env) ? env : {},
   };
@@ -158,7 +164,7 @@ export function readProjectVariant(root) {
  * modules that support SQLite (`databases` absent, or containing `sqlite`) and every `requires` of a listed module
  * present in the same list.
  */
-export function checkVariantModules(sharedModules, readManifest) {
+export function checkVariantModules(sharedModules, readManifest, { allowModules = [] } = {}) {
   const errors = [];
   for (const [stack, { key }] of Object.entries(STACKS)) {
     const list = Array.isArray(sharedModules) ? sharedModules : sharedModules?.[key];
@@ -167,7 +173,7 @@ export function checkVariantModules(sharedModules, readManifest) {
       continue;
     }
     const ids = list.map(String);
-    if (ids.includes('user')) errors.push(`the variant lists the "user" module in ${key}: a desktop variant must not use it (the shell runs the back in local trust mode)`);
+    if (ids.includes('user') && !allowModules.includes('user')) errors.push(`the variant lists the "user" module in ${key}: a desktop variant must not use it (the shell runs the back in local trust mode; a variant that really needs it, e.g. for rows keyed by a user, declares "allowModules": ["user"])`);
     for (const id of ids) {
       const manifest = readManifest(stack, id);
       if (!manifest) continue;
@@ -216,7 +222,7 @@ export function variantProblems(root, declared) {
   } catch (error) {
     return [`${variant.sharedModules} is not valid JSON: ${error.message}`];
   }
-  const errors = checkVariantModules(parsed, manifestReader(root));
+  const errors = checkVariantModules(parsed, manifestReader(root), { allowModules: variant.allowModules });
   for (const [stack, rel] of Object.entries(variant.packageLocal)) {
     if (!existsSync(path.join(root, rel))) errors.push(`${rel} (desktop.variant.packageLocal.${stack}) does not exist`);
   }

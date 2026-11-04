@@ -169,7 +169,8 @@ same application built with another set of shared modules (no `user`, nothing Po
 { "desktop": { "enabled": true, "variant": {
     "sharedModules": "shared-modules.desktop.json",          // same format as shared-modules.json
     "packageLocal": { "front": "front/package.local.desktop.json" },   // optional (see below)
-    "prune": ["back/src/modules/app/llm"]                    // optional: folders deleted from the STAGED sources
+    "prune": ["back/src/modules/app/llm"],                   // optional: folders deleted from the STAGED sources
+    "allowModules": ["user"]                                 // optional: lets the variant list `user` (see Validation)
 } } }
 ```
 
@@ -178,7 +179,10 @@ The same fields can be written in a descriptor file instead (`"variant": { "desc
 before the wizard). Explicit fields win over the descriptor. `<stack>/package.local.desktop.json`, when it exists, is the overlay of
 that stack without any declaration.
 
-- **Validation** (`add-desktop.mjs`, `node scripts/desktop/variant.mjs check`): the module list has no `user`; every listed module
+- **Validation** (`add-desktop.mjs`, `node scripts/desktop/variant.mjs check`): the module list has no `user` (unless the variant opts in
+  with `"allowModules": ["user"]`: for an app whose rows are keyed by a `user` row — e.g. `llm-client`'s per-user accesses — that provides its
+  own local-trust authentication provider; the shell still runs the back with `LOCAL_TRUST=true`, nobody signs in, and every other rule below
+  still applies); every listed module
   supports SQLite (`databases` absent or containing `sqlite` in its `module.json`); every `requires` of a listed module is listed;
   the files named by the variant exist. Without a variant the historical refusal stays (and now points at the variant).
   `node scripts/add-desktop.mjs --variant <file>` declares it from the command line (a descriptor or a module list).
