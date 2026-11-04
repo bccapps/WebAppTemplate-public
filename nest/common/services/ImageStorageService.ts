@@ -10,7 +10,7 @@
 /// <reference types="multer" />
 
 import { Injectable, Logger } from '@nestjs/common';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { FunctionalException } from '../exceptions/FunctionalException';
@@ -193,5 +193,47 @@ export class ImageStorageService {
     const ext = path.extname(absPath).toLowerCase();
     const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
     return { absolutePath: absPath, mimeType };
+  }
+
+  /**
+   * Deletes a stored image wherever this service may have written it: the local-disk file (provider
+   * `local`, or written before a switch to R2) and, when the provider is `r2`, the bucket object (its
+   * public URL stops serving it; a CDN may keep a cached copy until its `cache-control` expires).
+   * An absent file or object is not an error. `filename` is a bare name, never a path. Both places
+   * are always tried; a failure (incomplete R2 credentials, network, permission) is thrown afterwards.
+   */
+  async remove(namespace: string, filename: string): Promise<void> {
+    if (!filename || filename !== path.basename(filename) || filename === '.' || filename === '..' || filename.includes('\\')) {
+      throw new FunctionalException('IMG', 'Nom de fichier invalide');
+    }
+    let localFailure: NodeJS.ErrnoException | null = null;
+    try {
+      await fs.unlink(path.join(path.resolve(this.resolveSharedDir(), namespace), filename));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') localFailure = error as NodeJS.ErrnoException;
+    }
+    if (this.getProvider() === 'r2') {
+      const { client, bucket } = this.getS3Client();
+      await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: `${namespace}/${filename}` }));
+    }
+    if (localFailure) throw localFailure;
+  }
+
+  /**
+   * Deletes `${baseName}${extension}` for every supported image format, for a caller with a
+   * deterministic name (`write(namespace, baseName, …)`): it does not know the format stored, and a
+   * re-upload in another format left the previous file in place. Every format is tried; the first
+   * failure is thrown afterwards.
+   */
+  async removeAllFormats(namespace: string, baseName: string): Promise<void> {
+    const failures: unknown[] = [];
+    for (const extension of new Set(Object.values(IMAGE_MIME_EXTENSIONS))) {
+      try {
+        await this.remove(namespace, `${baseName}${extension}`);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length) throw failures[0];
   }
 }

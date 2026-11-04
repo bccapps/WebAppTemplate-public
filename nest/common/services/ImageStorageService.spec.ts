@@ -18,12 +18,15 @@ jest.mock('@aws-sdk/client-s3', () => {
     send,
     S3Client: jest.fn().mockImplementation((config: unknown) => ({ send, config })),
     PutObjectCommand: jest.fn().mockImplementation((input: unknown) => ({ input })),
+    DeleteObjectCommand: jest.fn().mockImplementation((input: unknown) => ({ input })),
   };
 });
 
-const { S3Client, PutObjectCommand } = jest.requireMock('@aws-sdk/client-s3') as {
+const { S3Client, PutObjectCommand, DeleteObjectCommand, send } = jest.requireMock('@aws-sdk/client-s3') as {
   S3Client: jest.Mock;
   PutObjectCommand: jest.Mock;
+  DeleteObjectCommand: jest.Mock;
+  send: jest.Mock;
 };
 
 import { ImageStorageService } from './ImageStorageService';
@@ -79,6 +82,37 @@ describe('ImageStorageService', () => {
       const result = await service.read('user-inline', filename);
 
       expect(result?.mimeType).toBe('image/webp');
+    });
+
+    it('remove() deletes the file; an absent file is not an error', async () => {
+      const service = buildService({});
+      const filename = await service.write('user-avatar', 'rm-1', buildFile());
+
+      await service.remove('user-avatar', filename);
+      await service.remove('user-avatar', filename);
+
+      expect(await service.read('user-avatar', filename)).toBeNull();
+      expect(S3Client).not.toHaveBeenCalled();
+    });
+
+    it('remove() refuses anything but a bare file name', async () => {
+      const service = buildService({});
+      for (const name of ['', '.', '..', '../secret.png', 'a/b.png', 'a\\b.png']) {
+        await expect(service.remove('user-avatar', name)).rejects.toThrow(/invalide/);
+      }
+    });
+
+    it('removeAllFormats() deletes every format stored under a deterministic name, and only those', async () => {
+      const service = buildService({});
+      await service.write('user-avatar', '42', buildFile({ mimetype: 'image/png' }));
+      await service.write('user-avatar', '42', buildFile({ mimetype: 'image/webp' }));
+      await service.write('user-avatar', '421', buildFile({ mimetype: 'image/png' }));
+
+      await service.removeAllFormats('user-avatar', '42');
+
+      expect(await service.read('user-avatar', '42.png')).toBeNull();
+      expect(await service.read('user-avatar', '42.webp')).toBeNull();
+      expect(await service.read('user-avatar', '421.png')).not.toBeNull();
     });
   });
 
@@ -152,6 +186,38 @@ describe('ImageStorageService', () => {
       const service = buildService({ common_storage_provider: 'r2', common_storage_r2_bucket: 'my-bucket' });
 
       await expect(service.write('user-inline', 'incomplete', buildFile())).rejects.toThrow(/identifiants/);
+    });
+
+    it('remove() deletes the bucket object and a local copy written before the switch to R2', async () => {
+      const localCopy = await buildService({}).write('user-avatar', 'switched', buildFile());
+      const service = buildService(r2Values);
+
+      await service.remove('user-avatar', localCopy);
+
+      expect(DeleteObjectCommand).toHaveBeenCalledWith({ Bucket: 'my-bucket', Key: 'user-avatar/switched.png' });
+      await expect(fs.access(path.join(tmpDir, 'user-avatar', localCopy))).rejects.toThrow();
+    });
+
+    it('removeAllFormats() deletes the object of every format', async () => {
+      const service = buildService(r2Values);
+
+      await service.removeAllFormats('user-avatar', '7');
+
+      expect(DeleteObjectCommand.mock.calls.map(([input]) => (input as { Key: string }).Key)).toEqual([
+        'user-avatar/7.png',
+        'user-avatar/7.jpg',
+        'user-avatar/7.webp',
+      ]);
+    });
+
+    it('removeAllFormats() tries every format, then throws the failure', async () => {
+      const service = buildService(r2Values);
+      send.mockImplementationOnce(async () => {
+        throw new Error('network down');
+      });
+
+      await expect(service.removeAllFormats('user-avatar', '8')).rejects.toThrow('network down');
+      expect(DeleteObjectCommand).toHaveBeenCalledTimes(3);
     });
   });
 });
