@@ -18,7 +18,8 @@
  * No locations file = nothing to do. A locations file but no marker (an app-owned nginx.conf without it) = exit 1.
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const APP_LOCATIONS_MARKER = /^[ \t]*# @app-locations\b.*$/m;
@@ -47,4 +48,8 @@ function main([nginxFile, locationsFile]) {
   return 0;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) process.exit(main(process.argv.slice(2)));
+// Compare REAL paths: a project's root `scripts/` is a symlink into `.libs/`, so `import.meta.url` (symlinks
+// resolved) and `process.argv[1]` (as invoked) differ there; a plain `===` made the CLI exit 0 without merging.
+if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(path.resolve(process.argv[1]))) {
+  process.exit(main(process.argv.slice(2)));
+}

@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,4 +43,17 @@ test('CLI: no locations file is a no-op, a merge rewrites nginx.conf', () => {
   assert.equal(run().status, 0);
   assert.match(readFileSync(conf, 'utf8'), /location \/api\/x\//);
   assert.equal(run().status, 1, 'marker already consumed: a second merge fails loudly');
+});
+
+test('CLI run through a symlinked scripts/ directory (as in a project) really merges instead of exiting 0 silently', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'nginx-link-'));
+  const linkedScripts = path.join(dir, 'scripts');
+  symlinkSync(HERE, linkedScripts);
+  const conf = path.join(dir, 'nginx.conf');
+  const locations = path.join(dir, 'nginx.locations.conf');
+  writeFileSync(conf, CONF);
+  writeFileSync(locations, LOCATIONS);
+  const result = spawnSync('node', [path.join(linkedScripts, 'merge-nginx-locations.mjs'), conf, locations], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(readFileSync(conf, 'utf8'), /location \/api\/x\//, 'locations were merged');
 });
