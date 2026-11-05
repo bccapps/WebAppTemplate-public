@@ -66,6 +66,16 @@ dv_compute_revision() {
   printf 'unknown'
 }
 
+# The back's public base URL from the front's API URL (`VITE_API_URL`): `https://api.example.com/api/v1/` -> `https://api.example.com`.
+# Prints nothing when it is not an absolute http(s) URL (a relative `/api/v1` front reaches its back through its own origin).
+dv_public_api_url() {
+  local url="$1"
+  [[ "${url}" =~ ^https?://[^/]+ ]] || return 0
+  url="${url%%\?*}"
+  while [[ "${url}" == */ ]]; do url="${url%/}"; done
+  printf '%s' "${url%/api/v1}"
+}
+
 # Sets KEY=value in an env file (replaces an existing line). Portable across BSD and GNU sed.
 dv_env_set() {
   local file="$1" key="$2" value="$3"

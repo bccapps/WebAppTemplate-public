@@ -1261,6 +1261,12 @@ if [[ "${DEPLOY_TARGET}" != "front" ]]; then
   sync_file_into_context "${BACK_ENV_FILE}" "${BUILD_CONTEXT_DIR}/back/.env"
   stage_back_env_preprod "${BUILD_CONTEXT_DIR}/back/.env"
   dv_env_set "${BUILD_CONTEXT_DIR}/back/.env" "DEPLOY_REVISION" "${DEPLOY_REVISION}"
+  # PUBLIC_API_URL: the back's public base URL, derived from the front's VITE_API_URL, for an app that hands its own address out
+  # (MCP, callbacks…) without a second setting; a non-empty value already in the back env wins.
+  PUBLIC_API_URL_VALUE="$(dv_public_api_url "${VITE_API_URL_VALUE}")"
+  if [[ -n "${PUBLIC_API_URL_VALUE}" && -z "$(extract_env_value "${BUILD_CONTEXT_DIR}/back/.env" "PUBLIC_API_URL" || true)" ]]; then
+    dv_env_set "${BUILD_CONTEXT_DIR}/back/.env" "PUBLIC_API_URL" "${PUBLIC_API_URL_VALUE}"
+  fi
   # What is uploaded as the remote .env (and swapped by rollbacks): the staged env, before the per-host patches.
   cp "${BUILD_CONTEXT_DIR}/back/.env" "${BUILD_CONTEXT_DIR}/.env.remote"
 fi

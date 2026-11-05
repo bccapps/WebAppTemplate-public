@@ -351,6 +351,30 @@ test('deploy: DEPLOY_REVISION from the environment wins; a dirty work tree adds 
   } finally { p.cleanup(); }
 });
 
+test('deploy: PUBLIC_API_URL comes from the front\'s absolute VITE_API_URL, never over a value of the back env', () => {
+  let p = deployedProject();
+  try {
+    writeFileSync(path.join(p.root, 'front/.env'), 'VITE_PORT=3900\nVITE_API_URL="https://api.example.com/api/v1/"\n');
+    const r = p.run(['prod', '--target=back'], { SKIP_UPDATE_COMMON: '1' });
+    assert.equal(r.status, 0, r.out);
+    assert.ok(p.logLines().includes('ENV_SNAPSHOT: PUBLIC_API_URL=https://api.example.com'));
+    assert.match(readFileSync(path.join(p.state, 'uploaded_.env.remote'), 'utf8'), /^PUBLIC_API_URL=https:\/\/api\.example\.com$/m);
+    // A relative API URL (the front's own origin): nothing derived.
+    writeFileSync(path.join(p.root, 'front/.env'), 'VITE_PORT=3900\nVITE_API_URL=/api/v1\n');
+    writeFileSync(p.log, '');
+    assert.equal(p.run(['prod', '--target=back'], { SKIP_UPDATE_COMMON: '1' }).status, 0);
+    assert.ok(p.logLines().some((l) => l.startsWith('ENV_SNAPSHOT: DEPLOY_REVISION=')));
+    assert.ok(!p.logLines().some((l) => l.startsWith('ENV_SNAPSHOT: PUBLIC_API_URL=')));
+  } finally { p.cleanup(); }
+  p = deployedProject({ extraBackEnv: 'PUBLIC_API_URL=https://own.example.org' });
+  try {
+    writeFileSync(path.join(p.root, 'front/.env'), 'VITE_PORT=3900\nVITE_API_URL=https://api.example.com/api/v1\n');
+    assert.equal(p.run(['prod', '--target=back'], { SKIP_UPDATE_COMMON: '1' }).status, 0);
+    const snapshot = p.logLines().filter((l) => l.startsWith('ENV_SNAPSHOT: PUBLIC_API_URL='));
+    assert.deepEqual([...new Set(snapshot)], ['ENV_SNAPSHOT: PUBLIC_API_URL=https://own.example.org']);
+  } finally { p.cleanup(); }
+});
+
 test('deploy: unhealthy back -> automatic rollback (retag, env, SQLite restore, maintenance off), exit 3', () => {
   const p = deployedProject();
   try {
