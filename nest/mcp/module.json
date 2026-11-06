@@ -1,0 +1,10 @@
+{
+  "id": "mcp",
+  "title": "MCP transport",
+  "description": "Transport-only helpers to serve a stateless MCP endpoint from a NestJS controller with the MCP TypeScript SDK v2 (2026-07-28 and 2025-era clients on one URL, plain JSON replies). No authentication, no tools: those stay in each app.",
+  "visibility": "public",
+  "category": "other",
+  "requires": [],
+  "env": [],
+  "questions": []
+}

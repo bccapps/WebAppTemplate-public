@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@modelcontextprotocol/node": "^2.1.2",
+    "@modelcontextprotocol/server": "^2.4.0"
+  }
+}
