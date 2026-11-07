@@ -248,6 +248,43 @@ services:
       retries: 3
       start_period: 5s
 
+  # Voice engine (speech-to-text, text-to-speech, VAD, end-of-turn, speaker embedding): a container of its own, so that a native
+  # crash or a memory overrun can never take the API down. Internal network only (`expose`, never published); the back reaches
+  # it at ws://voice-engine:7840/v1 (VOICE_ENGINE_URL). Off by default: the service belongs to the `voice` profile, which
+  # deploy-full.sh enables when VOICE_ENGINE=on in back/.env. No model in the image: they are downloaded into the voice_models
+  # volume at first use. The image is built from a private GitHub release of vx-voice-engine (BuildKit secret gh_token, read
+  # from VOICE_ENGINE_GH_TOKEN in the deploying shell — never from back/.env, which reaches the containers).
+  voice-engine:
+    profiles: [voice]
+    image: ${PROJECT_NAME}_voice_engine:${VOICE_ENGINE_VERSION:-dev}
+    build:
+      context: ./voice-engine
+      dockerfile: Dockerfile
+      args:
+        VOICE_ENGINE_VERSION: ${VOICE_ENGINE_VERSION:-dev}
+      secrets:
+        - gh_token
+    restart: unless-stopped
+    container_name: ${PROJECT_NAME}_voice_engine
+    environment:
+      VOICE_ENGINE_MODE: hub
+      VOICE_ENGINE_TOKEN: ${VOICE_ENGINE_TOKEN:-}
+      VOICE_ENGINE_MEMORY_MB: ${VOICE_ENGINE_MEMORY_MB:-3000}
+      VOICE_ENGINE_THREADS: ${VOICE_ENGINE_THREADS:-4}
+    expose:
+      - '7840'
+    mem_limit: ${VOICE_ENGINE_MEM_LIMIT:-4g}
+    cpus: ${VOICE_ENGINE_CPUS:-4}
+    volumes:
+      - voice_models:/models
+      - voice_cache:/cache
+    healthcheck:
+      test: ["CMD", "/opt/vx-voice-engine/vx-voice-engine", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
   front:
     build:
       context: ../front
@@ -344,6 +381,11 @@ volumes:
   # A fresh volume on a rebuilt image no longer needs this.
   shared_directory:
   vmagent_data:
+  # Voice engine (profile `voice`): downloaded models (several GB, kept across redeploys) and derived voice profiles (rebuildable).
+  voice_models:
+    name: ${PROJECT_NAME}_voice_models
+  voice_cache:
+    name: ${PROJECT_NAME}_voice_cache
 
 configs:
   vmagent_config:
@@ -351,3 +393,7 @@ configs:
     # For local use (scripts/docker-compose.yml), it falls back to ./vmagent.yml.
     file: ${VMAGENT_CONFIG_PATH:-./vmagent.yml}
 
+# Voice engine image build only (profile `voice`): token with read access to the releases of the private vx-voice-engine repository.
+secrets:
+  gh_token:
+    environment: VOICE_ENGINE_GH_TOKEN

@@ -194,6 +194,39 @@ else
   unset BACK_NODE_ROLE
 fi
 
+# ── voice engine on/off (VOICE_ENGINE in back/.env: off (default) | on) ─────────────────────────────────────────────
+# on = the `voice-engine` compose service (profile `voice`, see docker-compose.yml) is built from a private GitHub release of
+# vx-voice-engine and started next to the back, on the same host and compose network. off = no change at all: the profile is
+# never enabled, nothing is built or uploaded, and a container left by a previous `on` deploy is removed (its volumes are kept).
+# Needs VOICE_ENGINE_VERSION (release tag without the leading v), VOICE_ENGINE_TOKEN (secret shared with the back) and a token
+# able to read the releases of the private repo: VOICE_ENGINE_GH_TOKEN in the deploying shell, else `gh auth token`. That
+# token is a BuildKit secret: it is never written to back/.env (which reaches the containers) nor to an image layer.
+VOICE_ENGINE_ENABLED=0
+VOICE_PROFILE_ARGS=()
+case "$(printf '%s' "${VOICE_ENGINE:-off}" | tr '[:upper:]' '[:lower:]')" in
+  on|true|1) VOICE_ENGINE_ENABLED=1 ;;
+  off|false|0|"") VOICE_ENGINE_ENABLED=0 ;;
+  *)
+    err "VOICE_ENGINE='${VOICE_ENGINE}' is not valid (expected on|off, also true|false|1|0)."
+    exit 1
+    ;;
+esac
+if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 && "${ROLLBACK_MODE}" != "1" ]]; then
+  [[ -n "${VOICE_ENGINE_VERSION:-}" ]] || { err "VOICE_ENGINE=on needs VOICE_ENGINE_VERSION (a release of vx-voice-engine, e.g. 0.1.0)."; exit 1; }
+  [[ -n "${VOICE_ENGINE_TOKEN:-}" ]] || { err "VOICE_ENGINE=on needs VOICE_ENGINE_TOKEN (secret shared by the back and the engine)."; exit 1; }
+  case "${COMPOSE_FILE_NAME:-}" in
+    *cloud*) err "VOICE_ENGINE=on is not available with the multi-host cloud compose file (the engine's volumes are host-local)."; exit 1 ;;
+  esac
+  if [[ -z "${VOICE_ENGINE_GH_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
+    VOICE_ENGINE_GH_TOKEN="$(gh auth token 2>/dev/null || true)"
+  fi
+  [[ -n "${VOICE_ENGINE_GH_TOKEN:-}" ]] || { err "VOICE_ENGINE=on needs VOICE_ENGINE_GH_TOKEN (read access to the vx-voice-engine releases) or a logged-in gh."; exit 1; }
+  export VOICE_ENGINE_GH_TOKEN
+fi
+if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 ]]; then
+  VOICE_PROFILE_ARGS=(--profile voice)
+fi
+
 # ── Destinations de supervision (vmagent) ────────────────────────────────────
 # PROMETHEUS_REMOTE_WRITE_URLS accepte une LISTE séparée par des virgules : un
 # même back pousse ses métriques vers plusieurs serveurs Prometheus, vmagent
@@ -1283,6 +1316,12 @@ if [[ "${DEPLOY_TARGET}" != "front" && -f "scripts/vmagent.yml" ]]; then
   sync_file_into_context "scripts/vmagent.yml" "${BUILD_CONTEXT_DIR}/vmagent.yml"
 fi
 
+# voice-engine image context (build.context ./voice-engine in docker-compose.yml): only its Dockerfile, which downloads the release.
+if [[ "${DEPLOY_TARGET}" != "front" && "${VOICE_ENGINE_ENABLED}" -eq 1 && -f "scripts/voice-engine/Dockerfile" ]]; then
+  mkdir -p "${BUILD_CONTEXT_DIR}/voice-engine"
+  sync_file_into_context "scripts/voice-engine/Dockerfile" "${BUILD_CONTEXT_DIR}/voice-engine/Dockerfile"
+fi
+
 dt_record "stage compose context" "${__t0}"
 echo "==> [LOCAL] Build context staged at ${BUILD_CONTEXT_DIR}"
 if [[ "${KEEP_BUILD_CONTEXT}" == "1" ]]; then
@@ -1405,6 +1444,29 @@ start_back_dependents() {
     --project-name "${project_name}" \
     up -d --no-build --no-deps "${BACK_SERVICES_UP_DEFERRED[@]}" \
     || warn "[BACK:${target_host}] $(printf '%s ' "${BACK_SERVICES_UP_DEFERRED[@]}")did not (re)start — check manually"
+}
+
+# Voice engine reconciliation, after the back switch: VOICE_ENGINE=on starts (or recreates when the image changed) the
+# voice-engine service; off removes a container left by an earlier `on` (volumes voice_models / voice_cache are kept).
+# The engine does not depend on the back (the back retries its connection), so it is never part of the maintenance window,
+# and it is best-effort: voice is optional, a failure here must not fail an otherwise good deploy.
+reconcile_voice_engine() {
+  local context_name="$1" docker_ssh_command="$2" project_name="$3" target_host="$4"
+  if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 ]]; then
+    echo "==> [BACK:${target_host}] Starting voice-engine"
+    DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
+      --project-directory "${BUILD_CONTEXT_DIR}" \
+      --project-name "${project_name}" \
+      --profile voice \
+      up -d --no-build --no-deps voice-engine \
+      || warn "[BACK:${target_host}] voice-engine did not start — check 'docker compose logs voice-engine'"
+  else
+    DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
+      --project-directory "${BUILD_CONTEXT_DIR}" \
+      --project-name "${project_name}" \
+      --profile voice \
+      rm -sf voice-engine >/dev/null 2>&1 || true
+  fi
 }
 
 # Fills BACK_SERVICES_STOP (stopped at the switch) and BACK_SERVICES_UP (started by `up -d`) for a back host.
@@ -1610,6 +1672,23 @@ deploy_back_host() {
     build --pull ${NO_CACHE_FLAG} "${BACK_BUILD_SERVICES[@]}"
   dt_record "back ${target_host}: image build on the server (context upload + prod deps + layers)" "${t0}"
 
+  # Voice engine image (VOICE_ENGINE=on): downloads the private release with the BuildKit secret gh_token (compose reads it from
+  # VOICE_ENGINE_GH_TOKEN in this shell). Built while the current version still serves; a failure stops the deploy before the switch.
+  if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 ]]; then
+    echo "==> [BACK:${target_host}] Building voice-engine image (vx-voice-engine ${VOICE_ENGINE_VERSION})"
+    t0="$(dt_now)"
+    if ! DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
+      --project-directory "${BUILD_CONTEXT_DIR}" \
+      --project-name "${project_name}" \
+      "${VOICE_PROFILE_ARGS[@]}" \
+      build --pull voice-engine; then
+      err "[BACK:${target_host}] voice-engine image build failed — deploy stopped before the switch, the current version keeps running"
+      dv_restore_latest_tag "$(dv_back_image)"
+      exit 1
+    fi
+    dt_record "back ${target_host}: voice-engine image build" "${t0}"
+  fi
+
   # Self-hosted Postgres dump (cloud DB: warning) while the CURRENT version still serves: outside the maintenance
   # window. A failure stops the deploy before anything was switched (the running version is untouched).
   t0="$(dt_now)"
@@ -1708,6 +1787,8 @@ deploy_back_host() {
     err "[BACK:${target_host}] New back service did not become healthy in time."
     err "[BACK:${target_host}] Check 'docker --context ${context_name} compose --project-name ${project_name} logs back' once the deploy is over."
   fi
+
+  reconcile_voice_engine "${context_name}" "${docker_ssh_command}" "${project_name}" "${target_host}"
 
   # Restore original back/.env so subsequent host deployments (non-colocated) get the public values.
   # The root .env was never touched, so nothing to restore there.
