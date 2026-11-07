@@ -17,7 +17,9 @@ import { defineConfig, minimal2023Preset } from '@vite-pwa/assets-generator/conf
 export default defineConfig({
   preset: {
     ...minimal2023Preset,
-    apple: { sizes: [180] },
+    // The padded variants (maskable, iOS) are filled with the app background, not the preset's white.
+    maskable: { ...minimal2023Preset.maskable, resizeOptions: { background: '{{PWA_BACKGROUND_COLOR}}' } },
+    apple: { sizes: [180], resizeOptions: { background: '{{PWA_BACKGROUND_COLOR}}' } },
   },
   images: ['public/favicon.svg'],
 })

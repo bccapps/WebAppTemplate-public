@@ -280,6 +280,24 @@ only when the browser offers the installation, with a Share-menu hint on iOS). A
 The wizard answers are in the `template/component-templates.json` « pwa » group; the `{{#PWA}}` ... `{{/PWA}}` blocks of
 the copied files are kept or dropped according to `pwa.enabled`. Existing apps keep their own files.
 
+An existing project gets the same result with `add-pwa.mjs` (nothing is overwritten):
+
+```bash
+node scripts/add-pwa.mjs --dry-run                       # print what would happen
+node scripts/add-pwa.mjs --name "My App" --theme-color '#0a0a0a' --background-color '#0a0a0a' --source ~/logo-512.png
+```
+
+It copies the four PWA files, writes the `pwa` section of `project.config.json` (when the file exists), patches
+`front/vite.config.ts` (`extraPlugins`), `front/index.html` (the missing tags only: a project `theme-color` is kept) and
+`front/public/_headers`, adds the packages and `pwa:icons` to `front/package.local.json`, regenerates `front/package.json`, runs
+`npm install` and generates the icons from `--source` (default `front/public/favicon.svg`; `--no-install`, `--no-icons` skip the last
+steps). A file whose shape it does not recognise is left alone and the manual edit is printed. It does not wire `PwaInstallButton`
+into the header (each project's differs): it prints the two lines to add. It is refused when the PWA files exist, or when the project
+already has **another service worker** (a scope has one: move its `push` / `notificationclick` handlers into `src/sw.ts` and delete
+the old file, or `--allow-existing-sw` to install first and merge after; AgentHub did this for its Web Push worker). The padded icons
+(maskable, iOS) are filled with the `backgroundColor`. Icons of a **pixel-art** logo: upscale the source with nearest-neighbour to
+512 px first, the generator resamples smoothly. Tests: `node --test scripts/add-pwa.test.mjs`.
+
 Module manifest `<nest|react>/<module>/module.json`: `id`, `title`, `description`, `visibility`, `category`
 (`core|users|business|ai|content|other`), `requires` (verified against the real imports by
 `tools/check-boundaries.mjs --check-manifests`), `env` (variables added to `.env.example`), `questions` (module-specific
@@ -330,6 +348,7 @@ invalid identifier. The identifier names the OS data folder of the app: change t
 | `scripts/create-project.sh [options] [<name> [dir]]` | New project (wizard above): mounts `vx-public` (+ `vx-private`) in `back/.libs` and `front/.libs`, `.libs/apptemplate` symlinks, `shared-modules.json`, env files. URLs: `VX_PUBLIC_URL` / `VX_PRIVATE_URL` (defaults: `https://github.com/bccapps/WebAppTemplate-{public,private}.git`) |
 | `scripts/add-module.mjs <id>... [--remove]` | Add / remove shared modules in an existing project |
 | `scripts/add-desktop.mjs [--name <text>] [--identifier <id>] [--dry-run]` | Add the desktop shell (Tauri) to an existing project (see « Desktop application ») |
+| `scripts/add-pwa.mjs [--name <text>] [--source <image>] [--dry-run]` | Add the installable-app option (PWA) to an existing project (see « Front public files and PWA ») |
 | `scripts/update_common.sh [--push-only\|--pull-only]` | For each mounted library: switch to `main` (mounts default to a detached HEAD), commit local changes of the back mount, fetch, rebase on `origin/main`, push; then the same on the front mount (it rebases on what back just pushed); both end on the same SHA; the parent repo gets a `chore: bump <lib>` commit. Then symlinks, root `CLAUDE.md` imports / `AGENTS.md`, `package.json` regeneration (also with `--pull-only`), `npm install` and an auto-commit when something changed. `git push` the parent afterwards. Refuses a legacy app (run the migration first) |
 | `scripts/migrate-to-webapptemplate.sh` | One-shot, idempotent migration of a legacy app (`nestcommon`/`reactcommon`/`apptemplate` submodules). Does not commit |
 | `scripts/loadtest/loadtest.mjs <command>` | Load test of a deployed environment (k6 + health monitoring of hosts, Postgres, Redis + automatic guards). Generic engine, per-project `loadtest.config.json`: see `scripts/loadtest/README.md` (French) |
