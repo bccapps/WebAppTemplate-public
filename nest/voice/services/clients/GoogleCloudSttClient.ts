@@ -21,11 +21,16 @@ export class GoogleCloudSttClient {
 
     const encoding = this.mapEncoding(request.contentType);
 
+    const candidates = request.candidateLanguages?.filter(Boolean) ?? [];
+    const primary = request.language ?? candidates[0] ?? 'en-US';
+    const alternatives = request.language ? [] : candidates.slice(1, 4);
+
     const body = {
       config: {
         encoding,
         sampleRateHertz: 16000,
-        languageCode: request.language ?? 'en-US',
+        languageCode: primary,
+        ...(alternatives.length ? { alternativeLanguageCodes: alternatives } : {}),
         enableWordTimeOffsets: true,
       },
       audio: {
@@ -52,7 +57,7 @@ export class GoogleCloudSttClient {
     return {
       text: alternative?.transcript ?? '',
       confidence: alternative?.confidence,
-      language: request.language,
+      language: result?.languageCode ?? request.language,
     };
   }
 

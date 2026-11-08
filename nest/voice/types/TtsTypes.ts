@@ -13,10 +13,14 @@ export interface TtsRequest {
   language?: string;
   speed?: number;
   outputFormat?: string;
+  /** Optional hint used only to pick a default voice when `voice` is absent (user-access dispatch). */
+  gender?: 'male' | 'female';
 }
 
 export interface TtsResponse {
   audio: Buffer;
   contentType: string;
   durationMs?: number;
+  /** Sample rate in Hz when the provider returned raw PCM (`audio/L16;rate=N`) or it is known. */
+  sampleRate?: number;
 }

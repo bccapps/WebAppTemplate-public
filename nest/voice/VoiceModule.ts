@@ -25,6 +25,7 @@ import { VoiceConfigRegistrarService } from './services/VoiceConfigRegistrarServ
 import { VoiceTtsService } from './services/VoiceTtsService';
 import { VoiceSttService } from './services/VoiceSttService';
 import { VoiceS2sService } from './services/VoiceS2sService';
+import { VoiceUserDispatchService } from './services/VoiceUserDispatchService';
 
 // TTS clients
 import { GoogleCloudTtsClient } from './services/clients/GoogleCloudTtsClient';
@@ -71,6 +72,7 @@ import { VoiceSttController } from './controllers/VoiceSttController';
     VoiceTtsService,
     VoiceSttService,
     VoiceS2sService,
+    VoiceUserDispatchService,
     // TTS clients
     GoogleCloudTtsClient,
     AmazonPollyClient,
@@ -101,6 +103,7 @@ import { VoiceSttController } from './controllers/VoiceSttController';
     VoiceTtsService,
     VoiceSttService,
     VoiceS2sService,
+    VoiceUserDispatchService,
   ],
 })
 export class VoiceModule {}

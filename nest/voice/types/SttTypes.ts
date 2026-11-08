@@ -12,6 +12,10 @@ export interface SttRequest {
   contentType: string;
   language?: string;
   model?: string;
+  /** Ask the provider to detect the spoken language when `language` is absent (providers without detection ignore it). */
+  detectLanguage?: boolean;
+  /** BCP-47 candidates for providers that detect among a closed list (Google: first = primary, others = alternatives). */
+  candidateLanguages?: string[];
 }
 
 export interface SttResponse {

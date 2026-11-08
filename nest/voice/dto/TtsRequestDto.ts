@@ -9,6 +9,7 @@
 
 import { Transform } from 'class-transformer';
 import {
+  IsIn,
   IsNumber,
   IsOptional,
   IsString,
@@ -45,4 +46,8 @@ export class TtsRequestDto {
   @IsString()
   @MaxLength(10)
   outputFormat?: string;
+
+  @IsOptional()
+  @IsIn(['male', 'female'])
+  gender?: 'male' | 'female';
 }

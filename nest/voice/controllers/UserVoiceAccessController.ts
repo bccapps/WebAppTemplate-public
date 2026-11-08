@@ -17,20 +17,25 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Req,
+  Res,
   UseInterceptors,
 } from '@nestjs/common';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { RequireUserInterceptor } from '../../common/auth';
 import { IdParamDto } from '../../common/dtos/IdParamDto';
 import { UserUpsertVoiceAccessDto } from '../dto/UserUpsertVoiceAccessDto';
+import { TtsRequestDto } from '../dto/TtsRequestDto';
 import { UserVoiceAccessService } from '../services/UserVoiceAccessService';
+import { VoiceUserDispatchService } from '../services/VoiceUserDispatchService';
 
 @Controller('/api/v1/user/voice-accesses')
 @UseInterceptors(RequireUserInterceptor)
 export class UserVoiceAccessController {
   constructor(
     private readonly userVoiceAccessService: UserVoiceAccessService,
+    private readonly dispatch: VoiceUserDispatchService,
   ) {}
 
   private getUid(req: Request): number {
@@ -75,5 +80,47 @@ export class UserVoiceAccessController {
   async delete(@Req() req: Request, @Param() params: IdParamDto) {
     const userId = this.getUid(req);
     await this.userVoiceAccessService.delete(userId, params.id);
+  }
+
+  /** Text to speech with one of the caller's own accesses (404 for an access of someone else, 403 when user providers are disabled). */
+  @Post(':id/tts')
+  @HttpCode(HttpStatus.OK)
+  async synthesize(
+    @Req() req: Request,
+    @Param() params: IdParamDto,
+    @Body() payload: TtsRequestDto,
+    @Res() res: Response,
+  ) {
+    const result = await this.dispatch.synthesize(this.getUid(req), params.id, {
+      text: payload.text,
+      voice: payload.voice,
+      language: payload.language,
+      speed: payload.speed,
+      outputFormat: payload.outputFormat,
+      gender: payload.gender,
+    });
+    res.set('Content-Type', result.contentType);
+    if (result.durationMs !== undefined) res.set('X-Audio-Duration-Ms', String(result.durationMs));
+    res.send(result.audio);
+  }
+
+  /** Speech to text with one of the caller's own accesses (raw audio body; `language` omitted = detection when the provider offers it). */
+  @Post(':id/stt')
+  @HttpCode(HttpStatus.OK)
+  async transcribe(
+    @Req() req: Request,
+    @Param() params: IdParamDto,
+    @Query('language') language: string | undefined,
+    @Query('model') model: string | undefined,
+  ) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const result = await this.dispatch.transcribe(this.getUid(req), params.id, {
+      audio: Buffer.concat(chunks),
+      contentType: req.headers['content-type'] ?? 'audio/wav',
+      language: language || undefined,
+      model: model || undefined,
+    });
+    return { data: result };
   }
 }

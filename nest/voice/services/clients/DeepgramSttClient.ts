@@ -18,8 +18,11 @@ export class DeepgramSttClient {
   async transcribe(params: VoiceCallParams, request: SttRequest): Promise<SttResponse> {
     const baseUrl = params.baseUrl.replace(/\/+$/, '');
     const model = request.model ?? 'nova-2';
-    const language = request.language ?? 'en';
-    const url = `${baseUrl}/listen?model=${model}&language=${language}&punctuate=true&utterances=true`;
+    // Without a language, `detectLanguage` asks Deepgram to detect it (reported back in `language`); otherwise the historical default stays 'en'.
+    const languageParam = !request.language && request.detectLanguage
+      ? 'detect_language=true'
+      : `language=${encodeURIComponent(request.language ?? 'en')}`;
+    const url = `${baseUrl}/listen?model=${encodeURIComponent(model)}&${languageParam}&punctuate=true&utterances=true`;
 
     const res = await fetch(url, {
       method: 'POST',
