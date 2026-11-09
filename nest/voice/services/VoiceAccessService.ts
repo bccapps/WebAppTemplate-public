@@ -13,14 +13,20 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { VoiceSecretCipher } from './VoiceSecretCipher';
+import { resealLegacyRow } from './voiceSecretReseal';
 import { VoiceAccessEntity } from '../entities/VoiceAccessEntity';
 import { UpsertVoiceAccessDto } from '../dto/UpsertVoiceAccessDto';
+
+/** Table of this service's credentials in the encryption namespace (`voice_accesses:<field>`). */
+const TABLE = 'voice_accesses' as const;
 
 @Injectable()
 export class VoiceAccessService {
   constructor(
     @InjectRepository(VoiceAccessEntity)
     private readonly accessRepo: Repository<VoiceAccessEntity>,
+    private readonly cipher: VoiceSecretCipher,
   ) {}
 
   async listAll() {
@@ -32,7 +38,7 @@ export class VoiceAccessService {
 
   async create(payload: UpsertVoiceAccessDto) {
     const created = this.accessRepo.create(
-      this.stripUndefined(this.normalizePayload(payload)),
+      this.cipher.sealCredentials(this.stripUndefined(this.normalizePayload(payload)), TABLE),
     );
     const entry = await this.accessRepo.save(created);
     const full = await this.accessRepo.findOne({ where: { id: entry.id } });
@@ -47,6 +53,8 @@ export class VoiceAccessService {
 
     const patch = this.stripUndefined(this.normalizePayload(payload));
     const updated = this.accessRepo.merge(existing, patch);
+    // Seals the new values and any legacy plaintext the patch did not touch (idempotent on ciphertext).
+    Object.assign(updated, this.cipher.sealCredentials({ username: updated.username, password: updated.password }, TABLE));
     await this.accessRepo.save(updated);
     const full = await this.accessRepo.findOne({ where: { id } });
     return this.serialize(full!);
@@ -59,8 +67,15 @@ export class VoiceAccessService {
     }
   }
 
+  /**
+   * The access with its credentials in PLAINTEXT, for provider calls only: never serialize or log the result. A legacy plaintext
+   * row is re-encrypted on the way (compare-and-set, see `resealLegacyRow`). Throws when ciphertext cannot be decrypted.
+   */
   async getAccessWithSecrets(id: number) {
-    return this.accessRepo.findOne({ where: { id } });
+    const row = await this.accessRepo.findOne({ where: { id } });
+    if (!row) return null;
+    if (this.cipher.hasPlaintext(row)) await resealLegacyRow(this.accessRepo, row, this.cipher, TABLE);
+    return this.cipher.openCredentials(row, TABLE);
   }
 
   serialize(entry: VoiceAccessEntity) {
@@ -79,7 +94,7 @@ export class VoiceAccessService {
         signupUrl: provider.signupUrl,
       } : null,
       baseUrlOverride: entry.baseUrlOverride,
-      username: entry.username,
+      username: this.cipher.openOrNull(entry.username, TABLE, 'username'),
       hasPassword: Boolean(entry.password && entry.password.length),
       providerConfig: entry.providerConfig,
       createdAt: entry.createdAt,

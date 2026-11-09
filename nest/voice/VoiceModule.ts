@@ -26,12 +26,14 @@ import { VoiceTtsService } from './services/VoiceTtsService';
 import { VoiceSttService } from './services/VoiceSttService';
 import { VoiceS2sService } from './services/VoiceS2sService';
 import { VoiceUserDispatchService } from './services/VoiceUserDispatchService';
+import { VoiceSecretCipher } from './services/VoiceSecretCipher';
 
 // TTS clients
 import { GoogleCloudTtsClient } from './services/clients/GoogleCloudTtsClient';
 import { AmazonPollyClient } from './services/clients/AmazonPollyClient';
 import { AzureTtsClient } from './services/clients/AzureTtsClient';
 import { ElevenLabsTtsClient } from './services/clients/ElevenLabsTtsClient';
+import { OpenAiTtsClient } from './services/clients/OpenAiTtsClient';
 
 // STT clients
 import { GoogleCloudSttClient } from './services/clients/GoogleCloudSttClient';
@@ -63,6 +65,7 @@ import { VoiceSttController } from './controllers/VoiceSttController';
   ],
   providers: [
     // Catalog & access services
+    VoiceSecretCipher,
     VoiceProviderCatalogService,
     VoiceAccessService,
     UserVoiceAccessService,
@@ -78,6 +81,7 @@ import { VoiceSttController } from './controllers/VoiceSttController';
     AmazonPollyClient,
     AzureTtsClient,
     ElevenLabsTtsClient,
+    OpenAiTtsClient,
     // STT clients
     GoogleCloudSttClient,
     DeepgramSttClient,

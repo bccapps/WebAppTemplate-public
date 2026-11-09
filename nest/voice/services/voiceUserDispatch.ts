@@ -67,6 +67,10 @@ const DEFAULT_VOICES: Record<string, Record<string, Record<Gender, string>>> = {
   elevenlabs: {
     '*': { female: 'EXAVITQu4vr4xnSDxMaL', male: 'pNInz6obpgDQGcFmaJgB' },
   },
+  // OpenAI voices are multilingual (optimised for English); `onyx` also exists on the tts-1 models.
+  openai: {
+    '*': { female: 'coral', male: 'onyx' },
+  },
 };
 
 /** Voice to use when the request names none: the access' `providerConfig.voice`, else a default per provider / language / gender. */
@@ -93,15 +97,16 @@ export function playableFormat(providerType: string): 'wav' | 'pcm' | undefined 
       return 'wav';
     case 'aws-polly':
     case 'elevenlabs':
+    case 'openai':
       return 'pcm';
     default:
       return undefined;
   }
 }
 
-/** Sample rate of the raw PCM each provider returns for `pcm` (Polly default 16 kHz, ElevenLabs `pcm_16000`). */
+/** Sample rate of the raw PCM each provider returns for `pcm` (Polly 16 kHz, ElevenLabs `pcm_16000`, OpenAI 24 kHz). */
 export function pcmRateFor(providerType: string): number {
-  return providerType === 'aws-polly' || providerType === 'elevenlabs' ? 16000 : 24000;
+  return providerType === 'aws-polly' || providerType === 'elevenlabs' ? 16000 : 24000; // OpenAI pcm: 24 kHz
 }
 
 /** Content type voice-live decodes: `audio/wav`, or `audio/L16;rate=N;channels=1` for raw PCM. */
@@ -126,4 +131,29 @@ export function wavDurationMs(audio: Uint8Array): number | undefined {
   const byteRate = dv.getUint32(28, true);
   if (!byteRate) return undefined;
   return Math.round(((audio.byteLength - 44) / byteRate) * 1000);
+}
+
+const PRIVATE_SUFFIXES = ['.localhost', '.local', '.internal', '.lan', '.home', '.corp', '.intranet'];
+
+/**
+ * Whether a user-supplied base URL may be called by the server with the user's key: https, a public-looking DNS name (no IP
+ * literal, no localhost / private suffix, no embedded credentials). Keeps the user routes from being a request proxy into the
+ * hub's network. Does not resolve DNS (a name pointing to a private address is not detected).
+ */
+export function isSafeUserBaseUrl(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw.replace('{region}', 'region'));
+  } catch {
+    return false;
+  }
+  const host = url.hostname.toLowerCase();
+  if (url.protocol !== 'https:' || url.username || url.password || !host.includes('.')) return false;
+  if (host.startsWith('[') || /^[\d.]+$/.test(host) || host === 'localhost') return false;
+  return !PRIVATE_SUFFIXES.some((suffix) => host.endsWith(suffix));
+}
+
+/** A `region` (Azure / Polly) goes into a host name: only a plain region id is accepted for a user's access. */
+export function isSafeRegion(value: unknown): boolean {
+  return value === undefined || value === null || (typeof value === 'string' && /^[a-z0-9-]{2,32}$/i.test(value));
 }

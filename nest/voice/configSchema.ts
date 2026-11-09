@@ -44,7 +44,7 @@ export const voiceConfigSchema: ModuleConfigSchema = {
       label: 'Allow user providers',
       description: 'When disabled, users cannot configure their own voice providers and must use the system default',
       type: 'boolean',
-      defaultValue: false,
+      defaultValue: true,
       group: 'general',
     },
     {

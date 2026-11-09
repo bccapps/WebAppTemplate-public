@@ -14,12 +14,15 @@ import { GoogleCloudTtsClient } from './clients/GoogleCloudTtsClient';
 import { AmazonPollyClient } from './clients/AmazonPollyClient';
 import { AzureTtsClient } from './clients/AzureTtsClient';
 import { ElevenLabsTtsClient } from './clients/ElevenLabsTtsClient';
+import { OpenAiTtsClient } from './clients/OpenAiTtsClient';
 import { GoogleCloudSttClient } from './clients/GoogleCloudSttClient';
 import { DeepgramSttClient } from './clients/DeepgramSttClient';
 import { AssemblyAiSttClient } from './clients/AssemblyAiSttClient';
 import { OpenAiWhisperClient } from './clients/OpenAiWhisperClient';
 import {
   defaultVoiceFor,
+  isSafeRegion,
+  isSafeUserBaseUrl,
   localeFor,
   normalizeContentType,
   playableFormat,
@@ -48,6 +51,7 @@ export class VoiceUserDispatchService {
     private readonly deepgram: DeepgramSttClient,
     private readonly assemblyAi: AssemblyAiSttClient,
     private readonly whisper: OpenAiWhisperClient,
+    private readonly openAiTts: OpenAiTtsClient,
   ) {}
 
   /** Whether users may use their own providers (`voice_allowUserProviders`). */
@@ -81,6 +85,7 @@ export class VoiceUserDispatchService {
       case 'aws-polly': out = await this.polly.synthesize(params, prepared); break;
       case 'azure-tts': out = await this.azure.synthesize(params, prepared); break;
       case 'elevenlabs': out = await this.elevenLabs.synthesize(params, prepared); break;
+      case 'openai': out = await this.openAiTts.synthesize(params, prepared); break;
       default: throw new BadRequestException(`Unsupported TTS provider type: ${type}`);
     }
     const normalized = normalizeContentType(type, out.contentType);
@@ -123,6 +128,8 @@ export class VoiceUserDispatchService {
     const access = await this.userAccesses.getAccessWithSecrets(userId, accessId);
     if (!access) throw new NotFoundException('Voice access not found');
     if (!access.provider) throw new BadRequestException('No provider linked to this access');
+    if (access.baseUrlOverride && !isSafeUserBaseUrl(access.baseUrlOverride)) throw new BadRequestException('Unsafe base URL on this access');
+    if (!isSafeRegion(access.providerConfig?.region)) throw new BadRequestException('Invalid region on this access');
     if (!access.provider.capabilities.includes(capability)) {
       throw new BadRequestException(`Provider "${access.provider.name}" does not support ${capability.toUpperCase()}`);
     }

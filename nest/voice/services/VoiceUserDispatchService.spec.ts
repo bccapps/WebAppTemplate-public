@@ -23,10 +23,10 @@ function build(opts: { enabled?: boolean; accesses?: Array<ReturnType<typeof acc
   const config = { getResolvedValue: jest.fn((k: string) => (k === 'voice_allowUserProviders' ? (opts.enabled ?? true) : k === 'voice_maxTtsChars' ? 50 : k === 'voice_maxSttDurationMs' ? 3000 : undefined)) };
   const tts = (contentType: string) => ({ synthesize: jest.fn(async (_params: unknown, _request: unknown) => ({ audio: Buffer.from([1, 2]), contentType })) });
   const stt = () => ({ transcribe: jest.fn(async (_params: unknown, _request: unknown) => ({ text: 'bonjour', language: 'fr' })) });
-  const clients = { google: tts('audio/wav'), polly: tts('audio/pcm'), azure: tts('audio/wav'), eleven: tts('audio/pcm'), gstt: stt(), dg: stt(), aai: stt(), whisper: stt() };
+  const clients = { google: tts('audio/wav'), polly: tts('audio/pcm'), azure: tts('audio/wav'), eleven: tts('audio/pcm'), openaiTts: tts('audio/L16;rate=24000;channels=1'), gstt: stt(), dg: stt(), aai: stt(), whisper: stt() };
   const service = new VoiceUserDispatchService(
     userAccesses as never, config as never, clients.google as never, clients.polly as never, clients.azure as never, clients.eleven as never,
-    clients.gstt as never, clients.dg as never, clients.aai as never, clients.whisper as never,
+    clients.gstt as never, clients.dg as never, clients.aai as never, clients.whisper as never, clients.openaiTts as never,
   );
   return { service, clients, userAccesses };
 }
@@ -66,6 +66,27 @@ describe('VoiceUserDispatchService', () => {
     const out = await service.synthesize(OWNER, 3, { text: 'salut', language: 'fr' });
     expect(out.contentType).toBe('audio/L16;rate=16000;channels=1');
     expect(out.sampleRate).toBe(16000);
+  });
+
+  it('speaks through OpenAI as 24 kHz L16 with the default voice of the gender', async () => {
+    const { service, clients } = build({ accesses: [access(6, OWNER, 'openai', ['tts', 'stt'])] });
+    const out = await service.synthesize(OWNER, 6, { text: 'hello', language: 'en', gender: 'male' });
+    expect(out.contentType).toBe('audio/L16;rate=24000;channels=1');
+    expect(out.sampleRate).toBe(24000);
+    expect(clients.openaiTts.synthesize).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'openai' }),
+      expect.objectContaining({ voice: 'onyx', outputFormat: 'pcm' }),
+    );
+  });
+
+  it('refuses an access whose base URL or region points outside public provider hosts', async () => {
+    const { service, clients } = build({ accesses: [
+      access(7, OWNER, 'azure-tts', ['tts'], { baseUrlOverride: 'http://169.254.169.254/' }),
+      access(8, OWNER, 'azure-tts', ['tts'], { providerConfig: { region: 'evil.com/x' } }),
+    ] });
+    await expect(service.synthesize(OWNER, 7, { text: 'hi' })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.synthesize(OWNER, 8, { text: 'hi' })).rejects.toBeInstanceOf(BadRequestException);
+    expect(clients.azure.synthesize).not.toHaveBeenCalled();
   });
 
   it('transcribes through the matching client, detecting the language when none is given', async () => {

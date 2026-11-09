@@ -8,19 +8,27 @@
  */
 
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { VoiceSecretCipher } from './VoiceSecretCipher';
+import { resealLegacyRow } from './voiceSecretReseal';
+import { isSafeRegion, isSafeUserBaseUrl } from './voiceUserDispatch';
 import { UserVoiceAccessEntity } from '../entities/UserVoiceAccessEntity';
 import { UserUpsertVoiceAccessDto } from '../dto/UserUpsertVoiceAccessDto';
+
+/** Table of this service's credentials in the encryption namespace (`user_voice_accesses:<field>`). */
+const TABLE = 'user_voice_accesses' as const;
 
 @Injectable()
 export class UserVoiceAccessService {
   constructor(
     @InjectRepository(UserVoiceAccessEntity)
     private readonly accessRepo: Repository<UserVoiceAccessEntity>,
+    private readonly cipher: VoiceSecretCipher,
   ) {}
 
   async list(userId: number) {
@@ -37,7 +45,7 @@ export class UserVoiceAccessService {
   async create(userId: number, payload: UserUpsertVoiceAccessDto) {
     const created = this.accessRepo.create({
       userId,
-      ...this.stripUndefined(this.normalizePayload(payload)),
+      ...this.cipher.sealCredentials(this.stripUndefined(this.normalizePayload(payload)), TABLE),
     });
     const saved = await this.accessRepo.save(created);
     const full = await this.accessRepo.findOne({ where: { id: saved.id } });
@@ -52,6 +60,8 @@ export class UserVoiceAccessService {
     const existing = await this.ensureOwnedAccess(userId, id);
     const patch = this.stripUndefined(this.normalizePayload(payload));
     const updated = this.accessRepo.merge(existing, patch);
+    // Seals the new values and any legacy plaintext the patch did not touch (idempotent on ciphertext).
+    Object.assign(updated, this.cipher.sealCredentials({ username: updated.username, password: updated.password }, TABLE));
     await this.accessRepo.save(updated);
     const full = await this.accessRepo.findOne({ where: { id } });
     return this.serialize(full!);
@@ -62,8 +72,15 @@ export class UserVoiceAccessService {
     await this.accessRepo.delete({ id: existing.id });
   }
 
+  /**
+   * The access with its credentials in PLAINTEXT, for provider calls only: never serialize or log the result. A legacy plaintext
+   * row is re-encrypted on the way (compare-and-set, see `resealLegacyRow`). Throws when ciphertext cannot be decrypted.
+   */
   async getAccessWithSecrets(userId: number, id: number) {
-    return this.accessRepo.findOne({ where: { id, userId } });
+    const row = await this.accessRepo.findOne({ where: { id, userId } });
+    if (!row) return null;
+    if (this.cipher.hasPlaintext(row)) await resealLegacyRow(this.accessRepo, row, this.cipher, TABLE);
+    return this.cipher.openCredentials(row, TABLE);
   }
 
   private async ensureOwnedAccess(userId: number, id: number) {
@@ -92,7 +109,7 @@ export class UserVoiceAccessService {
         signupUrl: provider.signupUrl,
       } : null,
       baseUrlOverride: entry.baseUrlOverride,
-      username: entry.username,
+      username: this.cipher.openOrNull(entry.username, TABLE, 'username'),
       hasPassword: Boolean(entry.password && entry.password.length),
       providerConfig: entry.providerConfig,
       createdAt: entry.createdAt,
@@ -101,6 +118,7 @@ export class UserVoiceAccessService {
   }
 
   private normalizePayload(payload: UserUpsertVoiceAccessDto) {
+    this.assertSafeTarget(payload);
     return {
       label: payload.label.trim(),
       providerId: payload.providerId,
@@ -112,6 +130,17 @@ export class UserVoiceAccessService {
           : this.normalizeNullable(payload.password),
       providerConfig: payload.providerConfig ?? undefined,
     };
+  }
+
+  /** The server calls this URL / region with the user's key: refuse anything that is not a public https provider host. */
+  private assertSafeTarget(payload: UserUpsertVoiceAccessDto): void {
+    const base = payload.baseUrlOverride?.trim();
+    if (base && !isSafeUserBaseUrl(base)) {
+      throw new BadRequestException('baseUrlOverride must be an https URL on a public host name');
+    }
+    if (!isSafeRegion(payload.providerConfig?.region)) {
+      throw new BadRequestException('providerConfig.region must be a plain region id');
+    }
   }
 
   private normalizeNullable(value?: string | null) {

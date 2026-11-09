@@ -13,6 +13,7 @@ import { GoogleCloudTtsClient } from './clients/GoogleCloudTtsClient';
 import { AmazonPollyClient } from './clients/AmazonPollyClient';
 import { AzureTtsClient } from './clients/AzureTtsClient';
 import { ElevenLabsTtsClient } from './clients/ElevenLabsTtsClient';
+import { OpenAiTtsClient } from './clients/OpenAiTtsClient';
 import type { TtsRequest, TtsResponse } from '../types/TtsTypes';
 import type { VoiceCallParams } from '../types/VoiceCallParams';
 
@@ -24,6 +25,7 @@ export class VoiceTtsService {
     private readonly polly: AmazonPollyClient,
     private readonly azure: AzureTtsClient,
     private readonly elevenLabs: ElevenLabsTtsClient,
+    private readonly openAi: OpenAiTtsClient,
   ) {}
 
   async synthesize(accessId: number, request: TtsRequest): Promise<TtsResponse> {
@@ -55,6 +57,8 @@ export class VoiceTtsService {
         return this.azure.synthesize(params, request);
       case 'elevenlabs':
         return this.elevenLabs.synthesize(params, request);
+      case 'openai':
+        return this.openAi.synthesize(params, request);
       default:
         throw new BadRequestException(`Unsupported TTS provider type: ${provider.type}`);
     }
