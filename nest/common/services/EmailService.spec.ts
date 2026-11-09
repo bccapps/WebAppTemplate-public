@@ -69,3 +69,34 @@ describe('EmailService log masking', () => {
     log.mockRestore();
   });
 });
+
+describe('EmailService per-message sender name', () => {
+  const smtp = {
+    common_email_provider: 'smtp', common_email_smtpHost: 'relay.example.com', common_email_smtpPort: '465', common_email_smtpSecure: 'true',
+    common_email_fromAddress: 'noreply@example.com', common_email_fromName: 'Global',
+  };
+
+  const sentFrom = async (options?: { fromName?: string }): Promise<unknown> => {
+    const send = jest.fn(async (_message: unknown) => ({ messageId: 'id', response: '250 OK' }));
+    const create = jest.spyOn(nodemailer, 'createTransport').mockReturnValue({ sendMail: send, close: () => undefined } as never);
+    await serviceWith(smtp).sendEmail('a@b.c', 's', '<p>x</p>', options);
+    create.mockRestore();
+    return (send.mock.calls[0][0] as { from: string }).from;
+  };
+
+  it('keeps the global sender name without an override', async () => {
+    expect(await sentFrom()).toBe('"Global" <noreply@example.com>');
+  });
+
+  it('replaces the name but keeps the configured address', async () => {
+    expect(await sentFrom({ fromName: 'Papang Labs' })).toBe('"Papang Labs" <noreply@example.com>');
+  });
+
+  it('strips quotes and line breaks from the override (header injection)', async () => {
+    expect(await sentFrom({ fromName: 'Evil"\r\nBcc: x@y.z' })).toBe('"EvilBcc: x@y.z" <noreply@example.com>');
+  });
+
+  it('falls back to the global name when the override is blank', async () => {
+    expect(await sentFrom({ fromName: '  ' })).toBe('"Global" <noreply@example.com>');
+  });
+});

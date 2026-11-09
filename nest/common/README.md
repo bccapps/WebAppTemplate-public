@@ -198,6 +198,7 @@ Widget de don non-custodial : affiche une adresse/QR/lien à payer, ne confirme 
 | `common_email_provider` | select | `none` | Fournisseur : `none`, `brevo`, `mailjet`, `smtp` |
 | `common_email_fromAddress` | string | _(vide)_ | Adresse expéditeur |
 | `common_email_fromName` | string | _(vide)_ | Nom affiché de l'expéditeur |
+| _(option `sendEmail`)_ `fromName` | string | — | Remplace `common_email_fromName` pour un seul message (adresse inchangée ; ignoré si `from` est fourni) |
 | `common_email_brevoApiKey` | secret | _(vide)_ | Clé API Brevo |
 | `common_email_brevoUser` | string | _(vide)_ | Login Brevo |
 | `common_email_mailjetApiKey` | string | _(vide)_ | Clé API publique Mailjet (identifiant SMTP) |

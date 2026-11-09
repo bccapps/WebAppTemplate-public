@@ -19,6 +19,12 @@ export type SendEmailOptions = {
   replyTo?: string;
   from?: string;
   /**
+   * Display name for this message only, replacing the configured sender name
+   * (`common_email_fromName`) while keeping the configured sender address.
+   * Ignored when `from` is set.
+   */
+  fromName?: string;
+  /**
    * Extra SMTP headers. Bulk senders use these to attach a provider correlation
    * id (`X-MJ-CustomID`, `X-Mailin-custom`) so opens, clicks and bounces can be
    * traced back to a recipient later.
@@ -211,7 +217,7 @@ export class EmailService {
     }
 
     const fromAddress = options?.from
-      || this.buildFromAddress();
+      || this.buildFromAddress(options?.fromName);
 
     try {
       const info = await transport.sendMail({
@@ -247,9 +253,11 @@ export class EmailService {
     return this.sendEmail(to, subject, html);
   }
 
-  private buildFromAddress(): string {
+  private buildFromAddress(nameOverride?: string): string {
     const address = this.getConfigValue('common_email_fromAddress');
-    const name = this.getConfigValue('common_email_fromName');
+    // Control characters would allow header injection; quotes/backslashes would break the quoted name.
+    const override = nameOverride?.replace(/[\u0000-\u001f\u007f"\\]/g, '').trim();
+    const name = override || this.getConfigValue('common_email_fromName');
     if (!address) return '';
     return name ? `"${name}" <${address}>` : address;
   }
