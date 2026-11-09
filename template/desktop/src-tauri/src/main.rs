@@ -20,6 +20,7 @@ mod health;
 mod logs;
 mod process;
 mod resources;
+mod sidecar_message;
 mod splash;
 
 use std::env as std_env;
@@ -111,6 +112,19 @@ fn build_window(app: &tauri::App, cfg: &DesktopConfig) -> tauri::Result<()> {
     Ok(())
 }
 
+/// `sidecar_message` is a Tauri permission granted to the local back's pages (`capabilities/sidecar-message.json`); the remote origins the config names
+/// (a hub shown in the window in client mode) get it here, at start-up, from the same permission.
+fn allow_message_origins(app: &tauri::App, cfg: &DesktopConfig) -> tauri::Result<()> {
+    if cfg.messaging.origins.is_empty() {
+        return Ok(());
+    }
+    let mut capability = tauri::ipc::CapabilityBuilder::new("sidecar-message-remote").window("main").permission("allow-sidecar-message");
+    for origin in &cfg.messaging.origins {
+        capability = capability.remote(format!("{origin}/*"));
+    }
+    app.add_capability(capability)
+}
+
 fn main() {
     // Linux: WebKitGTK's DMA-BUF renderer shows a blank window or crashes with some proprietary NVIDIA drivers.
     // Disabled unless explicitly set.
@@ -136,8 +150,11 @@ fn main() {
 
     let setup_cfg = cfg.clone();
     builder
+        .invoke_handler(tauri::generate_handler![sidecar_message::sidecar_message])
         .setup(move |app| {
             app.manage(Processes(Mutex::new(Vec::new())));
+            app.manage(sidecar_message::SidecarEndpoints::default());
+            allow_message_origins(app, &setup_cfg)?;
             watch_signals(app.handle().clone());
             build_window(app, &setup_cfg)?;
             let (handle, cfg) = (app.handle().clone(), setup_cfg.clone());

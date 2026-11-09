@@ -219,7 +219,9 @@ function bundle({ root, out, desktopConfig, extra, target, sign, bundles, versio
   if (target.os !== 'darwin' || bundles === 'none') return;
   const bundleDir = path.join(desktop, 'src-tauri', 'target', 'release', 'bundle');
   const app = path.join(bundleDir, 'macos', `${desktopConfig.productName}.app`);
-  if (sign) run('codesign', ['--force', '--deep', '--sign', '-', app]);
+  // The ad-hoc signature must keep the entitlements of the shell (`--force` replaces what `tauri build` signed with): the microphone one, for now.
+  const entitlements = path.join(desktop, 'src-tauri', 'Entitlements.plist');
+  if (sign) run('codesign', ['--force', '--deep', '--sign', '-', ...(existsSync(entitlements) ? ['--entitlements', entitlements] : []), app]);
   if (!dmg) return;
   const dmgFile = path.join(bundleDir, 'dmg', dmgName(desktopConfig.productName, version ?? '0.0.0', target));
   run('sh', [path.join(path.dirname(fileURLToPath(import.meta.url)), 'make-dmg.sh'), '--app', app, '--name', desktopConfig.productName, '--out', dmgFile]);

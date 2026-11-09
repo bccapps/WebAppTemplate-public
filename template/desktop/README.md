@@ -41,7 +41,8 @@ desktop/
 | `dbFile` | SQLite file name inside the data folder (default `app.db`), exported as `DB_PATH`. |
 | `schema` | How the database schema is managed at boot: `sync` (synchronize, no migrations), `migrations` (the app's own SQLite migrations run at start) or `manual`. The shell forces it as `DB_SCHEMA_MODE`. Absent = legacy: the shell forces `DB_MIGRATIONS_RUN=true` (apps with hand-written SQLite migrations keep working unchanged). An app whose migrations are PostgreSQL SQL (a desktop *variant* of a web app) declares `"schema": "sync"`. Details: `nest/database/README.md`, "Schema management". |
 | `server` | The back. `command` (string or candidate list), `args`, `cwd`, `env`, `healthPath` (default `/api/v1/health`), `readyTimeoutSec` (default 120), `sharedToken`. |
-| `sidecars[]` | Same shape as `server`, plus `name` (required, unique, not `server`), `label`, `port`, `optional` and `os`. Started in order **before** the server (those whose `os` list does not contain this OS are skipped). |
+| `sidecars[]` | Same shape as `server`, plus `name` (required, unique, not `server`), `label`, `port`, `optional`, `os` and `messages`. Started in order **before** the server (those whose `os` list does not contain this OS are skipped). |
+| `messaging` | `origins`: remote `https://host[:port]` origins whose pages may call the `sidecar_message` command (see « Talking to a sidecar from a page »). The page of the local back always may. |
 | `packaging` | `nodeVersion` (default: pinned) and `extraResources`, read by the packaging scripts only (see Packaging). |
 | `splash.brand` | `background`, `foreground`, `accent` colors of the waiting page (and of the window background). |
 | `splash.texts` | `{ "fr": { id: text }, "en": { ... } }` overrides of the default messages (`splash/messages.json`). |
@@ -64,6 +65,8 @@ Process fields:
   waiting page does not show it. Use it for a process whose prerequisites may be missing on a machine (a runner needing `tmux`).
 - `os` (sidecars only, default: every OS): the operating systems the process runs on, among `macos`, `linux`, `windows`.
   Declare one sidecar per OS family when the launch differs (see "Launchers").
+- `messages` (sidecars only, default: none; needs `port`): the requests a page may relay to this sidecar's loopback HTTP server through the
+  `sidecar_message` command, as exact `"METHOD /path"` entries (`"POST /v1/pair"`). See « Talking to a sidecar from a page ».
 
 Example with a sidecar:
 
@@ -202,6 +205,41 @@ that stack without any declaration.
   `npm install` and warns.
 - **Runtime parts the dropped modules provided** (a `QueryClientProvider`, an identity) are the application's to supply in the
   variant: the shell only builds and runs it.
+
+## Talking to a sidecar from a page (`sidecar_message`)
+
+A page served by a **remote** origin (an https hub the window shows) cannot `fetch("http://127.0.0.1:<port>")`: the browser blocks it (mixed content /
+local network access) and the sidecar's port is random per launch. The shell has one generic Tauri command for that, `sidecar_message`; it knows the
+port and the shared token and relays. Nothing is open by default:
+
+- a sidecar is reachable only through the **exact** `"METHOD /path"` entries of its `messages` list (methods `GET`, `POST`, `PUT`, `DELETE`; no query,
+  no `..`, no space); anything else is refused before any connection; the target is always `127.0.0.1:<the sidecar's port>`;
+- the shell adds `Authorization: Bearer <the sidecar's shared token>` when the sidecar declares `sharedToken`: the page never sees the token;
+- the command is a Tauri permission (`allow-sidecar-message`, an app command listed in `build.rs`): `capabilities/sidecar-message.json` grants it to the page of the
+  local back (`http://127.0.0.1:*`, `http://localhost:*`), and `messaging.origins` adds remote origins at start-up (`https://hub.example.com`, no path, no wildcard);
+- bodies are JSON, 64 KiB at most; answers 1 MiB at most; 2 s to connect, 30 s to answer.
+
+```json
+{ "sidecars": [{ "name": "voice-engine", "port": true, "sharedToken": "VOICE_ENGINE_TOKEN", "messages": ["POST /v1/pair", "GET /v1/status"] }],
+  "messaging": { "origins": ["https://hub.example.com"] } }
+```
+
+```ts
+// in the page (the Tauri webview injects window.__TAURI_INTERNALS__ into every page it shows)
+const reply = await window.__TAURI_INTERNALS__.invoke('sidecar_message', {
+  request: { sidecar: 'voice-engine', method: 'POST', path: '/v1/pair', body: { hubUrl, code } },
+}); // { status: 200, body: <the sidecar's JSON, else its text> }
+```
+
+The shell does not load a remote page by itself yet (it shows the local back); the origins list and the permission are what such a window needs.
+
+## macOS: microphone
+
+`src-tauri/Info.plist` (merged by Tauri into the app's `Info.plist`) carries `NSMicrophoneUsageDescription`: without it macOS never shows its microphone
+prompt and a page that asks for the microphone gets a silent refusal. Edit the sentence for your app. `src-tauri/Entitlements.plist` (`bundle.macOS.entitlements`) carries
+`com.apple.security.device.audio-input`, required once the app is signed with the hardened runtime; `build-desktop.mjs` passes it again when it re-signs the app ad hoc
+(`codesign --force` would otherwise drop it). The first use of the microphone shows the macOS prompt once per app signature (an ad-hoc signature changes with every build,
+so a rebuilt app asks again).
 
 ## Downloads
 

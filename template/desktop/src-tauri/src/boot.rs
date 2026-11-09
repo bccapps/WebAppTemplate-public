@@ -24,6 +24,7 @@ use crate::health::{free_ports, http_ok};
 use crate::logs::{open_rotated_log, shell_log, tail};
 use crate::process::{spawn_process, Managed, Processes, SpawnSpec};
 use crate::resources::{pick_command, pick_resources_dir, RESOURCES_ENV};
+use crate::sidecar_message::{Endpoint, SidecarEndpoints};
 use crate::splash::{error_js, eval, init_js, merged_texts, status_js, Params};
 
 const SPLASH_LOAD_DELAY: Duration = Duration::from_millis(900);
@@ -324,8 +325,20 @@ fn watch(app: &AppHandle, cfg: &DesktopConfig, ctx: &Context, splash_url: Option
     }
 }
 
+/// The sidecars a page may talk to (`messages` in the config): their port, the shared token the shell adds, the allowed requests.
+fn publish_endpoints(app: &AppHandle, cfg: &DesktopConfig, ctx: &Context) {
+    let endpoints = app.state::<SidecarEndpoints>();
+    let mut table = endpoints.0.lock().unwrap();
+    for p in all_processes(cfg).into_iter().filter(|p| !p.messages.is_empty()) {
+        let Some(port) = ctx.ports.get(p.name()) else { continue };
+        let token = p.shared_token.is_some().then(|| ctx.token.clone());
+        table.insert(p.name().to_string(), Endpoint { port: *port, token, allowed: p.messages.clone() });
+    }
+}
+
 fn run(app: &AppHandle, cfg: &DesktopConfig) -> Result<(), BootError> {
     let ctx = prepare(app, cfg)?;
+    publish_endpoints(app, cfg, &ctx);
     shell_log(&ctx.logs_dir, &format!("resources: {}", ctx.resources.display()));
     if !start_all(app, cfg, &ctx)? {
         return Ok(());

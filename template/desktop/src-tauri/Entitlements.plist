@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  VXFramework
+
+  Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
+  SPDX-License-Identifier: MIT
+
+  Licensed under the MIT License. See LICENSE in the project root.
+
+  Entitlements of the macOS app (bundle.macOS.entitlements). The microphone one is required once the app is signed with the hardened runtime
+  (Developer ID, notarization); an ad-hoc build does not need it but carries it so that the later signature does not change what the app may do.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>

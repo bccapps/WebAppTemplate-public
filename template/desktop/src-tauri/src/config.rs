@@ -69,6 +69,19 @@ pub struct ProcessConfig {
     /// Sidecars only: operating systems this process runs on (`macos`, `linux`, `windows`); empty = all.
     #[serde(default)]
     pub os: Vec<String>,
+    /// Sidecars only: the requests the webview may relay to this sidecar through the `sidecar_message` command, as exact `"METHOD /path"`
+    /// entries (`"POST /v1/pair"`). Empty = the sidecar cannot be reached from a page. Needs `port`.
+    #[serde(default)]
+    pub messages: Vec<String>,
+}
+
+/// Who may call `sidecar_message` besides the page of the local back (always allowed).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MessagingConfig {
+    /// Origins (`https://hub.example.com`, no path) whose pages may call the command: the remote hub a window shows in client mode.
+    #[serde(default)]
+    pub origins: Vec<String>,
 }
 
 /// One env var name, or several receiving the same token.
@@ -186,6 +199,8 @@ pub struct DesktopConfig {
     pub sidecars: Vec<ProcessConfig>,
     #[serde(default)]
     pub splash: SplashConfig,
+    #[serde(default)]
+    pub messaging: MessagingConfig,
     /// Read by the packaging scripts (`scripts/desktop/`) only; the shell ignores it.
     #[serde(default)]
     #[allow(dead_code)]
@@ -266,6 +281,9 @@ fn validate(cfg: &DesktopConfig) -> Result<(), String> {
             return Err(format!("schema must be one of {} (got \"{schema}\")", SCHEMA_MODES.join(", ")));
         }
     }
+    for origin in &cfg.messaging.origins {
+        valid_origin(origin)?;
+    }
     validate_process(&cfg.server)?;
     let mut seen: HashSet<&str> = HashSet::from([SERVER_NAME]);
     for sidecar in &cfg.sidecars {
@@ -294,6 +312,17 @@ fn validate_process(p: &ProcessConfig) -> Result<(), String> {
     if p.command.candidates().iter().all(|c| c.trim().is_empty()) {
         return Err(format!("{name}: command must not be empty"));
     }
+    if !p.messages.is_empty() {
+        if p.name.as_deref() == Some(SERVER_NAME) {
+            return Err("the server has no messages: only sidecars can be reached by sidecar_message".into());
+        }
+        if !p.port {
+            return Err(format!("{name}: messages require \"port\": true"));
+        }
+        for entry in &p.messages {
+            crate::sidecar_message::valid_message_entry(entry).map_err(|e| format!("{name}: messages {e}"))?;
+        }
+    }
     if let Some(path) = &p.health_path {
         if !path.starts_with('/') {
             return Err(format!("{name}: healthPath must start with '/'"));
@@ -301,6 +330,15 @@ fn validate_process(p: &ProcessConfig) -> Result<(), String> {
         if !p.port {
             return Err(format!("{name}: healthPath requires \"port\": true"));
         }
+    }
+    Ok(())
+}
+
+/// `https://host[:port]`, nothing after it (the loopback `http` origins are the local back's, already allowed).
+fn valid_origin(origin: &str) -> Result<(), String> {
+    let rest = origin.strip_prefix("https://").ok_or_else(|| format!("messaging.origins: \"{origin}\" must start with https://"))?;
+    if rest.is_empty() || rest.contains('/') || rest.contains('*') || rest.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(format!("messaging.origins: \"{origin}\" must be a bare origin (https://host[:port])"));
     }
     Ok(())
 }
@@ -378,6 +416,21 @@ mod tests {
             assert_eq!(parse_config(&with(&format!(r#","schema":"{mode}""#))).unwrap().schema.as_deref(), Some(mode));
         }
         assert!(parse_config(&with(r#","schema":"auto""#)).unwrap_err().contains("sync, migrations, manual"));
+    }
+
+    #[test]
+    fn messages_and_origins_are_validated() {
+        let with = |s: &str, m: &str| format!(r#"{{"productName":"A","identifier":"x","server":{{"command":"n"}}{m},"sidecars":[{s}]}}"#);
+        let ok = parse_config(&with(r#"{"name":"e","command":"p","port":true,"messages":["POST /v1/pair","GET /v1/status"]}"#, r#","messaging":{"origins":["https://hub.example.com"]}"#)).unwrap();
+        assert_eq!(ok.sidecars[0].messages.len(), 2);
+        assert_eq!(ok.messaging.origins, vec!["https://hub.example.com"]);
+        assert!(parse_config(&with(r#"{"name":"e","command":"p","messages":["POST /v1/pair"]}"#, "")).unwrap_err().contains("require"));
+        assert!(parse_config(&with(r#"{"name":"e","command":"p","port":true,"messages":["PATCH /x"]}"#, "")).unwrap_err().contains("method must be"));
+        assert!(parse_config(&with(r#"{"name":"e","command":"p","port":true,"messages":["GET /a/../b"]}"#, "")).is_err());
+        assert!(parse_config(r#"{"productName":"A","identifier":"x","server":{"command":"n","messages":["GET /x"]}}"#).unwrap_err().contains("server has no messages"));
+        for bad in ["http://hub.example.com", "https://*.example.com", "https://hub.example.com/path", "hub.example.com", "https://"] {
+            assert!(parse_config(&with(r#"{"name":"e","command":"p"}"#, &format!(r#","messaging":{{"origins":["{bad}"]}}"#))).is_err(), "{bad}");
+        }
     }
 
     #[test]
