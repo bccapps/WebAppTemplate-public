@@ -147,6 +147,9 @@ case "$*" in
 esac
 exit 0
 `,
+  // local client tools: backup-db.sh dumps a cloud database from the deploying machine
+  pg_dump: '#!/usr/bin/env bash\necho "pg_dump $*" >> "$STUB_LOG"\nif [ -n "${STUB_PGDUMP_FAIL:-}" ]; then exit 1; fi\necho "-- pg dump"\n',
+  psql: '#!/usr/bin/env bash\necho "psql $*" >> "$STUB_LOG"\nexit 0\n',
   npm: '#!/usr/bin/env bash\necho "npm $*" >> "$STUB_LOG"\nexit 0\n',
   npx: '#!/usr/bin/env bash\necho "npx $*" >> "$STUB_LOG"\nexit 0\n',
   curl: '#!/usr/bin/env bash\necho "curl $*" >> "$STUB_LOG"\nexit 0\n',
@@ -453,13 +456,14 @@ test('deploy --no-auto-rollback: exit 1, nothing rolled back', () => {
   } finally { p.cleanup(); }
 });
 
-test('deploy: cloud database -> warning, no backup; Postgres dumps only with --migrate', () => {
+test('deploy: cloud database without sync/--migrate -> no dump; Postgres dumps only with --migrate', () => {
   const cloud = deployedProject({ engine: 'supabase' });
   try {
     const r = cloud.run(['prod', '--no-update-common', '--target=back']);
     assert.equal(r.status, 0, r.out);
     assert.match(strip(r.out), /^==> \[BACK:10\.0\.0\.1\] Backing up database$/m);
-    assert.match(strip(r.out), /no automatic backup/);
+    assert.match(strip(r.out), /Cloud database: no migration and no schema sync in this deploy — pre-deploy dump skipped/);
+    assert.equal(indexOfLine(cloud.logLines(), /^pg_dump /), -1);
     assert.equal(indexOfLine(cloud.logLines(), /^docker .* run --rm /), -1);
   } finally { cloud.cleanup(); }
 
@@ -855,6 +859,61 @@ test('Postgres: a dump younger than DEPLOY_DB_BACKUP_MIN_AGE_HOURS is reused; --
     r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_RECENT_DUMP: recent, DEPLOY_DB_BACKUP_MIN_AGE_HOURS: '0' });
     assert.equal(r.status, 0, r.out);
     assert.ok(indexOfLine(p.logLines(), PG_DUMP) >= 0, 'MIN_AGE 0 = every deploy');
+  } finally { p.cleanup(); }
+});
+
+test('cloud database (sync): dumped from this machine by backup-db.sh before the switch, period and keep shared with self-hosted', () => {
+  const p = deployedProject({ engine: 'supabase', extraBackEnv: 'DB_SCHEMA_MODE=sync\nBACK_HOSTS=10.0.0.1,10.0.0.3' });
+  const dir = path.join(p.root, 'backups/deploy-prod');
+  const LOCAL_DUMP = /^pg_dump --host=db\.example\.com .*--schema=public/;
+  try {
+    let r = p.run(['prod', '--no-update-common', '--target=back']);
+    assert.equal(r.status, 0, r.out);
+    let lines = p.logLines();
+    assert.equal(lines.filter((l) => LOCAL_DUMP.test(l)).length, 1, 'one dump for both back hosts (shared database)');
+    assert.ok(indexOfLine(lines, LOCAL_DUMP) < indexOfLine(lines, /^docker .*compose .* up -d back$/), 'dumped before the switch');
+    assert.match(strip(r.out), /^==> \[BACK:10\.0\.0\.3\] Cloud database: already dumped in this deploy/m);
+    let dumps = readdirSync(dir);
+    assert.equal(dumps.length, 1);
+    assert.match(dumps[0], /^testapp_pre-abc1234_\d{8}T\d{6}Z\.sql\.gz$/);
+    assert.equal(spawnSync('gzip', ['-t', path.join(dir, dumps[0])]).status, 0, 'a valid .sql.gz');
+    assert.match(strip(r.out), /restore-db\.sh prod \.\/backups\/deploy-prod\/testapp_pre-abc1234_/);
+    assert.equal(indexOfLine(lines, /^scp .*testapp_pre-/), -1, 'already local: nothing downloaded');
+    const state = JSON.parse(lines.find((l) => l.startsWith('STATE_JSON: ')).slice('STATE_JSON: '.length));
+    assert.equal(state.dbBackup, '', 'no server-side backup recorded for a rollback --restore-db');
+
+    writeFileSync(p.log, '');
+    r = p.run(['prod', '--no-update-common', '--target=back']);
+    assert.equal(r.status, 0, r.out);
+    assert.match(strip(r.out), /Cloud database: the last pre-deploy dump is less than 24 h old .*no new dump/);
+    assert.equal(indexOfLine(p.logLines(), /^pg_dump /), -1);
+
+    for (let i = 0; i < 2; i += 1) {
+      writeFileSync(p.log, '');
+      r = p.run(['prod', '--no-update-common', '--force-db-backup', '--target=back'], { STUB_GIT_REV: `f0rce${i}` });
+      assert.equal(r.status, 0, r.out);
+      assert.ok(indexOfLine(p.logLines(), LOCAL_DUMP) >= 0, '--force-db-backup dumps anyway');
+    }
+    dumps = readdirSync(dir).sort();
+    assert.deepEqual(dumps.map((d) => d.split('_')[1]), ['pre-f0rce0', 'pre-f0rce1'], 'DEPLOY_DB_BACKUP_KEEP (2) kept');
+  } finally { p.cleanup(); }
+});
+
+test('cloud database: a failed dump stops the deploy before the switch; DEPLOY_CLOUD_DB_BACKUP=0 skips it', () => {
+  const p = deployedProject({ engine: 'supabase', extraBackEnv: 'DB_SCHEMA_MODE=sync' });
+  try {
+    let r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_PGDUMP_FAIL: '1' });
+    assert.equal(r.status, 1, r.out);
+    assert.match(strip(r.out), /Cloud database dump failed \(DEPLOY_CLOUD_DB_BACKUP=0 deploys without it\)/);
+    assert.match(strip(r.out), /deploy stopped before the switch/);
+    assert.equal(indexOfLine(p.logLines(), /^docker .*compose .* up -d back$/), -1);
+    assert.deepEqual(readdirSync(path.join(p.root, 'backups/deploy-prod')), [], 'no partial dump left');
+
+    writeFileSync(p.log, '');
+    r = p.run(['prod', '--no-update-common', '--target=back'], { DEPLOY_CLOUD_DB_BACKUP: '0' });
+    assert.equal(r.status, 0, r.out);
+    assert.match(strip(r.out), /pre-deploy dump disabled \(DEPLOY_CLOUD_DB_BACKUP=0\) — rely on the provider's backups\/PITR/);
+    assert.equal(indexOfLine(p.logLines(), /^pg_dump /), -1);
   } finally { p.cleanup(); }
 });
 

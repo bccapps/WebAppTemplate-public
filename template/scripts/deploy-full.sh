@@ -25,7 +25,7 @@ set -euo pipefail
 #   ./scripts/deploy-full.sh --no-auto-rollback   Do not roll back automatically when the new back is not healthy
 #                                            (default: roll back, exit 3 = restored, exit 4 = rollback failed)
 #   ./scripts/deploy-full.sh --migrate       Tell the script migrations ran (self-hosted Postgres: always dump)
-#   ./scripts/deploy-full.sh --force-db-backup   Self-hosted Postgres: dump even when the last one is recent
+#   ./scripts/deploy-full.sh --force-db-backup   Postgres (self-hosted or cloud): dump even when the last one is recent
 #   ./scripts/deploy-full.sh --rollback [--restore-db] [--target=...]
 #                                            Swap back to the previous version (no build, no submodule update);
 #                                            normally launched through `./scripts/run.sh rollback <preprod|prod>`
@@ -36,7 +36,9 @@ set -euo pipefail
 # + -dirty) is injected into the back env and exposed by GET /api/v1/health. Database backups (lib/deploy-versions.sh):
 # SQLite: on the volume at every switch; self-hosted Postgres (--migrate or DB_SCHEMA_MODE=sync): a dump on the server
 # while the old back still serves, at most one per DEPLOY_DB_BACKUP_MIN_AGE_HOURS (24); DEPLOY_DB_BACKUP_KEEP (2) kept
-# on the server and in ./backups (local copy at the end of the deploy, DEPLOY_DB_BACKUP_DOWNLOAD=0 to skip).
+# on the server and in ./backups (local copy at the end of the deploy, DEPLOY_DB_BACKUP_DOWNLOAD=0 to skip); cloud
+# database (supabase/neon/cloud): same conditions and period, dumped from this machine by backup-db.sh straight into
+# ./backups/deploy-<environment>/ (DEPLOY_CLOUD_DB_BACKUP=0 to skip).
 # Exit codes: 0 ok, 3 failed + previous version restored, 4 failed + rollback failed.
 #
 # Speed: SSH connections are reused (lib/ssh-mux.sh, DEPLOY_SSH_MUX=0 to disable); every phase is timed
@@ -1689,8 +1691,8 @@ deploy_back_host() {
     dt_record "back ${target_host}: voice-engine image build" "${t0}"
   fi
 
-  # Self-hosted Postgres dump (cloud DB: warning) while the CURRENT version still serves: outside the maintenance
-  # window. A failure stops the deploy before anything was switched (the running version is untouched).
+  # Postgres dump (self-hosted: on the server; cloud: from this machine) while the CURRENT version still serves: outside
+  # the maintenance window. A failure stops the deploy before anything was switched (the running version is untouched).
   t0="$(dt_now)"
   if ! dv_backup_db_before_switch "${DEPLOY_REVISION}"; then
     err "[BACK:${target_host}] Database backup failed — deploy stopped before the switch, the current version keeps running"
@@ -1698,7 +1700,8 @@ deploy_back_host() {
     exit 1
   fi
   db_backup="${DV_DB_BACKUP}"
-  if [[ "${IS_SELF_HOSTED_DB}" -eq 1 ]]; then dt_record "back ${target_host}: Postgres backup (old version serving)" "${t0}"; fi
+  if [[ "${IS_SELF_HOSTED_DB}" -eq 1 ]]; then dt_record "back ${target_host}: Postgres backup (old version serving)" "${t0}"
+  elif [[ "${IS_SQLITE_DB}" -ne 1 ]]; then dt_record "back ${target_host}: cloud database dump (old version serving)" "${t0}"; fi
 
   # Per-host env patches (internal service names, SERVER_IP) on the staged back/.env — local file edits, done before
   # the maintenance window; the public env is restored after the switch so subsequent hosts start from it.

@@ -215,7 +215,11 @@ dv_sqlite_file()   { printf '/data/%s.db' "${PROJECT_NAME}"; }
 #              crosses the network, only the end-of-deploy local copy does). At most one per
 #              DEPLOY_DB_BACKUP_MIN_AGE_HOURS (default 24, 0 = every deploy): a more recent dump is reused, unless
 #              --migrate or --force-db-backup.
-#   other    : cloud/supabase/neon -> warning only
+#   other    : cloud/supabase/neon — same conditions and period as the self-hosted dump, but the database is not on the
+#              host: scripts/backup-db.sh runs on THIS machine BEFORE the switch (Supabase: public schema, direct
+#              endpoint when reachable) straight into ./backups/deploy-<environment>/<project>_pre-<revision>_<UTC
+#              ts>.sql.gz, once per deploy (every back host shares the database), restored with restore-db.sh.
+#              DEPLOY_CLOUD_DB_BACKUP=0: no dump, warning only (the provider's backups/PITR are the safety net).
 DV_DL_IDX=()                   # local copies queued for the end of the deploy: registry index ...
 DV_DL_REF=()                   # ... and remote reference of the backup
 
@@ -229,7 +233,16 @@ dv_backup_keep() { local k; k="$(dv_int_setting DEPLOY_DB_BACKUP_KEEP 2)"; [[ "$
 
 dv_backup_forced() { [[ "${DV_MIGRATE}" == "1" || "${DV_FORCE_DB_BACKUP:-0}" == "1" ]]; }
 
-# Before the switch (old version still serving): Postgres dump, cloud warning; nothing for SQLite. Sets DV_DB_BACKUP.
+# True when this deploy calls for a Postgres dump (self-hosted or cloud): --migrate / --force-db-backup, or
+# DB_SCHEMA_MODE=sync (the new version may change the schema at boot).
+dv_postgres_dump_wanted() {
+  local schema_mode
+  schema_mode="$(printf '%s' "${DB_SCHEMA_MODE:-}" | tr '[:upper:]' '[:lower:]')"
+  dv_backup_forced || [[ "${schema_mode}" == "sync" ]]
+}
+
+# Before the switch (old version still serving): Postgres dump (self-hosted on the server, cloud from this machine);
+# nothing for SQLite. Sets DV_DB_BACKUP (server-side backups only: a cloud dump is already local).
 # Returns 1 when a backup that should exist failed.
 dv_backup_db_before_switch() {
   local revision="$1"
@@ -239,8 +252,60 @@ dv_backup_db_before_switch() {
   if [[ "${IS_SELF_HOSTED_DB:-0}" -eq 1 ]]; then
     dv_backup_postgres "${revision}"
   else
-    warn "[BACK:${DV_HOST}] Cloud database (DB_ENGINE=${DB_ENGINE_VALUE:-?}): no automatic backup — rely on the provider's backups/PITR; rollback will NOT restore data"
+    dv_backup_cloud "${revision}"
   fi
+}
+
+# Newest local cloud dump of this project younger than DEPLOY_DB_BACKUP_MIN_AGE_HOURS (empty when none / disabled).
+dv_recent_cloud_dump() {
+  local dir="$1" min_age
+  min_age="$(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 24)"
+  [[ "${min_age}" -gt 0 && -d "${dir}" ]] || return 0
+  find "${dir}" -maxdepth 1 -name "${PROJECT_NAME}_pre-*.sql.gz" -mmin -$((min_age * 60)) -exec ls -1t {} + 2>/dev/null \
+    | head -n 1 || true
+}
+
+# Cloud database: dump from this machine through backup-db.sh (the database is not on the deploy host). Once per deploy:
+# DV_CLOUD_DUMP holds the dump made (or reused) for the first back host. Returns 1 when the dump failed.
+dv_backup_cloud() {
+  local revision="$1" dir name recent
+  if [[ "${DEPLOY_CLOUD_DB_BACKUP:-1}" == "0" ]]; then
+    warn "[BACK:${DV_HOST}] Cloud database (DB_ENGINE=${DB_ENGINE_VALUE:-?}): pre-deploy dump disabled (DEPLOY_CLOUD_DB_BACKUP=0) — rely on the provider's backups/PITR; rollback will NOT restore data"
+    return 0
+  fi
+  if ! dv_postgres_dump_wanted; then
+    echo "==> [BACK:${DV_HOST}] Cloud database: no migration and no schema sync in this deploy — pre-deploy dump skipped (provider backups/PITR; ./scripts/backup-db.sh for a manual one)"
+    return 0
+  fi
+  if [[ -n "${DV_CLOUD_DUMP:-}" ]]; then
+    echo "==> [BACK:${DV_HOST}] Cloud database: already dumped in this deploy (${DV_CLOUD_DUMP})"
+    return 0
+  fi
+  dir="$(dv_local_backup_dir)"
+  if ! dv_backup_forced; then
+    recent="$(dv_recent_cloud_dump "${dir}")"
+    if [[ -n "${recent}" ]]; then
+      DV_CLOUD_DUMP="${recent}"
+      echo "==> [BACK:${DV_HOST}] Cloud database: the last pre-deploy dump is less than $(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 24) h old (${recent}) — no new dump (--force-db-backup forces one)"
+      return 0
+    fi
+  fi
+  mkdir -p "${dir}"
+  name="${PROJECT_NAME}_pre-$(dv_safe_name "${revision}")_$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+  echo "==> [BACK:${DV_HOST}] Cloud database: dumping from this machine to ${dir}/${name} (backup-db.sh; the current version keeps serving)"
+  if ! "${SCRIPT_DIR}/backup-db.sh" "$(dv_environment_name)" --env-file "${BACK_ENV_FILE:-./back/.env}" --output "${dir}/${name}.part" \
+    || [[ ! -s "${dir}/${name}.part" ]]; then
+    rm -f "${dir}/${name}.part"
+    err "[BACK:${DV_HOST}] Cloud database dump failed (DEPLOY_CLOUD_DB_BACKUP=0 deploys without it)"
+    return 1
+  fi
+  mv -f "${dir}/${name}.part" "${dir}/${name}"
+  # shellcheck disable=SC2012 # names are generated (no spaces/newlines)
+  ls -1t "${dir}"/${PROJECT_NAME}_pre-*.sql.gz 2>/dev/null | tail -n +$(( $(dv_backup_keep) + 1 )) | while read -r f; do rm -f "${f}"; done
+  DV_CLOUD_DUMP="${dir}/${name}"
+  echo "==> [BACK:${DV_HOST}] Cloud database dump: ${DV_CLOUD_DUMP} (last $(dv_backup_keep) kept in ${dir})"
+  echo "==> [BACK:${DV_HOST}] No automatic restore for a cloud database. To restore manually:"
+  echo "    ./scripts/restore-db.sh $(dv_environment_name) ${DV_CLOUD_DUMP}"
 }
 
 # At the switch (old back stopped, new one not started): SQLite copy; nothing for the other engines. Sets DV_DB_BACKUP.
@@ -322,9 +387,8 @@ dv_report_dump() {
 }
 
 dv_backup_postgres() {
-  local revision="$1" schema_mode ctr dir name recent compression out waited=0
-  schema_mode="$(printf '%s' "${DB_SCHEMA_MODE:-}" | tr '[:upper:]' '[:lower:]')"
-  if ! dv_backup_forced && [[ "${schema_mode}" != "sync" ]]; then
+  local revision="$1" ctr dir name recent compression out waited=0
+  if ! dv_postgres_dump_wanted; then
     echo "==> [BACK:${DV_HOST}] Postgres: no migration and no schema sync in this deploy — pre-deploy dump skipped (use ./scripts/backup-db.sh for a manual one)"
     return 0
   fi

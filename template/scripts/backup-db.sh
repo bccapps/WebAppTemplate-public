@@ -22,6 +22,8 @@ set -euo pipefail
 # Usage:
 #   ./scripts/backup-db.sh <env>            Run backup
 #   ./scripts/backup-db.sh <env> --pooler   Force the connection pooler
+#   ./scripts/backup-db.sh <env> --env-file <file>   Read that env file (<env> is then only a label)
+#   ./scripts/backup-db.sh <env> --output <file>     Write the backup there
 #   ./scripts/backup-db.sh --help           Show this help
 #
 # Env:
@@ -29,7 +31,8 @@ set -euo pipefail
 #   preprod  → reads back/.env.preprod
 #   prod     → reads back/.env
 #
-# Output: ./backups/<PROJECT_NAME>_<env>_YYYY-MM-DD_HH-MM-SS.sql.gz (SQLite: .sqlite.gz)
+# Output: ./backups/<PROJECT_NAME>_<env>_YYYY-MM-DD_HH-MM-SS.sql.gz (SQLite: .sqlite.gz), or --output.
+# deploy-full.sh runs it (--env-file, --output) for the pre-deploy dump of a cloud database.
 #
 # Supabase:
 #   Supavisor (the *.pooler.supabase.com endpoint) closes the SSL connection
@@ -84,24 +87,31 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || "${1:-}" == "help" ]]; then
 fi
 
 # ---------- Args ----------
-[[ $# -lt 1 ]] && err "Usage: $0 <env> [--pooler]  (dev | preprod | prod)"
+[[ $# -lt 1 ]] && err "Usage: $0 <env> [--pooler] [--env-file <file>] [--output <file>]  (dev | preprod | prod)"
 ENV="$1"
 shift
 
 FORCE_POOLER=0
-for arg in "$@"; do
-  case "$arg" in
-    --pooler) FORCE_POOLER=1 ;;
-    *)        err "Unknown argument '$arg' (see --help)" ;;
+ENV_FILE=""
+OUTPUT_FILE=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pooler)   FORCE_POOLER=1 ;;
+    --env-file) [[ -n "${2:-}" ]] || err "--env-file needs a path"; ENV_FILE="$2"; shift ;;
+    --output)   [[ -n "${2:-}" ]] || err "--output needs a path"; OUTPUT_FILE="$2"; shift ;;
+    *)          err "Unknown argument '$1' (see --help)" ;;
   esac
+  shift
 done
 
-case "$ENV" in
-  dev)     ENV_FILE="./back/.env.dev" ;;
-  preprod) ENV_FILE="./back/.env.preprod" ;;
-  prod)    ENV_FILE="./back/.env" ;;
-  *)       err "Unknown env '$ENV'. Use: dev | preprod | prod" ;;
-esac
+if [[ -z "$ENV_FILE" ]]; then
+  case "$ENV" in
+    dev)     ENV_FILE="./back/.env.dev" ;;
+    preprod) ENV_FILE="./back/.env.preprod" ;;
+    prod)    ENV_FILE="./back/.env" ;;
+    *)       err "Unknown env '$ENV'. Use: dev | preprod | prod" ;;
+  esac
+fi
 
 [[ ! -f "$ENV_FILE" ]] && err "Env file not found: $ENV_FILE"
 
@@ -115,7 +125,7 @@ info "Loaded env from $ENV_FILE"
 resolve_db_engine
 if [[ "${IS_SQLITE_DB}" -eq 1 ]]; then
   source "${SCRIPT_DIR}/lib/sqlite-db.sh"
-  sqlite_backup "${ENV}" "./backups/${PROJECT_NAME:-app}_${ENV}_$(date +%Y-%m-%d_%H-%M-%S).sqlite.gz"
+  sqlite_backup "${ENV}" "${OUTPUT_FILE:-./backups/${PROJECT_NAME:-app}_${ENV}_$(date +%Y-%m-%d_%H-%M-%S).sqlite.gz}"
   exit 0
 fi
 
@@ -170,10 +180,9 @@ fi
 # ---------- Output ----------
 PROJECT="${PROJECT_NAME:-$(basename "$PROJECT_ROOT")}"
 TIMESTAMP="$(date +%Y-%m-%d_%H-%M-%S)"
-BACKUP_DIR="./backups"
-BACKUP_FILE="${BACKUP_DIR}/${PROJECT}_${ENV}_${TIMESTAMP}.sql.gz"
+BACKUP_FILE="${OUTPUT_FILE:-./backups/${PROJECT}_${ENV}_${TIMESTAMP}.sql.gz}"
 
-mkdir -p "$BACKUP_DIR"
+mkdir -p "$(dirname "$BACKUP_FILE")"
 
 # ---------- Schemas ----------
 # Supabase owns auth/storage/realtime/vault/graphql/extensions: dumping them
