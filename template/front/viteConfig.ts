@@ -27,7 +27,7 @@
  *   VITE_ALLOWED_HOSTS    comma-separated; overrides opts.allowedHosts
  *   VITE_API_PROXY_PATH   dev proxy path key; overrides opts.apiProxyPath
  *   VITE_STRICT_PORT      "true"/"false"; overrides opts.strictPort
- *   VITE_REOWN_PROJECT_ID injected into import.meta.env
+ *   VITE_REOWN_PROJECT_ID / WALLET_CONNECT_ID public wallet project identifiers injected into import.meta.env
  */
 
 import { defineConfig, loadEnv, type Plugin, type PluginOption, type UserConfig } from 'vite'
@@ -127,6 +127,20 @@ export function envGuardPlugin(allowPublicEnv: readonly string[] = []): Plugin {
   }
 }
 
+/** Expose only the two public wallet IDs, using the real Vite mode rather than process.env.MODE. */
+export function walletConnectEnvPlugin(envDir: string): Plugin {
+  return {
+    name: 'vx-walletconnect-project-id',
+    config(_config, { mode }) {
+      const walletEnv = loadEnv(mode, envDir, ['VITE_', 'WALLET_CONNECT_ID'])
+      return { define: {
+        'import.meta.env.VITE_REOWN_PROJECT_ID': JSON.stringify(walletEnv.VITE_REOWN_PROJECT_ID?.trim() || ''),
+        'import.meta.env.WALLET_CONNECT_ID': JSON.stringify(walletEnv.WALLET_CONNECT_ID?.trim() || ''),
+      } }
+    },
+  }
+}
+
 export function createViteConfig(opts: ViteConfigOptions = {}): UserConfig {
   const cwd = process.cwd()
   const env = loadEnv(process.env.MODE || 'development', cwd, 'VITE_')
@@ -156,7 +170,6 @@ export function createViteConfig(opts: ViteConfigOptions = {}): UserConfig {
     define: {
       global: 'window',
       'process.env': {},
-      'import.meta.env.VITE_REOWN_PROJECT_ID': JSON.stringify(env.VITE_REOWN_PROJECT_ID || ''),
     },
     server: {
       port,
@@ -178,7 +191,10 @@ export function createViteConfig(opts: ViteConfigOptions = {}): UserConfig {
     preview: {
       port,
     },
-    plugins: [envGuardPlugin(opts.allowPublicEnv), react(), ...(opts.extraPlugins ?? [])],
+    plugins: [
+      walletConnectEnvPlugin(cwd),
+      envGuardPlugin(opts.allowPublicEnv), react(), ...(opts.extraPlugins ?? []),
+    ],
     build: {
       // Vendor chunks like the web3 stack are legitimately large; lift the warn
       // threshold so it only fires on genuinely oversized chunks, not expected ones.

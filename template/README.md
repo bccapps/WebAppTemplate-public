@@ -4,6 +4,8 @@
 
 All environments are managed through the unified `scripts/run.sh` launcher.
 
+The `user` module accepts the public wallet project ID under `VITE_REOWN_PROJECT_ID` or `WALLET_CONNECT_ID` (the former wins when both are non-blank). The shared Vite factory exposes these exact names using the active Vite mode; it does not expose other unprefixed environment variables. IDs are embedded at build time, so restart the dev server or rebuild the front after changing them.
+
 ### Dev
 ```bash
 ./scripts/run.sh dev              # Infra (postgres + optional redis) + backend (watch) + frontend (vite)
