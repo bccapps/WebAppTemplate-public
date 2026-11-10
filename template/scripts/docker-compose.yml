@@ -253,7 +253,8 @@ services:
   # it at ws://voice-engine:7840/v1 (VOICE_ENGINE_URL). Off by default: the service belongs to the `voice` profile, which
   # deploy-full.sh enables when VOICE_ENGINE=on in back/.env. No model in the image: they are downloaded into the voice_models
   # volume at first use. The image is built from a private GitHub release of vx-voice-engine (BuildKit secret gh_token, read
-  # from VOICE_ENGINE_GH_TOKEN in the deploying shell — never from back/.env, which reaches the containers).
+  # from VOICE_ENGINE_RELEASE_TOKEN, which deploy-full.sh sets for the build command only from git's credential helpers —
+  # never from back/.env, which reaches the containers).
   voice-engine:
     profiles: [voice]
     image: ${PROJECT_NAME}_voice_engine:${VOICE_ENGINE_VERSION:-dev}
@@ -262,6 +263,7 @@ services:
       dockerfile: Dockerfile
       args:
         VOICE_ENGINE_VERSION: ${VOICE_ENGINE_VERSION:-dev}
+        VOICE_ENGINE_REPO: ${VOICE_ENGINE_REPO:-svax974/vx-voice-engine}
       secrets:
         - gh_token
     restart: unless-stopped
@@ -396,4 +398,4 @@ configs:
 # Voice engine image build only (profile `voice`): token with read access to the releases of the private vx-voice-engine repository.
 secrets:
   gh_token:
-    environment: VOICE_ENGINE_GH_TOKEN
+    environment: VOICE_ENGINE_RELEASE_TOKEN

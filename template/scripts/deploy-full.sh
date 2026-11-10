@@ -200,9 +200,22 @@ fi
 # on = the `voice-engine` compose service (profile `voice`, see docker-compose.yml) is built from a private GitHub release of
 # vx-voice-engine and started next to the back, on the same host and compose network. off = no change at all: the profile is
 # never enabled, nothing is built or uploaded, and a container left by a previous `on` deploy is removed (its volumes are kept).
-# Needs VOICE_ENGINE_VERSION (release tag without the leading v), VOICE_ENGINE_TOKEN (secret shared with the back) and a token
-# able to read the releases of the private repo: VOICE_ENGINE_GH_TOKEN in the deploying shell, else `gh auth token`. That
-# token is a BuildKit secret: it is never written to back/.env (which reaches the containers) nor to an image layer.
+# Needs VOICE_ENGINE_VERSION (release tag without the leading v), VOICE_ENGINE_TOKEN (secret shared with the back) and a git
+# credential able to read the releases of VOICE_ENGINE_REPO (owner/name, default svax974/vx-voice-engine): asked from git
+# (`git credential fill` for https://github.com/<repo>) — on a deploy launched by an administrator from Agent Hub its runner answers
+# with the hub's technical read token, from a terminal this machine's own helper does (osxkeychain, gh…), as for `git push`. Never
+# read from an environment variable: asked right before the image build and given to that one command only (BuildKit secret
+# gh_token), never exported, never written to back/.env (which reaches the containers) nor to an image layer.
+VOICE_ENGINE_REPO="${VOICE_ENGINE_REPO:-svax974/vx-voice-engine}"
+# Prints the password git's credential helpers give for the release repository (empty: none). Never prompts.
+voice_engine_release_token() {
+  printf 'protocol=https\nhost=github.com\npath=%s.git\n\n' "${VOICE_ENGINE_REPO}" \
+    | GIT_TERMINAL_PROMPT=0 GIT_ASKPASS= SSH_ASKPASS= git -c credential.useHttpPath=true credential fill 2>/dev/null \
+    | sed -n 's/^password=//p' | head -n 1
+}
+voice_engine_no_credential() {
+  err "VOICE_ENGINE=on needs a git credential for github.com/${VOICE_ENGINE_REPO}: the hub's technical read token (deploy launched by an administrator from Agent Hub) or this machine's git credential helper."
+}
 VOICE_ENGINE_ENABLED=0
 VOICE_PROFILE_ARGS=()
 case "$(printf '%s' "${VOICE_ENGINE:-off}" | tr '[:upper:]' '[:lower:]')" in
@@ -219,11 +232,9 @@ if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 && "${ROLLBACK_MODE}" != "1" ]]; then
   case "${COMPOSE_FILE_NAME:-}" in
     *cloud*) err "VOICE_ENGINE=on is not available with the multi-host cloud compose file (the engine's volumes are host-local)."; exit 1 ;;
   esac
-  if [[ -z "${VOICE_ENGINE_GH_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
-    VOICE_ENGINE_GH_TOKEN="$(gh auth token 2>/dev/null || true)"
-  fi
-  [[ -n "${VOICE_ENGINE_GH_TOKEN:-}" ]] || { err "VOICE_ENGINE=on needs VOICE_ENGINE_GH_TOKEN (read access to the vx-voice-engine releases) or a logged-in gh."; exit 1; }
-  export VOICE_ENGINE_GH_TOKEN
+  [[ "${VOICE_ENGINE_REPO}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { err "VOICE_ENGINE_REPO='${VOICE_ENGINE_REPO}' is not owner/name."; exit 1; }
+  # Fail early, before anything is built: the value itself is dropped at once and asked again for the build.
+  [[ -n "$(voice_engine_release_token || true)" ]] || { voice_engine_no_credential; exit 1; }
 fi
 if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 ]]; then
   VOICE_PROFILE_ARGS=(--profile voice)
@@ -1674,20 +1685,31 @@ deploy_back_host() {
     build --pull ${NO_CACHE_FLAG} "${BACK_BUILD_SERVICES[@]}"
   dt_record "back ${target_host}: image build on the server (context upload + prod deps + layers)" "${t0}"
 
-  # Voice engine image (VOICE_ENGINE=on): downloads the private release with the BuildKit secret gh_token (compose reads it from
-  # VOICE_ENGINE_GH_TOKEN in this shell). Built while the current version still serves; a failure stops the deploy before the switch.
+  # Voice engine image (VOICE_ENGINE=on): downloads the private release with the BuildKit secret gh_token, which compose reads from
+  # VOICE_ENGINE_RELEASE_TOKEN — set for this one command only, from git's credential helpers, never exported. Built while the
+  # current version still serves; a failure stops the deploy before the switch.
   if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 ]]; then
     echo "==> [BACK:${target_host}] Building voice-engine image (vx-voice-engine ${VOICE_ENGINE_VERSION})"
     t0="$(dt_now)"
-    if ! DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
+    local voice_release_token
+    voice_release_token="$(voice_engine_release_token || true)"
+    if [[ -z "${voice_release_token}" ]]; then
+      voice_engine_no_credential
+      dv_restore_latest_tag "$(dv_back_image)"
+      exit 1
+    fi
+    if ! VOICE_ENGINE_RELEASE_TOKEN="${voice_release_token}" VOICE_ENGINE_REPO="${VOICE_ENGINE_REPO}" \
+      DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
       --project-directory "${BUILD_CONTEXT_DIR}" \
       --project-name "${project_name}" \
       "${VOICE_PROFILE_ARGS[@]}" \
       build --pull voice-engine; then
+      unset voice_release_token
       err "[BACK:${target_host}] voice-engine image build failed — deploy stopped before the switch, the current version keeps running"
       dv_restore_latest_tag "$(dv_back_image)"
       exit 1
     fi
+    unset voice_release_token
     dt_record "back ${target_host}: voice-engine image build" "${t0}"
   fi
 

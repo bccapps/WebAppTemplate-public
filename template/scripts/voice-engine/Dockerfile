@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.6
 # vx-voice-engine, hub mode — image of the `voice-engine` compose service (profile `voice`, template scripts/docker-compose.yml).
 # Does NOT compile anything: it downloads the linux-amd64 payload of a published release of the private repository
-# svax974/vx-voice-engine with the BuildKit secret `gh_token` (VOICE_ENGINE_GH_TOKEN of the deploying shell), then installs it on
+# VOICE_ENGINE_REPO (default svax974/vx-voice-engine) with the BuildKit secret `gh_token` (a git credential deploy-full.sh asks for the build only), then installs it on
 # debian:bookworm-slim, non-root, with no model inside (models are downloaded into the /models volume at first use).
 # Copy of the `fetch` and `runtime` stages of vx-voice-engine/engine/Dockerfile: keep them in step when that file changes.
 FROM debian:bookworm-slim AS payload
