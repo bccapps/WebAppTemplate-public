@@ -128,6 +128,14 @@ holds two generic scripts for a sidecar that needs tools of the user's machine:
 
 Prerequisites the sidecar's own tools need are the project's to document; the shell and the launchers never install anything.
 
+**One sidecar, one executable per OS.** Process names are unique even when their `os` lists do not overlap, and a placeholder such as
+`{port:engine}` names a process: an app whose sidecar is a different file per OS (a Windows `engine-bg.exe` built for the GUI subsystem next to a
+`engine` for macOS and Linux) therefore declares ONE sidecar (no `os` list) whose `command` is a candidate list, most specific first:
+`["{resources}/engine/engine-bg.exe", "{resources}/engine/engine"]`. The first candidate that exists wins; a path that does not exist on this
+OS (`…-bg.exe` on macOS or Linux) is skipped, and on Windows `.exe` is tried after a path without it. The process is started with the shell's
+own environment plus the config `env` and the shared token (a sidecar inherits `LOCALAPPDATA`, `HOME`, `PATH`...), so an engine that offers an
+env-file option for a context without an environment (a logon task) does not need it here, and the shared token never has to be written to disk.
+
 ### Windows: sidecars inside WSL2
 
 The application, its back (SQLite, local trust) and its interface are native Windows. A sidecar that needs Linux (a runner using
@@ -240,6 +248,12 @@ prompt and a page that asks for the microphone gets a silent refusal. Edit the s
 `com.apple.security.device.audio-input`, required once the app is signed with the hardened runtime; `build-desktop.mjs` passes it again when it re-signs the app ad hoc
 (`codesign --force` would otherwise drop it). The first use of the microphone shows the macOS prompt once per app signature (an ad-hoc signature changes with every build,
 so a rebuilt app asks again).
+
+**Windows and Linux: no consent text to declare.** A classic desktop program is not asked anything by the OS when it opens the microphone, and there is no
+file like `Info.plist` to carry a sentence: nothing to add to the shell. Windows 10/11 has a *privacy switch* (Settings › Privacy & security › Microphone,
+« Let desktop apps access your microphone »): when it is off, an engine records silence, which is the app's to detect and to explain (AgentHub's voice
+engine reads the switches and the settings page shows the help text of the system). A sandboxed Snap or Flatpak build of a project would need the
+audio permission of its own package format.
 
 ## Downloads
 

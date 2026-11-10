@@ -23,15 +23,15 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { RequireUserInterceptor } from '../../common/auth';
 import { IdParamDto } from '../../common/dtos/IdParamDto';
 import { UserUpsertVoiceAccessDto } from '../dto/UserUpsertVoiceAccessDto';
 import { TtsRequestDto } from '../dto/TtsRequestDto';
 import { UserVoiceAccessService } from '../services/UserVoiceAccessService';
 import { VoiceUserDispatchService } from '../services/VoiceUserDispatchService';
+import { RequireVoiceOwnerInterceptor } from './RequireVoiceOwnerInterceptor';
 
 @Controller('/api/v1/user/voice-accesses')
-@UseInterceptors(RequireUserInterceptor)
+@UseInterceptors(RequireVoiceOwnerInterceptor)
 export class UserVoiceAccessController {
   constructor(
     private readonly userVoiceAccessService: UserVoiceAccessService,

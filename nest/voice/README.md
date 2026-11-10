@@ -18,11 +18,12 @@ Provides Text-to-Speech (TTS), Speech-to-Text (STT), and Speech-to-Speech (S2S) 
 | Clients | `GoogleCloudSttClient`, `DeepgramSttClient`, `AssemblyAiSttClient`, `OpenAiWhisperClient` | STT provider clients |
 | Clients | `DeepgramS2sClient`, `ElevenLabsS2sClient`, `GladiaS2sClient`, `OpenAiRealtimeClient` | S2S provider clients (stub) |
 | Controllers | `VoiceProviderCatalogController`, `VoiceAccessController`, `UserVoiceAccessController`, `VoiceTtsController`, `VoiceSttController` | REST API |
+| Interceptors | `RequireVoiceOwnerInterceptor` | Who may own voice accesses: a user, or the local person of a desktop app that has a `user` row for them |
 | Types | `TtsTypes`, `SttTypes`, `S2sTypes`, `VoiceCallParams` | Shared interfaces |
 
 ## Dependencies
 - `CommonModule` (ModuleConfigService, IdParamDto, `CryptService` for the encryption at rest: **`CRYPT_DB_MASTER_KEY` is required**, it already is for `CommonModule`)
-- `CommonModule` only. No dependency on `user`: auth comes from the global interceptor of `common/auth` (`AuthCoreModule`), routes use `AdminOnlyInterceptor`, `RequireAuthInterceptor` and `RequireUserInterceptor`.
+- `CommonModule` only. No dependency on `user`: auth comes from the global interceptor of `common/auth` (`AuthCoreModule`), routes use `AdminOnlyInterceptor`, `RequireAuthInterceptor` and `RequireVoiceOwnerInterceptor` (the user routes).
 - `voice/plugin.ts` exports `plugin: NestModulePlugin` (`id: 'voice'`) so the app imports the module through the generated plugins file.
 
 ## Endpoints (exhaustive)
@@ -48,7 +49,10 @@ Provides Text-to-Speech (TTS), Speech-to-Text (STT), and Speech-to-Speech (S2S) 
 
 Errors of the two user dispatch routes: `403` when `voice_allowUserProviders` is off, `404` for an access that does not exist **or belongs to someone else** (same message, ids of others are not revealed), `400` when the provider lacks the capability, the text/audio is too long (`voice_maxTtsChars`, `voice_maxSttDurationMs`; OpenAI TTS: 4096 characters), or the access targets an unsafe URL / region.
 
-Auth column: `Admin` = `AdminOnlyInterceptor`; `User` = `RequireUserInterceptor` (401 in anonymous mode); `Auth (user or admin-token)` = `RequireAuthInterceptor` (in anonymous mode only the `ADMIN_TOKEN` passes).
+Auth column: `Admin` = `AdminOnlyInterceptor`; `User` = `RequireVoiceOwnerInterceptor` (401 in anonymous mode; see « Desktop: the local person owns accesses » below); `Auth (user or admin-token)` = `RequireAuthInterceptor` (in anonymous mode only the `ADMIN_TOKEN` passes).
+
+## Desktop: the local person owns accesses (2026-11-10)
+`RequireUserInterceptor` refuses the `local-trust` principal (an administrator with id 0: nobody to own a key). `RequireVoiceOwnerInterceptor`, on the six `/user/voice-accesses` routes, additionally admits a `local-trust` principal **whose id is a positive integer**, which only an app that gave its local person a real `user` row produces (AgentHub desktop: `LocalUserAuthProvider` swaps the id of the anonymous principal for that row's id). The access then belongs to that row (`user_id`), is sealed (`enc:v1:`), checked for ownership and SSRF-guarded exactly like a hub user's. Still refused: an anonymous request, the `ADMIN_TOKEN` identity, and a plain local-trust principal (id 0). A server never runs `LOCAL_TRUST` (it refuses to start on a non-loopback host), so a hub or an app without a local user row behaves as before. Consumers: AgentHub only (VxScore and TradeKong keep their users; none of them runs `LOCAL_TRUST`). Nothing else changed: same routes, same response shapes.
 
 ## Entities
 
