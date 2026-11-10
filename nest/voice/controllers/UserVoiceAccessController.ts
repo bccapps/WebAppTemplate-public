@@ -82,7 +82,10 @@ export class UserVoiceAccessController {
     await this.userVoiceAccessService.delete(userId, params.id);
   }
 
-  /** Text to speech with one of the caller's own accesses (404 for an access of someone else, 403 when user providers are disabled). */
+  /**
+   * Text to speech with one of the caller's own accesses (404 for an access of someone else, 403 when user providers are disabled).
+   * `params.id` is a string when the app registers no global ValidationPipe with `transform` (AgentHub does not): `Number(...)` gives the dispatch its integer id.
+   */
   @Post(':id/tts')
   @HttpCode(HttpStatus.OK)
   async synthesize(
@@ -91,7 +94,7 @@ export class UserVoiceAccessController {
     @Body() payload: TtsRequestDto,
     @Res() res: Response,
   ) {
-    const result = await this.dispatch.synthesize(this.getUid(req), params.id, {
+    const result = await this.dispatch.synthesize(this.getUid(req), Number(params.id), {
       text: payload.text,
       voice: payload.voice,
       language: payload.language,
@@ -115,7 +118,7 @@ export class UserVoiceAccessController {
   ) {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk as Buffer);
-    const result = await this.dispatch.transcribe(this.getUid(req), params.id, {
+    const result = await this.dispatch.transcribe(this.getUid(req), Number(params.id), {
       audio: Buffer.concat(chunks),
       contentType: req.headers['content-type'] ?? 'audio/wav',
       language: language || undefined,
