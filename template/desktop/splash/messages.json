@@ -22,7 +22,9 @@
     "title.died": "{name} s'est arrêté",
     "detail.died": "Code de sortie : {code}. Fermez puis relancez l'application. Journal : {log}",
     "download.saved": "Enregistré dans Téléchargements :",
-    "download.failed": "Échec du téléchargement :"
+    "download.failed": "Échec du téléchargement :",
+    "title.notProven": "L'application n'a pas pu vérifier son serveur",
+    "detail.notProven": "Un autre programme répond peut-être sur son port ({detail}). Fermez puis relancez l'application."
   },
   "en": {
     "status.starting": "Starting…",
@@ -47,6 +49,8 @@
     "title.died": "{name} stopped",
     "detail.died": "Exit code: {code}. Close and restart the application. Log: {log}",
     "download.saved": "Saved to Downloads:",
-    "download.failed": "Download failed:"
+    "download.failed": "Download failed:",
+    "title.notProven": "The app could not verify its server",
+    "detail.notProven": "Another program may be answering on its port ({detail}). Close and reopen the application."
   }
 }

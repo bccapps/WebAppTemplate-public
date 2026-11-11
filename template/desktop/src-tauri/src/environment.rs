@@ -92,6 +92,35 @@ pub fn ui_boot_code() -> (String, String) {
     (code, anchor)
 }
 
+/// HMAC-SHA256 (RFC 2104) of `msg` under `key`, lowercase hex.
+pub fn hmac_sha256_hex(key: &[u8], msg: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut block = [0u8; 64];
+    if key.len() > 64 {
+        block[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        block[..key.len()].copy_from_slice(key);
+    }
+    let (mut ipad, mut opad) = ([0x36u8; 64], [0x5cu8; 64]);
+    for i in 0..64 {
+        ipad[i] ^= block[i];
+        opad[i] ^= block[i];
+    }
+    let inner = Sha256::new().chain_update(ipad).chain_update(msg).finalize();
+    hex_encode(&Sha256::new().chain_update(opad).chain_update(inner).finalize())
+}
+
+/// What the back must answer to the shell's challenge `nonce` (`GET /api/v1/local-ui/shell-proof?nonce=`): the HMAC of the nonce under the
+/// per-launch shell key (`LOCAL_UI_SHELL_KEY`, given to the back only). The key is the UTF-8 of its hex text (the back does the same).
+pub fn shell_proof(shell_key: &str, nonce: &str) -> String {
+    hmac_sha256_hex(shell_key.as_bytes(), nonce.as_bytes())
+}
+
+/// Equality whose time does not depend on where two strings differ.
+pub fn constant_time_eq(a: &str, b: &str) -> bool {
+    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 /// Fragment key of the interface boot code (`react/common` `core/http/localUiSession.ts` reads and removes it).
 pub const UI_BOOT_FRAGMENT_KEY: &str = "vx-local-ui";
 
@@ -156,6 +185,8 @@ pub struct ServerFacts<'a> {
     pub parent_pid: u32,
     /// `sha256_hex` of this launch's interface boot code (`ui_boot_code`), forced as `LOCAL_UI_BOOT_ANCHOR`.
     pub ui_boot_anchor: &'a str,
+    /// The per-launch key the back proves it holds before the window is sent to it (`LOCAL_UI_SHELL_KEY`, `shell_proof`).
+    pub shell_key: &'a str,
 }
 
 /// Variables injected into the back at every launch. They always win over the config's own `env`.
@@ -165,11 +196,14 @@ pub fn server_core_env(f: &ServerFacts) -> BTreeMap<String, String> {
     let mut vars: Vec<(&str, String)> = vec![
         ("HOST", "127.0.0.1".to_string()),
         ("NODE_PORT", f.port.to_string()),
-        ("CLIENT_ORIGINS", format!("{origin},http://localhost:{}", f.port)),
+        // The window's origin only: the back listens on 127.0.0.1, `localhost` may resolve to `[::1]`, where another process can listen.
+        ("CLIENT_ORIGINS", origin.clone()),
         ("LOCAL_TRUST", "true".into()),
         // Local trust also needs the interface session the window opens with (`nest/common/README.md`, « Session d'interface locale »):
         // a local process without it (an agent, a script) is not the administrator.
         ("LOCAL_UI_BOOT_ANCHOR", f.ui_boot_anchor.to_string()),
+        // Before sending the window (and the boot code) to the port, the shell checks that THIS back answers there (`boot.rs` `prove_back`).
+        ("LOCAL_UI_SHELL_KEY", f.shell_key.to_string()),
         // Forced, so no inherited `DB_ENGINE=postgres` (a developer's shell) can switch the packaged app to another database.
         ("DB_ENGINE", "sqlite".into()),
         ("DB_PATH", p(&f.data_dir.join(f.db_file))),
@@ -325,6 +359,19 @@ mod tests {
     }
 
     #[test]
+    fn hmac_matches_rfc_4231_and_the_proof_uses_the_key_text() {
+        assert_eq!(hmac_sha256_hex(b"Jefe", b"what do ya want for nothing?"), "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
+        let long_key = [0xaau8; 131];
+        assert_eq!(
+            hmac_sha256_hex(&long_key, b"Test Using Larger Than Block-Size Key - Hash Key First"),
+            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+        );
+        assert_eq!(shell_proof("k", "n"), hmac_sha256_hex(b"k", b"n"));
+        assert!(constant_time_eq("abc", "abc"));
+        assert!(!constant_time_eq("abc", "abd") && !constant_time_eq("abc", "ab"));
+    }
+
+    #[test]
     fn every_link_gets_its_own_token() {
         let links = link_tokens(&["runner".to_string(), "voice-engine".to_string()], &random_token_hex);
         assert_eq!(links.len(), 2);
@@ -343,11 +390,13 @@ mod tests {
             schema: None,
             parent_pid: 77,
             ui_boot_anchor: "a1",
+            shell_key: "k1",
         };
         let env = server_core_env(&facts);
         assert_eq!(env["HOST"], "127.0.0.1");
         assert_eq!(env["NODE_PORT"], "4321");
-        assert_eq!(env["CLIENT_ORIGINS"], "http://127.0.0.1:4321,http://localhost:4321");
+        assert_eq!(env["CLIENT_ORIGINS"], "http://127.0.0.1:4321");
+        assert_eq!(env["LOCAL_UI_SHELL_KEY"], "k1");
         assert_eq!(env["LOCAL_TRUST"], "true");
         assert_eq!(env["LOCAL_UI_BOOT_ANCHOR"], "a1");
         assert_eq!(env["DB_ENGINE"], "sqlite");
@@ -376,6 +425,7 @@ mod tests {
                 schema: Some(mode),
                 parent_pid: 77,
                 ui_boot_anchor: "a1",
+                shell_key: "k1",
             };
             let env = server_core_env(&facts);
             assert_eq!(env["DB_SCHEMA_MODE"], mode);

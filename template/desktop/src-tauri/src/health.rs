@@ -27,6 +27,30 @@ pub fn is_http_200(head: &[u8]) -> bool {
     head.starts_with(b"HTTP/1.0 200") || head.starts_with(b"HTTP/1.1 200")
 }
 
+/// One `GET` of `path` on `127.0.0.1:port`: the status and the body (JSON, else text), at most 64 KiB read.
+pub fn http_get(port: u16, path: &str) -> Result<crate::sidecar_message::SidecarReply, String> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(800)).map_err(|e| e.to_string())?;
+    stream.set_read_timeout(Some(Duration::from_secs(5))).map_err(|e| e.to_string())?;
+    let request = format!("GET {path} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).map_err(|e| e.to_string())?;
+    let mut raw = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                raw.extend_from_slice(&chunk[..n]);
+                if raw.len() > 64 * 1024 {
+                    return Err("answer too large".into());
+                }
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    crate::sidecar_message::parse_reply(&raw)
+}
+
 /// One probe: connects, requests `path`, true on a 200 answer.
 pub fn http_ok(port: u16, path: &str) -> bool {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -81,6 +105,23 @@ mod tests {
             }
         });
         port
+    }
+
+    #[test]
+    fn get_returns_status_and_json_body() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 512];
+            let n = s.read(&mut buf).unwrap();
+            s.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"proof\":\"ab\"}").unwrap();
+            String::from_utf8_lossy(&buf[..n]).to_string()
+        });
+        let reply = http_get(port, "/p?nonce=1").unwrap();
+        assert_eq!((reply.status, reply.body["proof"].as_str()), (200, Some("ab")));
+        assert!(server.join().unwrap().starts_with(&format!("GET /p?nonce=1 HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n")));
+        assert!(http_get(free_ports(1).unwrap()[0], "/p").is_err());
     }
 
     #[test]

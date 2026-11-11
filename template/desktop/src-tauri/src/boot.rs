@@ -20,10 +20,11 @@ use tauri::{AppHandle, Manager};
 
 use crate::config::{DesktopConfig, ProcessConfig, SERVER_NAME};
 use crate::environment::{
-    ensure_secrets, link_tokens, process_env, random_key_b64, random_token_hex, server_core_env, substitute, ui_boot_code, window_url, LaunchTokens,
-    Placeholders, ServerFacts,
+    constant_time_eq, ensure_secrets, link_tokens, process_env, random_key_b64, random_token_hex, server_core_env, shell_proof, substitute, ui_boot_code,
+    window_url, LaunchTokens, Placeholders, ServerFacts,
 };
-use crate::health::{free_ports, http_ok};
+use crate::health::{free_ports, http_get, http_ok};
+use crate::navigation::{back_origin, set_back_origin};
 use crate::logs::{open_rotated_log, shell_log, tail};
 use crate::process::{spawn_process, Managed, Processes, SpawnSpec};
 use crate::resources::{pick_command, pick_resources_dir, RESOURCES_ENV};
@@ -54,6 +55,25 @@ mod tests {
     }
 
     #[test]
+    fn sidecar_message_is_granted_to_the_numeric_loopback_origin_of_the_back_only() {
+        assert_eq!(back_capability_urls(4321), vec!["http://127.0.0.1:4321/*".to_string()]);
+    }
+
+    #[test]
+    fn only_a_reply_with_the_right_proof_is_the_back() {
+        use crate::sidecar_message::SidecarReply;
+        let reply = |status: u16, proof: &str| Ok(SidecarReply { status, body: serde_json::json!({ "proof": proof }) });
+        let good = shell_proof("key", "nonce");
+        assert_eq!(judge_proof(reply(200, &good), "key", "nonce"), BackProof::Proven);
+        assert_eq!(judge_proof(reply(200, &good), "other-key", "nonce"), BackProof::Refused);
+        assert_eq!(judge_proof(reply(200, &shell_proof("key", "replayed")), "key", "nonce"), BackProof::Refused);
+        assert_eq!(judge_proof(reply(200, ""), "key", "nonce"), BackProof::Refused);
+        assert_eq!(judge_proof(reply(401, &good), "key", "nonce"), BackProof::Refused);
+        assert_eq!(judge_proof(reply(404, ""), "key", "nonce"), BackProof::Legacy);
+        assert_eq!(judge_proof(Err("closed".into()), "key", "nonce"), BackProof::Refused);
+    }
+
+    #[test]
     fn optional_names_only_cover_the_running_processes() {
         let cfg = parse_config(CFG).unwrap();
         let optional = optional_names(&cfg);
@@ -81,6 +101,7 @@ impl BootError {
             "spawnFailed" => ("title.spawnFailed", "detail.spawnFailed"),
             "exitedAtStart" => ("title.exitedAtStart", "detail.exitedAtStart"),
             "timeout" => ("title.timeout", "detail.timeout"),
+            "notProven" => ("title.notProven", "detail.notProven"),
             _ => ("title.died", "detail.died"),
         };
         Self { title, detail, params, log: String::new() }
@@ -112,6 +133,8 @@ struct Context {
     ui_boot_code: String,
     /// `sha256_hex(ui_boot_code)`, given to the back as `LOCAL_UI_BOOT_ANCHOR`.
     ui_boot_anchor: String,
+    /// The key the back proves it holds (`LOCAL_UI_SHELL_KEY`) before the window, and the code, go to its port.
+    shell_key: String,
 }
 
 impl Context {
@@ -148,7 +171,7 @@ fn prepare(app: &AppHandle, cfg: &DesktopConfig) -> Result<Context, BootError> {
     // One token per link (`linkTokens`): the runner never holds the voice engine's token, nor the reverse.
     let tokens = LaunchTokens { shared: random_token_hex(), links: link_tokens(&cfg.link_names(env::consts::OS), &random_token_hex) };
     let (ui_boot_code, ui_boot_anchor) = ui_boot_code();
-    Ok(Context { resources, data_dir, logs_dir, ports, secrets, tokens, ui_boot_code, ui_boot_anchor })
+    Ok(Context { resources, data_dir, logs_dir, ports, secrets, tokens, ui_boot_code, ui_boot_anchor, shell_key: random_token_hex() })
 }
 
 /// The processes to run on this OS, sidecars first, the server last.
@@ -194,6 +217,7 @@ fn server_facts<'a>(cfg: &'a DesktopConfig, ctx: &'a Context) -> ServerFacts<'a>
         schema: cfg.schema.as_deref(),
         parent_pid: std::process::id(),
         ui_boot_anchor: &ctx.ui_boot_anchor,
+        shell_key: &ctx.shell_key,
     }
 }
 
@@ -348,30 +372,79 @@ fn publish_endpoints(app: &AppHandle, cfg: &DesktopConfig, ctx: &Context) {
     }
 }
 
-/// `sidecar_message` for the page of THIS launch's back only (its exact loopback origins), never another loopback port: an agent's dev
-/// server shown in the window, or a frame of it, is refused. Added at run time because the port is chosen at each launch.
+/// The remote URLs `sidecar_message` is granted to: the page of THIS launch's back, on the numeric loopback it listens on, nothing else
+/// (another port, `localhost` / `[::1]` where another process may listen, a frame of an agent's dev server).
+pub fn back_capability_urls(port: u16) -> Vec<String> {
+    vec![format!("{}/*", back_origin(port))]
+}
+
+/// Grants `sidecar_message` to the back's page, once the back proved itself. Added at run time because the port is chosen at each launch.
 fn allow_back_origin(app: &AppHandle, port: u16) -> Result<(), BootError> {
-    let capability = tauri::ipc::CapabilityBuilder::new("sidecar-message-local")
-        .window("main")
-        .remote(format!("http://127.0.0.1:{port}/*"))
-        .remote(format!("http://localhost:{port}/*"))
-        .permission("allow-sidecar-message");
+    let mut capability = tauri::ipc::CapabilityBuilder::new("sidecar-message-local").window("main").permission("allow-sidecar-message");
+    for url in back_capability_urls(port) {
+        capability = capability.remote(url);
+    }
     app.add_capability(capability).map_err(|e| BootError::new("spawnFailed", vec![param("name", "shell"), param("detail", e)]))
+}
+
+/// How the process answering on the back's port replied to the shell's challenge.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BackProof {
+    /// It holds `LOCAL_UI_SHELL_KEY`: it is the back the shell started.
+    Proven,
+    /// `404`: a back built before the challenge existed. The window goes there WITHOUT the boot code nor `sidecar_message`.
+    Legacy,
+    /// Anything else (wrong proof, no answer, garbage): the window never goes there.
+    Refused,
+}
+
+/// Judges a reply to `GET /api/v1/local-ui/shell-proof?nonce=<nonce>`.
+pub fn judge_proof(reply: Result<crate::sidecar_message::SidecarReply, String>, shell_key: &str, nonce: &str) -> BackProof {
+    match reply {
+        Ok(r) if r.status == 404 => BackProof::Legacy,
+        Ok(r) if r.status == 200 && r.body["proof"].as_str().is_some_and(|p| constant_time_eq(p, &shell_proof(shell_key, nonce))) => BackProof::Proven,
+        _ => BackProof::Refused,
+    }
+}
+
+/// Is the process answering on the back's port the back this shell started (alive, and holding the per-launch key)? A free port is chosen
+/// then released before the back binds it: a local process may take it first, or answer the health check; it never gets the boot code.
+fn prove_back(app: &AppHandle, ctx: &Context) -> Result<BackProof, BootError> {
+    let refused = |detail: &str| BootError::new("notProven", vec![param("detail", detail)]);
+    if !matches!(liveness(app, SERVER_NAME), Liveness::Running) {
+        return Err(refused("the back is not running"));
+    }
+    let nonce = random_token_hex();
+    let proof = judge_proof(http_get(ctx.ports[SERVER_NAME], &format!("/api/v1/local-ui/shell-proof?nonce={nonce}")), &ctx.shell_key, &nonce);
+    // Checked again after the answer: the back the shell started still holds the port.
+    if proof == BackProof::Refused || !matches!(liveness(app, SERVER_NAME), Liveness::Running) {
+        return Err(refused("the process answering on the back's port did not prove it is the back this app started"));
+    }
+    Ok(proof)
 }
 
 fn run(app: &AppHandle, cfg: &DesktopConfig) -> Result<(), BootError> {
     let mut ctx = prepare(app, cfg)?;
-    allow_back_origin(app, ctx.ports[SERVER_NAME])?;
     publish_endpoints(app, cfg, &ctx);
     shell_log(&ctx.logs_dir, &format!("resources: {}", ctx.resources.display()));
     if !start_all(app, cfg, &ctx)? {
         return Ok(());
     }
     let splash_url = current_window_url(app);
+    let port = ctx.ports[SERVER_NAME];
+    let proof = prove_back(app, &ctx)?;
+    set_back_origin(port);
     // The boot code travels in the fragment of this one navigation (never logged, never sent to the back by the browser); the page exchanges
     // it for its interface session and removes it from the address. The shell keeps no copy.
     let code = std::mem::take(&mut ctx.ui_boot_code);
-    eval(app, format!("window.location.replace({})", crate::splash::js_str(&window_url(ctx.ports[SERVER_NAME], &code))));
+    let url = if proof == BackProof::Proven {
+        allow_back_origin(app, port)?;
+        window_url(port, &code)
+    } else {
+        shell_log(&ctx.logs_dir, "the back does not answer the shell's challenge (built before it): window opened without the interface session nor sidecar_message");
+        format!("{}/", back_origin(port))
+    };
+    eval(app, format!("window.location.replace({})", crate::splash::js_str(&url)));
     drop(code);
     watch(app, cfg, &ctx, splash_url);
     Ok(())

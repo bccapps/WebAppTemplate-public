@@ -18,6 +18,7 @@ mod downloads;
 mod environment;
 mod health;
 mod logs;
+mod navigation;
 mod process;
 mod resources;
 mod sidecar_message;
@@ -107,6 +108,8 @@ fn build_window(app: &tauri::App, cfg: &DesktopConfig) -> tauri::Result<()> {
         .background_color(Color(r, g, b, 255))
         // Otherwise Tauri intercepts dropped files and the UI's HTML5 drag and drop receives nothing.
         .disable_drag_drop_handler()
+        // Only the waiting page and THIS launch's back are shown; other loopback pages are refused, other sites open outside (`navigation.rs`).
+        .on_navigation(navigation::on_navigation)
         .on_download(download_handler(logs_dir, texts, cfg.splash.brand.clone()))
         .build()?;
     Ok(())

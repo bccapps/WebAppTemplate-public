@@ -97,7 +97,8 @@ Example with a sidecar:
 3. **Secrets**: `<data>/secrets.json` (mode 0600 on Unix) holds `CRYPT_DB_MASTER_KEY` and `CRYPT_SESSION_PRIVATE_KEY`
    (32 random bytes, base64, same rule as `backEnvValues` in `scripts/create-project.mjs`), generated on first launch only.
 4. **Environment of the back**: the config `env`, then the secrets, then these variables, which always win:
-   `HOST=127.0.0.1`, `NODE_PORT`, `CLIENT_ORIGINS` (`http://127.0.0.1:<port>`, `http://localhost:<port>`),
+   `HOST=127.0.0.1`, `NODE_PORT`, `CLIENT_ORIGINS` (`http://127.0.0.1:<port>` only: `localhost` may resolve to `[::1]`, where another process can listen),
+   `LOCAL_UI_SHELL_KEY` (the per-launch key the back proves it holds, step 5),
    `LOCAL_TRUST=true`, `LOCAL_UI_BOOT_ANCHOR` (the SHA-256 of this launch's interface boot code, step 5), `DB_ENGINE=sqlite` (forced, so an inherited `DB_ENGINE=postgres` of a developer's shell cannot win), `DB_PATH=<data>/<dbFile>`, `DB_SCHEMA_MODE=<schema>` when the config declares `schema` (otherwise the legacy `DB_MIGRATIONS_RUN=true`, never both),
    `APP_DATA_DIR=<data>`, `LOG_DIR=<data>/logs`, `SHARED_DIRECTORY=<data>/shared`, `DISABLE_TRANSPORT_CRYPTO=true`,
    `APP_ENV=desktop`, `SERVE_FRONT_DIR`, `DESKTOP_PARENT_PID` (the shell pid; the back exits when it disappears, see
@@ -112,8 +113,13 @@ Example with a sidecar:
    developer's tree), and `node dist/main.js` loads none by itself (`env-cmd` is only used by the project's npm scripts). So the
    engine, the trust mode and the paths are the shell's whatever `back/.env*` says. Variables the shell does not force
    (an app's own directories…) go in the server's `env` of `desktop.config.json`.
-5. Sidecars, then the server, are started in their own process group; the shell waits for each health path; the window
-   then goes to the front, at `http://127.0.0.1:<port>/#vx-local-ui=<code>`: `<code>` is the **interface boot code** of this launch
+5. Sidecars, then the server, are started in their own process group; the shell waits for each health path. The port was chosen free
+   then released before the back binds it, and a health answer proves nothing: before the window goes there, the shell checks that the
+   back IT started answers on it — the process is alive, and answers `GET /api/v1/local-ui/shell-proof?nonce=<random>` with the HMAC-SHA256
+   of the nonce under `LOCAL_UI_SHELL_KEY` (`boot.rs` `prove_back`, checked again after the answer). Anything else: the waiting page shows
+   `notProven` and the window never goes to that port. A back built before the challenge answers `404`: the window opens there WITHOUT the
+   boot code nor `sidecar_message` (logged in `shell.log`). Once proven, `sidecar_message` is granted to the back's page and the window
+   goes to the front, at `http://127.0.0.1:<port>/#vx-local-ui=<code>`: `<code>` is the **interface boot code** of this launch
    (32 random bytes, hex), drawn by the shell, given to the back only as its SHA-256 (`LOCAL_UI_BOOT_ANCHOR`), and put nowhere else (no
    file, no process environment, no log; a URL fragment is never sent to the server). The page removes it from its address and exchanges
    it once for its interface session: under `LOCAL_TRUST`, a local process without that session (an agent, a script) is not the
@@ -123,7 +129,10 @@ Example with a sidecar:
    `taskkill /T /F`). Safety nets if the shell itself is killed: a detached sentinel process on Unix, a Job Object with
    kill-on-close on Windows.
 7. Also: single instance (a second launch focuses the window), window built in code (downloads, no drag-and-drop
-   interception), Linux DMA-BUF workaround.
+   interception), Linux DMA-BUF workaround, and a navigation guard (`navigation.rs`): the window (and its frames, WKWebView asks for each)
+   shows the waiting page, `blob:`/`data:`/`about:` content and the back of this launch only; any other loopback address (another port,
+   `localhost`, `[::1]`) is refused, another http(s) site opens in the system browser. A project that embeds an iframe of a remote site in its
+   front would see it opened outside instead.
 
 ## Launchers and sidecars on each OS
 
@@ -237,8 +246,8 @@ port and the sidecar's token and relays. Nothing is open by default:
 - the shell adds `Authorization: Bearer <token>`: the token of the sidecar's link named after it (`linkTokens`), else the legacy shared token when it
   declares `sharedToken`; the page never sees the token;
 - the command is a Tauri permission (`allow-sidecar-message`, an app command listed in `build.rs`) granted, at run time once the port is chosen
-  (`boot.rs` `allow_back_origin`), to the page of **this launch's back only** (`http://127.0.0.1:<port>`, `http://localhost:<port>`: never another loopback
-  port, such as an agent's dev server shown in the window or one of its frames — the ACL origin of a frame's IPC message is the frame's URL); `messaging.origins`
+  (`boot.rs` `allow_back_origin`, after `prove_back`), to the page of **this launch's back only** (`http://127.0.0.1:<port>`: never `localhost` or `[::1]`, never
+  another loopback port, such as an agent's dev server shown in the window or one of its frames — the ACL origin of a frame's IPC message is the frame's URL); `messaging.origins`
   adds remote origins at start-up (`https://hub.example.com`, no path, no wildcard);
 - bodies are JSON, 64 KiB at most; answers 1 MiB at most; 2 s to connect, 30 s to answer.
 
