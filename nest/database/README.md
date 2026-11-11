@@ -126,7 +126,7 @@ décorateurs sont évalués à l'import ; l'environnement (`.env`) doit donc êt
 
 Entités publiques déjà portées (noms de colonnes et types Postgres inchangés, donc aucune migration Postgres) :
 `common` (`EventFeedEntityBase`, `CookieConsentEntity`, `ThemeEntity`) et `voice` (`VoiceAccessEntity`,
-`UserVoiceAccessEntity`, `VoiceProviderCatalogEntity`). Les entités de vx-private restent Postgres.
+`UserVoiceAccessEntity`, `VoiceProviderCatalogEntity`). Dans vx-private, `commerce`, `infra`, `llm-client`, `mcp-access`, `user` déclarent les deux moteurs (`"databases": ["postgres", "sqlite"]`) ; les autres modules à entités restent Postgres (`"databases": ["postgres"]` : `api-access`, `blockchainIndicator`, `breakout-intelligence`, `cms`, `llm`, `llm-chat`, `llm-proxy`, `market-data`, `market-intelligence`, `oracle`, `portfolio-source`, `roadmap`, `settings`, `tenant`, `token`, `tokens-api`, `trading`, `tradingplatform`, `usertradingplatform`, `wallet-intelligence`) ; `voice-live` a des entités sans déclaration. Le `module.json` de chaque module fait foi.
 
 ### SQL brut portable
 
