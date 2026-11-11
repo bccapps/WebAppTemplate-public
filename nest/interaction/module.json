@@ -1,0 +1,16 @@
+{
+  "id": "interaction",
+  "title": "User interaction",
+  "description": "Per-user notification channels (in-app toast + modal + inbox, browser notifications and Web Push, Telegram) and questions with answers (first answer wins, expiry, signed Telegram buttons), for any app that has user accounts.",
+  "visibility": "public",
+  "category": "users",
+  "databases": [
+    "postgres",
+    "sqlite"
+  ],
+  "requires": [
+    "common"
+  ],
+  "env": [],
+  "questions": []
+}

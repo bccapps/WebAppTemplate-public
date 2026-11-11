@@ -1,1 +1,1 @@
-{ "nest": ["common", "database", "voice", "issue-report"], "react": ["common", "voice", "issue-report"] }
+{ "nest": ["common", "database", "voice", "issue-report", "interaction"], "react": ["common", "voice", "issue-report", "interaction"] }
