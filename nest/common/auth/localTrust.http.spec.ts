@@ -13,7 +13,7 @@ import { Test } from '@nestjs/testing';
 import { createHash, randomBytes } from 'node:crypto';
 import request from 'supertest';
 import { AuthCoreModule } from './AuthCoreModule';
-import { resetLocalUiSessionStoreForTests } from './localUiSession';
+import { resetLocalUiSessionStoreForTests, shellProof } from './localUiSession';
 
 /**
  * End-to-end through a real HTTP socket (supertest connects from loopback), with `trust proxy` on as configureHttpApp
@@ -169,6 +169,25 @@ describe('local trust over HTTP', () => {
       expect((await get({ Host: 'localhost:3000', 'X-Local-Session': second })).status).toBe(200);
       expect((await get({ Host: 'localhost:3000', 'X-Local-Session': first })).status).toBe(200);
       expect((await request(app.getHttpServer()).post('/api/v1/local-ui/session/renew').set('Host', 'localhost:3000')).status).toBe(401);
+      // The renewed token cannot start a second chain during its grace.
+      const again = await request(app.getHttpServer()).post('/api/v1/local-ui/session/renew').set('Host', 'localhost:3000').set('X-Local-Session', first);
+      expect(again.status).toBe(409);
+    });
+
+    it('answers the launcher\'s challenge with the HMAC of its nonce, only with a key, a loopback socket and a well-formed nonce', async () => {
+      const key = randomBytes(32).toString('hex');
+      await boot({ LOCAL_TRUST: 'true', LOCAL_UI_BOOT_ANCHOR: anchor, LOCAL_UI_SHELL_KEY: key });
+      const nonce = randomBytes(32).toString('hex');
+      const res = await request(app.getHttpServer()).get(`/api/v1/local-ui/shell-proof?nonce=${nonce}`).set('Host', '127.0.0.1');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ proof: shellProof(key, nonce) });
+      expect((await request(app.getHttpServer()).get('/api/v1/local-ui/shell-proof?nonce=zz').set('Host', '127.0.0.1')).status).toBe(401);
+      expect((await request(app.getHttpServer()).get(`/api/v1/local-ui/shell-proof?nonce=${nonce}`).set('X-Forwarded-For', '8.8.8.8')).status).toBe(401);
+    });
+
+    it('has no challenge without a shell key (404: an app not started by the desktop shell)', async () => {
+      await boot({ LOCAL_TRUST: 'true', LOCAL_UI_BOOT_ANCHOR: anchor });
+      expect((await request(app.getHttpServer()).get(`/api/v1/local-ui/shell-proof?nonce=${randomBytes(32).toString('hex')}`)).status).toBe(404);
     });
 
     it('the admin key still works without the session', async () => {

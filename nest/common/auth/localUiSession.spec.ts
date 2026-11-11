@@ -18,7 +18,9 @@ import {
   isLocalUiBootAnchor,
   localUiSessionStore,
   localUiSessionToken,
+  localUiShellKey,
   resetLocalUiSessionStoreForTests,
+  shellProof,
 } from './localUiSession';
 
 // Fake boot codes built at run time (never a real secret).
@@ -76,7 +78,7 @@ describe('LocalUiSessionStore', () => {
     const time = clock();
     const store = new LocalUiSessionStore(anchor, { ttlMs: 10_000, graceMs: 100, now: time.now });
     const first = store.exchange(code)!.token;
-    const second = store.renew(first)!.token;
+    const second = (store.renew(first) as { token: string }).token;
     expect(second).not.toBe(first);
     expect(store.verify(first)).toBe(true);
     time.advance(100);
@@ -97,12 +99,58 @@ describe('LocalUiSessionStore', () => {
     expect(store.verify(first)).toBe(false);
   });
 
+  it('a token renews once: renewing it again during its grace answers `renewed`, never a second chain', () => {
+    const { code, anchor } = bootPair();
+    const store = new LocalUiSessionStore(anchor);
+    const first = store.exchange(code)!.token;
+    const next = store.renew(first);
+    expect(next).toEqual(expect.objectContaining({ token: expect.any(String) }));
+    expect(store.renew(first)).toBe('renewed');
+    expect(store.verify(first)).toBe(true); // still in its grace for the requests in flight
+    expect(store.renew((next as { token: string }).token)).toEqual(expect.objectContaining({ token: expect.any(String) }));
+  });
+
+  it('forgets the anchor when the boot code is not exchanged within the boot window (re-armed when the app is ready)', () => {
+    const { code, anchor } = bootPair();
+    const time = clock();
+    const store = new LocalUiSessionStore(anchor, { bootWindowMs: 1_000, now: time.now });
+    time.advance(900);
+    store.armBootWindow();
+    time.advance(999);
+    expect(store.bootPending).toBe(true);
+    time.advance(1);
+    expect(store.bootPending).toBe(false);
+    expect(store.exchange(code)).toBeNull();
+  });
+
+  it('caps a session chain in wall-clock time, whatever the renewals', () => {
+    const { code, anchor } = bootPair();
+    let wall = 0;
+    const time = clock();
+    const store = new LocalUiSessionStore(anchor, { maxChainWallMs: 10_000, now: time.now, wallNow: () => wall });
+    let token = store.exchange(code)!.token;
+    wall = 9_000;
+    token = (store.renew(token) as { token: string }).token;
+    expect(store.verify(token)).toBe(true);
+    wall = 10_000;
+    expect(store.verify(token)).toBe(false);
+    expect(store.renew(token)).toBeNull();
+  });
+
+  it('keeps at most 4 live tokens by default', () => {
+    const { code, anchor } = bootPair();
+    const store = new LocalUiSessionStore(anchor);
+    const tokens = [store.exchange(code)!.token];
+    for (let i = 0; i < 4; i += 1) tokens.push((store.renew(tokens[i]) as { token: string }).token);
+    expect(tokens.map((t) => store.verify(t))).toEqual([false, true, true, true, true]);
+  });
+
   it('keeps a bounded number of live tokens, dropping the oldest', () => {
     const { code, anchor } = bootPair();
     const store = new LocalUiSessionStore(anchor, { maxSessions: 2 });
     const first = store.exchange(code)!.token;
-    const second = store.renew(first)!.token;
-    const third = store.renew(second)!.token;
+    const second = (store.renew(first) as { token: string }).token;
+    const third = (store.renew(second) as { token: string }).token;
     expect(store.verify(first)).toBe(false);
     expect(store.verify(second)).toBe(true);
     expect(store.verify(third)).toBe(true);
@@ -130,6 +178,14 @@ describe('localUiSessionStore (process store)', () => {
 
   it('throws on a malformed anchor under LOCAL_TRUST', () => {
     expect(() => localUiSessionStore({ LOCAL_TRUST: 'true', LOCAL_UI_BOOT_ANCHOR: 'not-hex' })).toThrow(/LOCAL_UI_BOOT_ANCHOR/);
+  });
+
+  it('the shell proof is the HMAC-SHA256 the desktop shell computes (RFC 4231 vector), and needs a well-formed key under LOCAL_TRUST', () => {
+    expect(shellProof('Jefe', 'what do ya want for nothing?')).toBe('5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843');
+    const key = bootPair().anchor;
+    expect(localUiShellKey({ LOCAL_TRUST: 'true', LOCAL_UI_SHELL_KEY: key })).toBe(key);
+    expect(localUiShellKey({ LOCAL_UI_SHELL_KEY: key })).toBeNull();
+    expect(localUiShellKey({ LOCAL_TRUST: 'true', LOCAL_UI_SHELL_KEY: 'short' })).toBeNull();
   });
 
   it('reads the token from X-Local-Session only when it is a single string', () => {
