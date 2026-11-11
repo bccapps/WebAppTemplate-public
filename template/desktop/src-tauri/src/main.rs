@@ -110,17 +110,21 @@ fn build_window(app: &tauri::App, cfg: &DesktopConfig) -> tauri::Result<()> {
         .disable_drag_drop_handler()
         // Only the waiting page and THIS launch's back are shown; other loopback pages and schemes are refused (`navigation.rs`).
         .on_navigation(navigation::on_navigation)
-        // `window.open` / `target="_blank"`: never a second app window — a page of the back opens in THIS window (it keeps the interface
-        // session), an external site asked by a gesture opens in the system browser.
+        // `window.open` / `target="_blank"`: never a second app window. A page of the app's own interface the config lists
+        // (`window.sameWindowPaths`) opens in THIS window (it keeps the interface session); an external site asked by a gesture, or a page
+        // of the back listed in `window.browserPaths` (an agent's preview), opens in the system browser; anything else is refused.
         .on_new_window({
             let handle = app.handle().clone();
+            let rules = navigation::NewWindowRules { same_window: w.same_window_paths.clone(), browser: w.browser_paths.clone() };
             move |url, _features| {
-                if navigation::new_window_target(&url) == navigation::NewWindowTarget::MainWindow {
-                    if let Some(window) = handle.get_webview_window("main") {
-                        let _ = window.navigate(url);
+                match navigation::new_window_target(&url, &rules) {
+                    navigation::NewWindowTarget::MainWindow => {
+                        if let Some(window) = handle.get_webview_window("main") {
+                            let _ = window.navigate(url);
+                        }
                     }
-                } else {
-                    navigation::on_new_window(&url);
+                    navigation::NewWindowTarget::Browser => navigation::open_outside(&url),
+                    navigation::NewWindowTarget::Refuse => {}
                 }
                 tauri::webview::NewWindowResponse::Deny
             }

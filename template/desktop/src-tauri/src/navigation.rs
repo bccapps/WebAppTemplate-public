@@ -10,7 +10,10 @@
 //! process may listen there) is refused. Only `tauri:`, `blob:` and `about:blank` pass besides (`data:`, `javascript:`, `file:`… are refused).
 //! The navigation handler also sees the navigations of frames (WKWebView asks for every frame) and knows neither the frame nor a user gesture:
 //! it NEVER opens anything outside — another http(s) site is refused silently there. An external link opens in the system browser only through
-//! a new-window request (`target="_blank"`, `window.open` — the engines give one only on a user gesture): `on_new_window`.
+//! a new-window request (`target="_blank"`, `window.open` — the engines give one only on a user gesture): `new_window_target`. Such a request
+//! never opens a second window of the app: a page of the back goes to the main window only when it is a page of the app's own interface the
+//! config lists (`window.sameWindowPaths`), to the system browser when the config lists it there (`window.browserPaths`: content served for
+//! an agent, such as a preview), and nowhere otherwise.
 
 use std::sync::OnceLock;
 
@@ -72,37 +75,79 @@ pub fn on_navigation(url: &Url) -> bool {
 /// Where a new-window request goes.
 #[derive(Debug, PartialEq, Eq)]
 pub enum NewWindowTarget {
-    /// A page of this launch's back (an « open in a tab / window » button of the app): shown in the main window (`main.rs`).
+    /// A page of the app's own interface listed in `window.sameWindowPaths` (an « open in a window » button): shown in the main window.
     MainWindow,
-    /// Anything else: `on_new_window` (an external site opens outside, the rest is refused).
-    Elsewhere,
+    /// An external http(s) site, or a page of the back listed in `window.browserPaths`: opened in the system browser.
+    Browser,
+    /// Anything else (another page of the back — its API, content it serves for someone else —, another loopback address, other schemes).
+    Refuse,
 }
 
-/// Pure decision for a new-window request: `back` is the back's origin when known.
-pub fn new_window_target_with(url: &Url, back: Option<&str>) -> NewWindowTarget {
-    if matches!(url.scheme(), "http" | "https") && back.is_some_and(|b| url.origin().ascii_serialization() == b) {
+/// The paths of this launch's back a new-window request may reach (`window.sameWindowPaths`, `window.browserPaths`; `path_matches`).
+#[derive(Debug, Clone, Default)]
+pub struct NewWindowRules {
+    pub same_window: Vec<String>,
+    pub browser: Vec<String>,
+}
+
+/// One segment a `*` stands for: an id or a word (letters, digits, `-`, `_`), never empty, `.`, `..` nor anything encoded.
+pub fn is_plain_segment(segment: &str) -> bool {
+    !segment.is_empty() && segment.len() <= 128 && segment.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// Whether `path` (an URL's serialized path: dot segments already resolved, `%2e%2e` included) matches `pattern`: `/`-separated segments,
+/// literal (exact, case included), `*` (one plain segment) or, last only, `**` (whatever follows, nothing included). A literal or `*`
+/// segment of the path must be plain: an encoded character (`%2f`, `%2e`…), an empty segment (`//x`) or a trailing `/` never match one.
+pub fn path_matches(pattern: &str, path: &str) -> bool {
+    let (Some(pattern), Some(path)) = (pattern.strip_prefix('/'), path.strip_prefix('/')) else {
+        return false;
+    };
+    let wanted: Vec<&str> = pattern.split('/').collect();
+    let mut segments = path.split('/');
+    for (index, want) in wanted.iter().enumerate() {
+        if *want == "**" {
+            return index == wanted.len() - 1;
+        }
+        let Some(segment) = segments.next() else {
+            return false;
+        };
+        if !is_plain_segment(segment) || (*want != "*" && *want != segment) {
+            return false;
+        }
+    }
+    segments.next().is_none()
+}
+
+/// Pure decision for a new-window request: `back` is the back's origin when known. The main window holds the interface session and the
+/// shell's `sidecar_message`: it only ever shows a page of the app's own interface listed in `sameWindowPaths` — never content the back serves
+/// for an agent or a user (a preview, an attachment, an API answer), which goes to the system browser when `browserPaths` lists it, else nowhere.
+pub fn new_window_target_with(url: &Url, back: Option<&str>, rules: &NewWindowRules) -> NewWindowTarget {
+    match decide(url, back) {
+        Decision::OpenOutside => return NewWindowTarget::Browser,
+        Decision::Refuse => return NewWindowTarget::Refuse,
+        Decision::Allow => {}
+    }
+    let is_back_page = matches!(url.scheme(), "http" | "https") && back.is_some_and(|b| url.origin().ascii_serialization() == b);
+    if !is_back_page || !url.username().is_empty() || url.password().is_some() {
+        return NewWindowTarget::Refuse;
+    }
+    let path = url.path();
+    if rules.same_window.iter().any(|pattern| path_matches(pattern, path)) {
         NewWindowTarget::MainWindow
+    } else if rules.browser.iter().any(|pattern| path_matches(pattern, path)) {
+        NewWindowTarget::Browser
     } else {
-        NewWindowTarget::Elsewhere
+        NewWindowTarget::Refuse
     }
 }
 
 /// `new_window_target_with` for this launch's back.
-pub fn new_window_target(url: &Url) -> NewWindowTarget {
-    new_window_target_with(url, BACK_ORIGIN.get().map(String::as_str))
-}
-
-/// The window's new-window handler (`main.rs`): never a second window of the app (it would not hold the interface session); an external
-/// http(s) site asked by a user gesture opens in the system browser.
-pub fn on_new_window(url: &Url) -> bool {
-    if decide(url, BACK_ORIGIN.get().map(String::as_str)) == Decision::OpenOutside {
-        open_outside(url);
-    }
-    false
+pub fn new_window_target(url: &Url, rules: &NewWindowRules) -> NewWindowTarget {
+    new_window_target_with(url, BACK_ORIGIN.get().map(String::as_str), rules)
 }
 
 /// Opens an http(s) URL in the system browser (the URL is one argument, never a shell command line).
-fn open_outside(url: &Url) {
+pub fn open_outside(url: &Url) {
     let text = url.as_str().to_string();
     #[cfg(target_os = "macos")]
     let spawned = std::process::Command::new("open").arg(&text).spawn();
@@ -148,19 +193,75 @@ mod tests {
         }
     }
 
+    fn rules() -> NewWindowRules {
+        NewWindowRules {
+            same_window: vec!["/agents/*".into(), "/display/*".into(), "/settings/access".into()],
+            browser: vec!["/previews/**".into()],
+        }
+    }
+
+    fn target(u: &str, back: Option<&str>) -> NewWindowTarget {
+        new_window_target_with(&Url::parse(u).unwrap(), back, &rules())
+    }
+
     #[test]
-    fn a_page_of_the_back_asked_in_a_new_window_opens_in_the_main_window() {
+    fn only_a_listed_page_of_the_interface_opens_in_the_main_window() {
         let back = Some("http://127.0.0.1:4321");
-        let url = |u: &str| Url::parse(u).unwrap();
-        assert_eq!(new_window_target_with(&url("http://127.0.0.1:4321/agents/s1"), back), NewWindowTarget::MainWindow);
-        assert_eq!(new_window_target_with(&url("http://127.0.0.1:5173/agents/s1"), back), NewWindowTarget::Elsewhere);
-        assert_eq!(new_window_target_with(&url("https://docs.example.com/"), back), NewWindowTarget::Elsewhere);
-        assert_eq!(new_window_target_with(&url("http://127.0.0.1:4321/agents/s1"), None), NewWindowTarget::Elsewhere);
+        for page in ["http://127.0.0.1:4321/agents/0b5e-41_c", "http://127.0.0.1:4321/display/s1?x=1#y", "http://127.0.0.1:4321/settings/access"] {
+            assert_eq!(target(page, back), NewWindowTarget::MainWindow, "{page}");
+        }
+        // Another loopback port or no proven back: never the main window.
+        assert_eq!(target("http://127.0.0.1:5173/agents/s1", back), NewWindowTarget::Refuse);
+        assert_eq!(target("http://127.0.0.1:4321/agents/s1", None), NewWindowTarget::Refuse);
+        assert_eq!(target("https://docs.example.com/", back), NewWindowTarget::Browser);
+    }
+
+    #[test]
+    fn content_the_back_serves_for_an_agent_never_takes_the_main_window() {
+        let back = Some("http://127.0.0.1:4321");
+        // An agent's preview: the system browser (its ticket rides in the URL), never the window holding the session.
+        assert_eq!(target("http://127.0.0.1:4321/previews/s1/3000/?ticket=t", back), NewWindowTarget::Browser);
+        assert_eq!(target("http://127.0.0.1:4321/agents/%2e%2e/previews/s1/3000/", back), NewWindowTarget::Browser);
+        for other in [
+            "http://127.0.0.1:4321/api/v1/agenthub/sessions/s1/attachments/a",
+            "http://127.0.0.1:4321/",
+            "http://127.0.0.1:4321/agents",
+            "http://127.0.0.1:4321/agents/s1/",
+            "http://127.0.0.1:4321/agents/s1/x",
+            "http://127.0.0.1:4321//agents/s1",
+            "http://127.0.0.1:4321/agents/..%2fapi",
+            "http://127.0.0.1:4321/agents/%2e%2e",
+            "http://127.0.0.1:4321/agents/%73%31",
+            "http://127.0.0.1:4321/Agents/s1",
+            "http://127.0.0.1:4321/AGENTS/s1",
+            "http://127.0.0.1:4321/PREVIEWS/s1/3000/",
+            "http://127.0.0.1:4321/settings/access/../../api/v1/x",
+            "http://user:pw@127.0.0.1:4321/agents/s1",
+            "blob:http://127.0.0.1:4321/0b5e",
+            "about:blank",
+            "http://localhost:4321/agents/s1",
+        ] {
+            assert_eq!(target(other, back), NewWindowTarget::Refuse, "{other}");
+        }
+        // `//evil` is resolved by the page against the back first: another host, an external site.
+        assert_eq!(target("http://evil/x", back), NewWindowTarget::Browser);
+    }
+
+    #[test]
+    fn path_patterns() {
+        assert!(path_matches("/agents/*", "/agents/s1"));
+        assert!(!path_matches("/agents/*", "/agents/"));
+        assert!(!path_matches("/agents/*", "/agents/a.b"));
+        assert!(path_matches("/previews/**", "/previews/s1/3000/assets/%20x.js"));
+        assert!(path_matches("/previews/**", "/previews"));
+        assert!(!path_matches("/previews/**", "/preview/s1"));
+        assert!(!path_matches("/a/**/b", "/a/x/b"));
+        assert!(!path_matches("agents/*", "/agents/s1"));
     }
 
     #[test]
     fn a_navigation_never_opens_outside() {
-        // `on_navigation` sees every frame and no gesture: an external site is refused there (only `on_new_window` opens outside).
+        // `on_navigation` sees every frame and no gesture: an external site is refused there (only a new-window request opens outside).
         assert!(!on_navigation(&Url::parse("https://docs.example.com/page").unwrap()));
         assert!(!on_navigation(&Url::parse("data:text/html,x").unwrap()));
     }

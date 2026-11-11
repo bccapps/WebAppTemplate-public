@@ -35,7 +35,7 @@ desktop/
 | Key | Meaning |
 |---|---|
 | `productName`, `identifier` | App name and reverse-DNS id. Also written into `tauri.conf.json` by `npm run sync` (run by `dev`/`build`). The id decides the OS data folder. |
-| `window` | `title` (default: `productName`), `width`, `height`, `minWidth`, `minHeight`, `theme` (`dark`, `light`, `system`). |
+| `window` | `title` (default: `productName`), `width`, `height`, `minWidth`, `minHeight`, `theme` (`dark`, `light`, `system`); `sameWindowPaths` and `browserPaths`: the pages of the back a new-window request may reach (see 7 below; patterns of `/`-separated segments: literal, `*` = one id or word, `**` = the rest, last and in `browserPaths` only; never `/api/…`). |
 | `resources.marker` | File, relative to the resources folder, that identifies it (default `back/dist/main.js`). |
 | `resources.frontDir` | Built front relative to the resources folder, exported as `SERVE_FRONT_DIR` (default `front/dist`). |
 | `dbFile` | SQLite file name inside the data folder (default `app.db`), exported as `DB_PATH`. |
@@ -136,7 +136,12 @@ Example with a sidecar:
    outside (it may be a frame's, and no user gesture is known): another http(s) site is refused silently there — a project that embeds an
    iframe of a remote site sees it blank. An external link opens in the system browser only through a new-window request (`target="_blank"`,
    `window.open`, given on a user gesture: `on_new_window`); the app never opens a second window of its own (it would not hold the interface
-   session): a page of the back asked in a new window or tab (« open in a window » buttons) opens in the main window instead.
+   session). A page of the back asked in a new window or tab opens in the main window only when `window.sameWindowPaths` lists it (the
+   « open in a window » buttons of the app's own interface, e.g. `/agents/*`): that window holds the interface session and `sidecar_message`,
+   so content the back serves for someone else (an agent's preview, an attachment, an API answer) never goes there — the system browser when
+   `window.browserPaths` lists it (no session there: a link that needs one carries its own ticket), nowhere otherwise (default: both lists
+   empty, every page of the back asked that way is refused). Matching is exact (case included) on the parsed path: dot segments resolved,
+   any encoded character, empty segment or trailing `/` never matches a literal or `*`.
 
 ## Launchers and sidecars on each OS
 

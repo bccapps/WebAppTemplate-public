@@ -124,6 +124,13 @@ pub struct WindowConfig {
     /// `dark`, `light` or `system`.
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Pages of the app's own interface (`/agents/*`) a new-window request (« open in a window ») shows in the main window
+    /// (`navigation.rs` `path_matches`); any other page of the back asked that way is refused, unless `browser_paths` lists it.
+    #[serde(default)]
+    pub same_window_paths: Vec<String>,
+    /// Pages of the back a new-window request opens in the system browser (content served for someone else, such as an agent's preview).
+    #[serde(default)]
+    pub browser_paths: Vec<String>,
 }
 
 impl Default for WindowConfig {
@@ -135,6 +142,8 @@ impl Default for WindowConfig {
             min_width: default_min_width(),
             min_height: default_min_height(),
             theme: default_theme(),
+            same_window_paths: Vec::new(),
+            browser_paths: Vec::new(),
         }
     }
 }
@@ -289,6 +298,12 @@ fn validate(cfg: &DesktopConfig) -> Result<(), String> {
     for origin in &cfg.messaging.origins {
         valid_origin(origin)?;
     }
+    for pattern in &cfg.window.same_window_paths {
+        valid_path_pattern("window.sameWindowPaths", pattern, false)?;
+    }
+    for pattern in &cfg.window.browser_paths {
+        valid_path_pattern("window.browserPaths", pattern, true)?;
+    }
     validate_process(&cfg.server)?;
     let mut seen: HashSet<&str> = HashSet::from([SERVER_NAME]);
     for sidecar in &cfg.sidecars {
@@ -376,6 +391,23 @@ fn valid_origin(origin: &str) -> Result<(), String> {
     let rest = origin.strip_prefix("https://").ok_or_else(|| format!("messaging.origins: \"{origin}\" must start with https://"))?;
     if rest.is_empty() || rest.contains('/') || rest.contains('*') || rest.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(format!("messaging.origins: \"{origin}\" must be a bare origin (https://host[:port])"));
+    }
+    Ok(())
+}
+
+/// A path pattern of `window` (`navigation.rs` `path_matches`): starts with a literal segment other than `api` (the back's API never
+/// opens in a window), then literal or `*` segments; `**` only last, and only where `rest` allows it (never for the main window).
+fn valid_path_pattern(field: &str, pattern: &str, rest: bool) -> Result<(), String> {
+    let invalid = || format!("{field}: \"{pattern}\" must be /literal[/literal|*]{}", if rest { "[/**]" } else { "" });
+    let segments: Vec<&str> = pattern.strip_prefix('/').ok_or_else(invalid)?.split('/').collect();
+    if segments[0] == "api" || !crate::navigation::is_plain_segment(segments[0]) {
+        return Err(invalid());
+    }
+    for (index, segment) in segments.iter().enumerate().skip(1) {
+        let last_rest = rest && *segment == "**" && index == segments.len() - 1;
+        if !(last_rest || *segment == "*" || crate::navigation::is_plain_segment(segment)) {
+            return Err(invalid());
+        }
     }
     Ok(())
 }
@@ -471,6 +503,21 @@ mod tests {
             assert_eq!(parse_config(&with(&format!(r#","schema":"{mode}""#))).unwrap().schema.as_deref(), Some(mode));
         }
         assert!(parse_config(&with(r#","schema":"auto""#)).unwrap_err().contains("sync, migrations, manual"));
+    }
+
+    #[test]
+    fn window_paths_are_validated() {
+        let with = |w: &str| format!(r#"{{"productName":"A","identifier":"x","server":{{"command":"n"}},"window":{{{w}}}}}"#);
+        let ok = parse_config(&with(r#""sameWindowPaths":["/agents/*","/settings/access"],"browserPaths":["/previews/**"]"#)).unwrap();
+        assert_eq!(ok.window.same_window_paths, vec!["/agents/*", "/settings/access"]);
+        assert_eq!(ok.window.browser_paths, vec!["/previews/**"]);
+        assert!(parse_config(&with("")).unwrap().window.same_window_paths.is_empty());
+        for bad in ["/agents/**", "agents/*", "/*/x", "/api/v1/x", "/agents/", "/agents/../api", "/agents/%2e", "/", "/a//b"] {
+            assert!(parse_config(&with(&format!(r#""sameWindowPaths":["{bad}"]"#))).is_err(), "{bad}");
+        }
+        for bad in ["/previews/**/x", "/api/**", "/**", "previews/**"] {
+            assert!(parse_config(&with(&format!(r#""browserPaths":["{bad}"]"#))).is_err(), "{bad}");
+        }
     }
 
     #[test]
