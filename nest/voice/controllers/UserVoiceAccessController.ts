@@ -90,6 +90,7 @@ export class UserVoiceAccessController {
    * Text to speech with one of the caller's own accesses (404 for an access of someone else, 403 when user providers are disabled).
    * `params.id` is a string when the app registers no global ValidationPipe with `transform` (AgentHub does not): `Number(...)` gives the dispatch its integer id.
    */
+  @UseInterceptors(RejectApiTokenInterceptor)
   @Post(':id/tts')
   @HttpCode(HttpStatus.OK)
   async synthesize(
@@ -112,6 +113,7 @@ export class UserVoiceAccessController {
   }
 
   /** Speech to text with one of the caller's own accesses (raw audio body; `language` omitted = detection when the provider offers it). */
+  @UseInterceptors(RejectApiTokenInterceptor)
   @Post(':id/stt')
   @HttpCode(HttpStatus.OK)
   async transcribe(

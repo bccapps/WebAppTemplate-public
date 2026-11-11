@@ -21,13 +21,12 @@ const CRITICAL_ROUTES: CriticalRoute[] = [
   { method: 'POST', path: '/api/v1/user/voice-accesses', interceptors: [RequireVoiceOwnerInterceptor, RejectApiTokenInterceptor] },
   { method: 'PUT', path: '/api/v1/user/voice-accesses/:id', interceptors: [RequireVoiceOwnerInterceptor, RejectApiTokenInterceptor] },
   { method: 'DELETE', path: '/api/v1/user/voice-accesses/:id', interceptors: [RequireVoiceOwnerInterceptor, RejectApiTokenInterceptor] },
+  { method: 'POST', path: '/api/v1/user/voice-accesses/:id/tts', interceptors: [RequireVoiceOwnerInterceptor, RejectApiTokenInterceptor] },
+  { method: 'POST', path: '/api/v1/user/voice-accesses/:id/stt', interceptors: [RequireVoiceOwnerInterceptor, RejectApiTokenInterceptor] },
 ];
 
 /** Write routes deliberately left without a principal guard, with the reason (anything else must be in CRITICAL_ROUTES). */
-const OPEN_ROUTES: OpenRoute[] = [
-  { method: 'POST', path: '/api/v1/user/voice-accesses/:id/tts', reason: 'dispatch with one of the caller\'s own accesses (ownership checked): the stored key is used server-side, never revealed, changed or redirected; same exposure as POST /voice/tts' },
-  { method: 'POST', path: '/api/v1/user/voice-accesses/:id/stt', reason: 'dispatch with one of the caller\'s own accesses (ownership checked): the stored key is used server-side, never revealed, changed or redirected; same exposure as POST /voice/stt' },
-];
+const OPEN_ROUTES: OpenRoute[] = [];
 
 describe('UserVoiceAccessController principal guards', () => {
   it('keeps every critical route behind the API-token refusal', () => {

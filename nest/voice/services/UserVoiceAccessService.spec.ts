@@ -103,6 +103,13 @@ describe('UserVoiceAccessService encryption at rest', () => {
     expect(cipher.open(repo.rows[0].password as string, 'user_voice_accesses', 'password')).toBe('rotated');
   });
 
+  it('refuses to point a stored secret at another URL or provider without a new secret', async () => {
+    const service = new UserVoiceAccessService(fakeRepo([legacy()]) as never, cipher);
+    await expect(service.update(5, 1, { label: 'x', providerId: 1, baseUrlOverride: 'https://other.example.com' })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.update(5, 1, { label: 'x', providerId: 2 })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.update(5, 1, { label: 'x', providerId: 2, password: 'new' })).resolves.toBeDefined();
+  });
+
   it('refuses a base URL or region that would make the server call somewhere else', async () => {
     const service = new UserVoiceAccessService(fakeRepo([]) as never, cipher);
     for (const baseUrlOverride of ['http://example.com', 'https://127.0.0.1/x', 'https://localhost', 'https://db.internal', 'https://u:p@example.com']) {

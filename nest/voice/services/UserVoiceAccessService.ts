@@ -59,12 +59,31 @@ export class UserVoiceAccessService {
   ) {
     const existing = await this.ensureOwnedAccess(userId, id);
     const patch = this.stripUndefined(this.normalizePayload(payload));
+    this.assertSecretNotRedirected(existing, patch);
     const updated = this.accessRepo.merge(existing, patch);
     // Seals the new values and any legacy plaintext the patch did not touch (idempotent on ciphertext).
     Object.assign(updated, this.cipher.sealCredentials({ username: updated.username, password: updated.password }, TABLE));
     await this.accessRepo.save(updated);
     const full = await this.accessRepo.findOne({ where: { id } });
     return this.serialize(full!);
+  }
+
+  /**
+   * The stored secret is never returned, so an update that points the access at ANOTHER endpoint (base URL override or
+   * provider) without supplying a new secret would make the server send the old secret there. Refused: re-enter the
+   * secret (or clear it with an empty value) when the destination changes.
+   */
+  private assertSecretNotRedirected(
+    existing: UserVoiceAccessEntity,
+    patch: { providerId?: number; baseUrlOverride?: string | null; password?: string | null },
+  ) {
+    if (!existing.password || patch.password !== undefined) return;
+    const urlChanged =
+      patch.baseUrlOverride !== undefined && (patch.baseUrlOverride ?? null) !== (existing.baseUrlOverride ?? null);
+    const providerChanged = patch.providerId !== undefined && patch.providerId !== existing.providerId;
+    if (urlChanged || providerChanged) {
+      throw new BadRequestException('Changing the base URL or the provider of an access requires entering its secret again');
+    }
   }
 
   async delete(userId: number, id: number) {
