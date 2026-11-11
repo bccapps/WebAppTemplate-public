@@ -32,6 +32,7 @@ Dépendances : module `common` (`HttpService`, `useLiveResource`, `useServerEven
 | `decideInappDisplay`, `displayNotice`, `notificationTag`, `shouldPromptForPermission`, `BrowserPermission`, `NoticeSurface` | Règles pures d'affichage (voir « Permission du navigateur et repli ») |
 | `renderText`, `fillParams` | Texte d'un `InteractionText` dans la langue courante, `{nom}` remplis (un paramètre absent reste visible) |
 | les hooks et `registerInteractionStepUp` | Voir « Hooks » |
+| `interactionStepUpHandler`, `answerWithStepUp`, `stepUpRequestOf` | Pour le canal `reply` d'une app situé dans l'app (04 §22, ex. les cartes de la messagerie d'AgentHub, C2) qui répond par sa propre route : le gestionnaire de step-up enregistré (`null` sans), et le déroulé « sans preuve, puis `STEP_UP_REQUIRED { methods, purpose }` → gestionnaire → avec preuve » |
 | `enableWebPush`, `disableWebPush`, `isWebPushSupported`, `requestBrowserPermission` | Côté navigateur (voir « Service worker ») |
 | composants | `InteractionHost`, `InteractionQuestionModal`, `InteractionInboxBadge`, `InteractionInboxPanel`, `BrowserNotificationPrompt`, `InteractionChannelsPanel`, `InteractionChannelsAdminPanel`, `InteractionPrefsPanel` |
 | `registerInteractionChannelCard`, `InteractionChannelCardProps` | Carte de réglage d'un canal propre à l'app |
@@ -241,6 +242,7 @@ liaison, avec une config hors dépôt : `createVitestConfig({ include: ['.libs/v
 | Spec | Couvre |
 |---|---|
 | `plugin.spec.ts` | Options, parties activables, chemins invalides, collecte sous l'id `interaction` |
+| `hooks/stepUpRegistry.spec.ts` | `interactionStepUpHandler` : le dernier enregistré, `null` une fois retiré |
 | `pure/inappDisplay.spec.ts`, `pure/text.spec.ts` | Décision natif / toast, repli, tag, invite ; textes, compte à rebours, `safeAppPath`, état d'un canal |
 | `services/interactionApi.spec.ts` | URL, corps et conversion des erreurs |
 | `sw/interactionPush.spec.ts` | Gestionnaires `push` et `notificationclick` |

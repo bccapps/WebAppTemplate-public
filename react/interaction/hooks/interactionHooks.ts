@@ -86,6 +86,14 @@ export function registerInteractionStepUp(handler: InteractionStepUpHandler | nu
   for (const listener of stepUpListeners) listener();
 }
 
+/**
+ * The registered step-up UI, `null` without one: for an app's own in-app reply channel (04 §22, e.g. AgentHub's messaging cards) that answers
+ * through its own route with `answerWithStepUp` (C2).
+ */
+export function interactionStepUpHandler(): InteractionStepUpHandler | null {
+  return stepUpHandler;
+}
+
 /** Whether an app registered a step-up UI (the modal cannot offer a `freshProof` answer without one). */
 export function useHasInteractionStepUp(): boolean {
   return useSyncExternalStore(

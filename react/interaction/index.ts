@@ -13,6 +13,7 @@ export * from './types/interactionTypes';
 export { interactionApi, toApiError } from './services/interactionApi';
 export { decideInappDisplay, displayNotice, notificationTag, shouldPromptForPermission, type BrowserPermission, type NoticeSurface } from './pure/inappDisplay';
 export { renderText, fillParams } from './pure/text';
+export { answerWithStepUp, stepUpRequestOf, type AnswerFlowInput, type StepUpRequest } from './pure/stepUp';
 export {
   useInteractionInbox,
   useInteractionTicket,
@@ -22,6 +23,7 @@ export {
   useBrowserNotificationPermission,
   useWebPush,
   registerInteractionStepUp,
+  interactionStepUpHandler,
   useHasInteractionStepUp,
   useInboxStream,
   type InteractionStepUpHandler,
