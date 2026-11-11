@@ -1,0 +1,46 @@
+/**
+ * VXFramework
+ *
+ * Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
+ * SPDX-License-Identifier: MIT
+ *
+ * Licensed under the MIT License. See LICENSE in the project root.
+ */
+
+/* Colors of the interaction module, as tokens a theme may override (`--interaction-<component>-<role>`, 04 §10.6
+   renamed from `--common-interaction-*` since the module is separate). Defaults read the shared contract
+   (react/common/theme/tokens.css): no literal here. */
+:where(:root) {
+  /* Question modal (InteractionQuestionModal); its backdrop is --common-sharedui-backdrop-bg */
+  --interaction-modal-bg: var(--color-surface);
+  --interaction-modal-fg: var(--color-text);
+  --interaction-modal-border: var(--color-border);
+  /* Action buttons, by style */
+  --interaction-action-primary-bg: var(--color-primary);
+  --interaction-action-primary-fg: var(--color-bg);
+  --interaction-action-danger-bg: var(--color-danger);
+  --interaction-action-danger-fg: var(--color-bg);
+  --interaction-action-neutral-bg: var(--color-surface-muted);
+  --interaction-action-neutral-fg: var(--color-text);
+  /* Countdown to the expiry */
+  --interaction-countdown-fg: var(--color-text-muted);
+  --interaction-countdown-urgent-fg: var(--color-danger);
+  /* Inbox badge (InteractionInboxBadge) */
+  --interaction-badge-bg: var(--color-danger);
+  --interaction-badge-fg: var(--color-bg);
+  /* Inbox items (InteractionInboxPanel) */
+  --interaction-inbox-item-bg: var(--color-surface);
+  --interaction-inbox-item-unread-bg: var(--color-primary-muted);
+  /* Channel cards (InteractionChannelsPanel) */
+  --interaction-channel-card-bg: var(--color-surface);
+  --interaction-channel-card-border: var(--color-border);
+  --interaction-channel-state-ok-fg: var(--color-success);
+  --interaction-channel-state-error-fg: var(--color-danger);
+  --interaction-channel-state-off-fg: var(--color-text-muted);
+  /* Muted texts */
+  --interaction-muted-fg: var(--color-text-muted);
+  /* Category chips */
+  --interaction-category-security-fg: var(--color-danger);
+  --interaction-category-approval-fg: var(--color-warning);
+  --interaction-category-info-fg: var(--color-text-muted);
+}

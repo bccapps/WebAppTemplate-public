@@ -1,0 +1,12 @@
+{
+  "id": "interaction",
+  "title": "User interaction",
+  "description": "Frontend counterpart of nest/interaction: in-app notices (toast or browser notification), question modal and pending inbox, channel settings (browser, Telegram), preferences, administrators' channel panel, Web Push service-worker helper.",
+  "visibility": "public",
+  "category": "users",
+  "requires": [
+    "common"
+  ],
+  "env": [],
+  "questions": []
+}

@@ -8,9 +8,10 @@
  */
 
 /**
- * Dark scheme for react-toastify.
+ * Styles of the toast zone: the notice toast (`toastService.notice`, rules at the end of the file, valid in every
+ * scheme) and the dark scheme for react-toastify.
  *
- * The light appearance is the library default and is left untouched: every rule
+ * Dark scheme: the light appearance is the library default and is left untouched: every dark rule
  * here is scoped to [data-color-scheme='dark'], the attribute ThemeModeProvider
  * sets on <html>. An app that never sets it keeps the light toasts as they are.
  *
@@ -73,4 +74,16 @@
 [data-color-scheme='dark'] .Toastify__spinner {
   border-color: var(--common-toast-border);
   border-right-color: var(--common-toast-info);
+}
+
+/* Notice toast (`toastService.notice`): no colour of its own, the text keeps the toast's. */
+.vx-toast-notice--clickable {
+  cursor: pointer;
+}
+
+/* The « click to open » line, shown only for a notice that has an `onOpen`. */
+.vx-toast-notice-hint {
+  font-size: 0.85em;
+  opacity: 0.8;
+  text-decoration: underline;
 }

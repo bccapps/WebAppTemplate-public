@@ -76,6 +76,10 @@ branche le hook sur `PwaInstallButton` (bouton facultatif de l'en-tête, copié 
 configuration du plugin Vite, le service worker (jamais de cache de `/api/`) et les options de l'assistant sont décrits dans
 `template/README.md` (« Front public files and PWA »).
 
+## Toasts — `ToastService` et `toastService.notice` (2026-11-10)
+
+`toastService.success/error/warning/info(titreCle, texteCle?, options?)` affichent un toast à partir de **clés i18n** (inchangé). `toastService.notice(input)` (ajout pour le module `interaction`) affiche un toast **cliquable** : `ToastNotice` = `{ id, level, title, body?, hint?, onOpen? }`, où chaque texte est `{ key, params? }` (clé i18n, `{param}` nommés) ou `{ raw }` (texte déjà rendu, affiché comme **texte**, jamais comme HTML). Un nouvel appel avec le même `id` **met à jour** le toast affiché au lieu d'en empiler un second ; un clic exécute `onOpen` puis ferme le toast ; `hint` (« Cliquer pour ouvrir ») n'apparaît qu'avec `onOpen`. Styles : `.vx-toast-notice`, `--clickable`, `-hint` dans `components/ui/toast/ToastZone.css` (aucune couleur : `cursor`, `opacity`, couleur héritée). Tests : `core/toast/ToastService.spec.ts`.
+
 ## `HttpService` — déduplication des requêtes en vol (opt-in)
 
 Depuis PERFORMANCE_PLAN.md §6.3/§2.2 b, `HttpService.get/post/put/patch/delete/gets` acceptent une

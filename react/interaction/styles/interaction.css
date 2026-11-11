@@ -1,0 +1,95 @@
+/**
+ * VXFramework
+ *
+ * Copyright (c) 2025-2026 Stéphane VAXELAIRE <svax974@gmail.com>
+ * SPDX-License-Identifier: MIT
+ *
+ * Licensed under the MIT License. See LICENSE in the project root.
+ */
+
+/* Classes of the interaction module (colors: tokens of ./tokens.css only). */
+.ix-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: var(--common-sharedui-backdrop-bg);
+  backdrop-filter: blur(3px);
+}
+.ix-modal {
+  width: min(32rem, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  padding: 1.25rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--interaction-modal-border);
+  background: var(--interaction-modal-bg);
+  color: var(--interaction-modal-fg);
+}
+.ix-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.ix-modal-header h3 { margin: 0; }
+.ix-modal-close { border: none; background: none; color: inherit; font-size: 1.4rem; cursor: pointer; }
+.ix-modal-close:disabled { cursor: not-allowed; opacity: 0.4; }
+.ix-modal-body { white-space: pre-wrap; }
+.ix-modal-fields { display: grid; gap: 0.25rem; margin: 0.75rem 0; }
+.ix-modal-fields div { display: flex; gap: 0.5rem; }
+.ix-modal-fields dt { font-weight: 600; }
+.ix-modal-fields dd { margin: 0; overflow-wrap: anywhere; }
+.ix-modal-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+.ix-modal-hint, .ix-muted { color: var(--interaction-muted-fg); font-size: 0.9em; }
+.ix-modal-outcome { font-weight: 600; }
+.ix-modal-error { color: var(--interaction-channel-state-error-fg); }
+.ix-countdown { color: var(--interaction-countdown-fg); font-variant-numeric: tabular-nums; }
+.ix-countdown--urgent { color: var(--interaction-countdown-urgent-fg); font-weight: 600; }
+.ix-action { border: none; border-radius: 0.5rem; padding: 0.45rem 0.9rem; cursor: pointer; font-weight: 600; }
+.ix-action:disabled { cursor: not-allowed; opacity: 0.5; }
+.ix-action--primary { background: var(--interaction-action-primary-bg); color: var(--interaction-action-primary-fg); }
+.ix-action--danger { background: var(--interaction-action-danger-bg); color: var(--interaction-action-danger-fg); }
+.ix-action--neutral { background: var(--interaction-action-neutral-bg); color: var(--interaction-action-neutral-fg); }
+.ix-badge-button { position: relative; border: none; background: none; cursor: pointer; font-size: 1.1rem; }
+.ix-badge {
+  position: absolute;
+  top: -0.3rem;
+  right: -0.45rem;
+  min-width: 1.1rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  line-height: 1.1rem;
+  text-align: center;
+  background: var(--interaction-badge-bg);
+  color: var(--interaction-badge-fg);
+}
+.ix-page { display: grid; gap: 1.25rem; }
+.ix-panel { display: grid; gap: 0.75rem; }
+.ix-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.ix-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+.ix-item { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 0.5rem; background: var(--interaction-inbox-item-bg); }
+.ix-item--unread { background: var(--interaction-inbox-item-unread-bg); }
+.ix-item-main { display: grid; gap: 0.15rem; }
+.ix-item-button { display: flex; gap: 0.5rem; align-items: center; border: none; background: none; color: inherit; cursor: pointer; text-align: left; padding: 0; }
+.ix-category { font-size: 0.75em; font-weight: 700; text-transform: uppercase; }
+.ix-category--security { color: var(--interaction-category-security-fg); }
+.ix-category--approval { color: var(--interaction-category-approval-fg); }
+.ix-category--info { color: var(--interaction-category-info-fg); }
+.ix-link-button { border: none; background: none; color: inherit; text-decoration: underline; cursor: pointer; padding: 0; }
+.ix-link-button:disabled { cursor: not-allowed; opacity: 0.5; }
+.ix-link-button--danger { color: var(--interaction-channel-state-error-fg); }
+.ix-channel-card { display: grid; gap: 0.5rem; padding: 0.9rem; border-radius: 0.6rem; border: 1px solid var(--interaction-channel-card-border); background: var(--interaction-channel-card-bg); }
+.ix-channel-card-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.ix-channel-card-header h4 { margin: 0; }
+.ix-channel-card-actions, .ix-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+.ix-channel-state { font-size: 0.85em; font-weight: 600; }
+.ix-channel-state--ok { color: var(--interaction-channel-state-ok-fg); }
+.ix-channel-state--error { color: var(--interaction-channel-state-error-fg); }
+.ix-channel-state--off { color: var(--interaction-channel-state-off-fg); }
+.ix-form { display: grid; gap: 0.6rem; }
+.ix-form fieldset { border: none; padding: 0; margin: 0; display: grid; gap: 0.6rem; }
+.ix-field { display: grid; gap: 0.2rem; }
+.ix-switch { display: flex; align-items: center; gap: 0.4rem; }
+.ix-table { width: 100%; border-collapse: collapse; }
+.ix-table th, .ix-table td { text-align: left; padding: 0.3rem 0.5rem; }
+.ix-prompt { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; padding: 0.6rem 0.9rem; border-radius: 0.5rem; background: var(--interaction-inbox-item-unread-bg); }
