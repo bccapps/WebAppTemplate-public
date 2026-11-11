@@ -35,10 +35,10 @@ describe('validationTrace', () => {
     vi.unstubAllEnvs();
   });
 
-  it.each([['production', false], ['prod', false], ['', false], [undefined, false], ['staging', false], ['dev', true], ['preprod', true]])(
-    'VITE_APP_ENV=%s → active %s',
-    (env, expected) => expect(isValidationTraceActive(env)).toBe(expected),
-  );
+  it.each([
+    ['production', undefined, false], ['prod', 'on', false], ['', undefined, false], [undefined, 'on', false], ['staging', 'on', false],
+    ['dev', undefined, true], ['dev', 'off', false], ['dev', 'yes', false], ['preprod', undefined, false], ['preprod', 'on', true],
+  ])('VITE_APP_ENV=%s, VITE_VALIDATION_TRACE=%s → active %s', (env, flag, expected) => expect(isValidationTraceActive(env, flag)).toBe(expected));
 
   it('sends nothing and evaluates nothing in production', () => {
     vi.stubEnv('VITE_APP_ENV', 'production');
@@ -61,6 +61,7 @@ describe('validationTrace', () => {
 
   it('never throws', () => {
     vi.stubEnv('VITE_APP_ENV', 'preprod');
+    vi.stubEnv('VITE_VALIDATION_TRACE', 'on');
     expect(() => validationTrace('a.b', 'ok', () => { throw new Error('boom'); })).not.toThrow();
   });
 });

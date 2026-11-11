@@ -12,24 +12,31 @@ import { configurationService } from '../services/ConfigurationService';
 
 /** Outcome of a control: `ok` = behaved as specified, `violation` = non-conformity observed, `info` = context only. */
 export type ValidationOutcome = 'ok' | 'violation' | 'info';
-type TraceScalar = string | number | boolean | null;
-export type ValidationTraceFields = Record<string, TraceScalar | TraceScalar[]>;
+/** Fields sent: simple values only (arrays and objects are not sent); the back keeps only those the check declares. */
+export type ValidationTraceFields = Record<string, string | number | boolean | null>;
 
 export interface ValidationTraceOptions {
   /** Trace sent before sign-in: goes to the unauthenticated route, accepted only for checks marked `preLogin`. */
   preLogin?: boolean;
 }
 
-/** `VITE_APP_ENV` values with which traces are sent (`production`, anything else or nothing: never). */
-const ACTIVE_ENVS = new Set(['dev', 'preprod']);
 const MAX_FIELDS = 24;
 const MAX_STRING = 200;
 /** Same name fragments as the back (`traceSanitizer.ts`): such fields are not even sent. */
 const SENSITIVE = /secret|token|password|passwd|pwd|phrase|key|auth|bearer|cookie|session|credential|proof|code|otp|signature|seed|mnemonic|salt|jwt|cipher|recovery|pin$/i;
 
-/** Whether this build sends validation traces (`VITE_APP_ENV` is `dev` or `preprod`; fail-closed otherwise). */
-export function isValidationTraceActive(env: unknown = import.meta.env.VITE_APP_ENV): boolean {
-  return typeof env === 'string' && ACTIVE_ENVS.has(env.trim().toLowerCase());
+/**
+ * Whether this build sends validation traces (fail-closed, same rule as the back): `VITE_APP_ENV=dev` unless
+ * `VITE_VALIDATION_TRACE=off`; `VITE_APP_ENV=preprod` only with `VITE_VALIDATION_TRACE=on`; never otherwise.
+ */
+export function isValidationTraceActive(
+  env: unknown = import.meta.env.VITE_APP_ENV,
+  flag: unknown = import.meta.env.VITE_VALIDATION_TRACE,
+): boolean {
+  const appEnv = typeof env === 'string' ? env.trim().toLowerCase() : '';
+  const opt = typeof flag === 'string' ? flag.trim().toLowerCase() : '';
+  if (opt !== '' && opt !== 'on') return false;
+  return appEnv === 'dev' || (appEnv === 'preprod' && opt === 'on');
 }
 
 function prefilter(fields: Record<string, unknown> | undefined): ValidationTraceFields {
@@ -46,8 +53,9 @@ const ignore = () => undefined;
 
 /**
  * Sends one validation trace to the back (`POST /api/v1/validation/trace`, or `/trace/public` with `preLogin`), which
- * accepts only the traces declared with `"sources": ["front"]` in a module's `validation/checks.json` and sanitizes them.
- * Inert in production: nothing is evaluated (pass `fields` as a function when computing them costs anything) nor sent.
+ * accepts only the traces declared with `"sources": ["front"]` in a module's `validation/checks.json`, keeps only the
+ * fields that check declares and sanitizes them. Inert in production: nothing is evaluated (pass `fields` as a function
+ * when computing them costs anything) nor sent. A front trace never proves a critical/high check (back traces do).
  * Never throws, never awaits, never reports a failure to the user. Never pass a secret or raw personal data.
  */
 export function validationTrace(

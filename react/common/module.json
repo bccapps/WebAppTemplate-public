@@ -9,7 +9,8 @@
     "VITE_APP_ENV",
     "VITE_PROJECT_NAME",
     "VITE_PROWL_API_KEY",
-    "VITE_PROWL_API_URL"
+    "VITE_PROWL_API_URL",
+    "VITE_VALIDATION_TRACE"
   ],
   "questions": []
 }
