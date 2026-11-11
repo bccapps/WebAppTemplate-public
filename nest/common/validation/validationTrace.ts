@@ -178,7 +178,13 @@ function admit(rt: TraceRuntime, check: string, outcome: ValidationOutcome): boo
   }
   state.suppressed += 1;
   if (!state.timer) {
-    state.timer = setTimeout(() => flushWindow(rt, key), Math.max(0, state.start + WINDOW_MS - now));
+    state.timer = setTimeout(() => {
+      try {
+        flushWindow(rt, key);
+      } catch {
+        /* a timer must never throw */
+      }
+    }, Math.max(0, state.start + WINDOW_MS - now));
     state.timer.unref?.();
   }
   return false;
