@@ -162,6 +162,12 @@ export interface PendingAnswer {
   actionId: string;
   via: ChannelKind;
   answeredBy: number;
+  /**
+   * The question is a `freshProof` one: `apply` runs only once the answerer's step-up proof (purpose
+   * `interaction.ticket:<ticketId>`) was consumed (step 4 below); `check` runs before, with the proof not spent yet.
+   * An app with a step-up of its own for the same effect relies on it instead of asking again (C2, AgentHub).
+   */
+  freshProof: boolean;
 }
 
 /**

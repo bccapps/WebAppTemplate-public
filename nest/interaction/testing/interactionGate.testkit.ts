@@ -83,7 +83,7 @@ export function describeInteractionGate(label: string, options: GateOptions): vo
       const res = await answerInApp(ticket.id);
       expect(res.status).toBe(200);
       expect(gate.checks.map((c) => c.correlationId)).toEqual([ticket.correlationId]);
-      expect(gate.applied).toEqual([{ ticketId: ticket.id, kind: 'test.approval', source: 'tests', correlationId: ticket.correlationId, actionId: 'approve', via: 'inapp', answeredBy: 1 }]);
+      expect(gate.applied).toEqual([{ ticketId: ticket.id, kind: 'test.approval', source: 'tests', correlationId: ticket.correlationId, actionId: 'approve', via: 'inapp', answeredBy: 1, freshProof: false }]);
       expect(await row(ticket.id)).toMatchObject({ status: 'answered', answerAction: 'approve', answeredVia: 'inapp', answeredBy: 1 });
       await idle(h);
       expect(handled).toEqual([expect.objectContaining({ ticketId: ticket.id, status: 'answered', actionId: 'approve' })]);
@@ -133,6 +133,9 @@ export function describeInteractionGate(label: string, options: GateOptions): vo
       expect((await viaProvider(ticket.id, { stepUpProof: proof })).status).toBe('answered');
       expect(stepUp.consumed).toEqual([proof]);
       expect(gate.applied).toHaveLength(1);
+      // The gate is told the proof was required: `check` before it is spent, `apply` after.
+      expect(gate.checks.every((answer) => answer.freshProof)).toBe(true);
+      expect(gate.applied[0].freshProof).toBe(true);
     });
 
     it('two answers at once: one applies, the other waits then gets ALREADY_ANSWERED — never two effects', async () => {

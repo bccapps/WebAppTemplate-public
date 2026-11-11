@@ -391,7 +391,7 @@ export class InteractionTicketService {
    * (the ticket is open again); a timed-out `apply` keeps the claim until it lapses (the effect may still land).
    */
   private async answerThroughGate(ticket: InteractionTicketEntity, input: AnswerInput, fields: Partial<InteractionTicketEntity>, gate: InteractionAnswerGate): Promise<boolean> {
-    const pending: PendingAnswer = { ticketId: ticket.id, kind: ticket.kind, source: ticket.source, correlationId: ticket.correlationId, actionId: String(fields.answerAction), via: input.via, answeredBy: input.userId };
+    const pending: PendingAnswer = { ticketId: ticket.id, kind: ticket.kind, source: ticket.source, correlationId: ticket.correlationId, actionId: String(fields.answerAction), via: input.via, answeredBy: input.userId, freshProof: ticket.freshProof === true };
     if (gate.check) await gateWithin(gate.check(pending), GATE_CHECK_TIMEOUT_MS).catch((error: unknown) => Promise.reject(gateRefusal(error)));
     const proof = ticket.freshProof ? await this.proofCarried(ticket, input) : null;
     const timeout = gateTimeoutOf(gate);

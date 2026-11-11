@@ -186,7 +186,9 @@ Codes d'erreur (§12) : `INVALID_INPUT`, `INVALID_CONFIG { field, reason }`, `VE
   d'expiration et `cancel` laissent une réservation vivante) → preuve `freshProof` consommée par le réservataire seul → `gate.apply` (l'effet,
   borné par `timeoutMs`, 30 s par défaut, 120 s au plus ; un refus lève la réservation, billet ouvert, `409 ANSWER_REFUSED { reason: <code> }` —
   une `InteractionError` passe telle quelle, jamais un message ; un dépassement garde la réservation jusqu'à son échéance) → `open → answered`
-  lié à la réservation, sans condition d'échéance (l'effet est fait). Un réservataire mort laisse un billet ouvert dont la réservation échoit
+  lié à la réservation, sans condition d'échéance (l'effet est fait). `PendingAnswer.freshProof` dit à la porte que la question exige une preuve :
+  `check` la voit avant sa consommation, `apply` seulement après (une app qui exige sa propre preuve pour le même effet s'appuie sur celle-ci au
+  lieu d'en redemander une). Un réservataire mort laisse un billet ouvert dont la réservation échoit
   (reprise par la réponse suivante, le balayage ou `cancel`). `openTickets(source, { correlationId?, limit? })` → `[{ ticketId, correlationId,
   applying, recipients }]` (500 au plus) : l'app réconcilie ses billets ouverts avec son état ; `revokeRecipient(source, correlationId, userId,
   reason)` retire un destinataire (ligne, notices, cartes fermées, `ticket.closed` ; billet annulé quand plus personne) : le billet lui devient
