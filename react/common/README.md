@@ -60,6 +60,12 @@ never hangs a caller forever).
 
 ---
 
+## `utils/validationTrace.ts` — traces de validation (dev/preprod, 2026-11-11)
+
+`validationTrace(check, outcome, fields?, { preLogin? })` envoie une trace de validation au back (`POST /api/v1/validation/trace`, ou `/trace/public` avec `preLogin`) **seulement** si `VITE_APP_ENV` vaut `dev` ou `preprod` (`isValidationTraceActive()`) : en production rien n'est évalué ni envoyé. Ne lève jamais, n'attend rien, n'affiche rien ; les champs au nom sensible et les valeurs non simples ne partent pas. Le nom doit être déclaré `"sources": ["front"]` dans le `validation/checks.json` du module back. Registre, assainissement et analyse : `nest/common/README.md`, « Validation par observation ». Tests : `utils/validationTrace.spec.ts`.
+
+---
+
 ## `utils/preloadReload.ts` — rechargement unique après un déploiement
 
 Un onglet ouvert avant un déploiement peut demander un chunk lazy que le nouveau déploiement a supprimé : Vite émet alors
