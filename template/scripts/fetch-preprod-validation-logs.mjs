@@ -80,9 +80,10 @@ function checked(name, value, pattern) {
 
 /** Remote log directory: LOG_DIR, else <APP_DATA_DIR>/logs, else /app/logs (relative paths resolved from the image WORKDIR /app). */
 export function remoteLogDir(env) {
-  const base = env.LOG_DIR?.trim() || (env.APP_DATA_DIR?.trim() ? path.posix.join(env.APP_DATA_DIR.trim(), 'logs') : '/app/logs');
+  const raw = [env.LOG_DIR, env.APP_DATA_DIR].map((value) => value?.trim() ?? '');
+  if (raw.some((value) => value.split('/').includes('..'))) throw refuse('LOG_DIR / APP_DATA_DIR: ".." is not allowed');
+  const base = raw[0] || (raw[1] ? path.posix.join(raw[1], 'logs') : '/app/logs');
   const dir = path.posix.normalize(base.startsWith('/') ? base : path.posix.join('/app', base));
-  if (base.split('/').includes('..')) throw refuse('LOG_DIR / APP_DATA_DIR: ".." is not allowed');
   return checked('LOG_DIR / APP_DATA_DIR', dir.replace(/\/$/, ''), SAFE.dir);
 }
 

@@ -112,7 +112,7 @@ test('drops the cut first line when a file is larger than --max-mb', () => {
 test('refuses an unsafe value before any ssh call, without quoting it', () => {
   const bad = [
     { BACK_HOSTS: `${HOST};touch /tmp/pwned` }, { BACK_HOSTS: `$(id)@${HOST}` }, { BACK_HOSTS: `\`id\`.${HOST}` }, { BACK_HOSTS: `${HOST} -oProxyCommand=x` },
-    { BACK_HOSTS: `-oProxyCommand=x` }, { PROJECT_NAME: "demo'x" }, { REMOTE_SSH_PORT: '22 -v' }, { LOG_DIR: '/app/../etc' }, { LOG_DIR: "/app/logs';id;'" },
+    { BACK_HOSTS: `-oProxyCommand=x` }, { PROJECT_NAME: "demo'x" }, { REMOTE_SSH_PORT: '22 -v' }, { LOG_DIR: '/app/../etc' }, { APP_DATA_DIR: '/app/../etc' }, { LOG_DIR: "/app/logs';id;'" },
     { APP_DATA_DIR: '/data dir' }, { BACK_HOSTS: '' }, { SSH_KEY_FILE: '/nonexistent/key' },
   ];
   for (const env of bad) {
