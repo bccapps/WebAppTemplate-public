@@ -8,19 +8,34 @@
  */
 
 import React from 'react';
-import { Box, Button, CircularProgress, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, CircularProgress, Stack, TextField, Typography } from '@mui/material';
 import { I18nLabel } from '../label/I18nLabel';
 import Unauthorized from '../unauthorized/Unauthorized';
 import { adminTokenAuth } from '../../../auth/adminTokenAuth';
 import { detectLocalTrust, sessionAuth } from '../../../auth/sessionAuth';
 import { useSessionKeys } from '../../../hooks/useSessionKeys';
 import { i18n } from '../../../core/i18n/I18n';
+import { localUiSessionState, onLocalUiSessionChange } from '../../../core/http/localUiSession';
 
 export interface AdminTokenGateProps {
   children: React.ReactNode;
   /** Rendered when user management is active and the user is not an admin (default: `<Unauthorized />`). */
   unauthorized?: React.ReactNode;
 }
+
+/** The page's interface session (`core/http/localUiSession.ts`): `lost` when it expired or was refused (the window must be reopened). */
+function useLocalUiSessionState(): ReturnType<typeof localUiSessionState> {
+  return React.useSyncExternalStore(onLocalUiSessionChange, localUiSessionState, localUiSessionState);
+}
+
+/** Desktop app whose interface session is gone: no key to type, the window must be reopened (the shell opens it with a new session). */
+const LocalUiSessionLost: React.FC = () => (
+  <Box sx={{ maxWidth: 420, mx: 'auto', mt: 8, px: 2 }}>
+    <Alert severity="warning">
+      <I18nLabel id="common.admin.tokenGate.localUiLost" />
+    </Alert>
+  </Box>
+);
 
 const AdminKeyForm: React.FC = () => {
   const [token, setToken] = React.useState('');
@@ -81,6 +96,7 @@ const AdminKeyForm: React.FC = () => {
  */
 export const AdminTokenGate: React.FC<AdminTokenGateProps> = ({ children, unauthorized }) => {
   useSessionKeys(['user']);
+  const uiSession = useLocalUiSessionState();
   const anonymous = sessionAuth.mode === 'anonymous';
   const [checked, setChecked] = React.useState(!anonymous);
   React.useEffect(() => {
@@ -91,6 +107,8 @@ export const AdminTokenGate: React.FC<AdminTokenGateProps> = ({ children, unauth
       live = false;
     };
   }, [anonymous]);
+  // Without the `user` module only: the interface session expired or was refused, every request would now be refused.
+  if (uiSession === 'lost' && sessionAuth.mode !== 'users') return <LocalUiSessionLost />;
   if (sessionAuth.isAdmin()) return <>{children}</>;
   if (anonymous) return checked ? <AdminKeyForm /> : null; // wait for the local trust check: no flash of the key form
   return <>{unauthorized ?? <Unauthorized />}</>;

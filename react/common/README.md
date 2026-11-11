@@ -342,9 +342,34 @@ Dépendances : aucune vers `user` (module privé). Les composants admin de `comm
   `detectLocalTrust()` (une seule requête `admin-session` sans clé, ignorée si une clé est stockée) : si le back répond `mode: 'local-trust'` (`LOCAL_TRUST=true`, voir `nest/common/README.md`), le port passe en mode `local-trust` : `isAuth()`/`isAdmin()` vrais, aucune clé, rien à déconnecter.
 - `components/ui/admin/AdminTokenGate.tsx` : enveloppe `AdminPage`, `AdminDashboard`, `AdminThemes`. Admin ⇒ contenu ; mode `anonymous` ⇒
   formulaire « Admin key » (affiché après la détection du mode local de confiance, sans clignotement ; en mode `local-trust` le contenu s'affiche directement) ; mode `users` non admin ⇒ comportement historique (`<Unauthorized />`, ou la prop `unauthorized`).
-  Clés i18n : `common.admin.tokenGate.{title,label,submit,invalid,logout}`.
+  Hors mode `users`, une session d'interface locale perdue (`localUiSessionState() === 'lost'`, voir ci-dessous) remplace tout par un message « rouvrez l'application ».
+  Clés i18n : `common.admin.tokenGate.{title,label,submit,invalid,logout,localUiLost}`.
 - `plugins/` : contrat des plugins d'app, détaillé dans « Plugins du front » plus bas.
 - Le module `user` appelle `registerSessionAuth` à l'import de `UserService` : les apps existantes n'ont rien à changer.
+
+## Session d'interface locale — `core/http/localUiSession.ts`
+
+Côté page de la session exigée par une app de bureau en confiance locale (back : `nest/common/README.md`, « Session d'interface locale »).
+Module chargé par `HttpService` (donc avant toute requête), **inerte** sans code d'amorçage ni session : aucune requête, aucun en-tête, aucune attente.
+
+- **Amorçage** : si l'adresse porte `#vx-local-ui=<code>` (la coquille de bureau ouvre la fenêtre ainsi), le code est **retiré de l'adresse aussitôt**
+  (`history.replaceState`, les autres paramètres du fragment restent), puis échangé (`POST <api>/local-ui/session`, 3 essais sur erreur réseau, aucun
+  après un refus). Toute requête axios et tout flux `HttpService` attendent la fin de l'échange (`whenLocalUiSessionReady()`).
+- **Envoi** : `X-Local-Session: <jeton>` sur les requêtes de **même origine** seulement : intercepteur axios installé par le module (`HttpService` et
+  les appels axios directs des modules), `HttpService.streamGet`/`streamFetch`, et `localUiSessionHeaders(url)` pour un `fetch` écrit à la main.
+  Jamais vers une autre origine (API distante, autre port de boucle locale) ; si l'API de l'app elle-même est sur une autre origine
+  (`VITE_API_URL` absolu), le code n'est pas envoyé du tout et la session est perdue (un build de bureau a une base relative).
+- **Conservation** : en mémoire et dans `sessionStorage['vx.localUi.session']` (par origine donc par port, survit au rechargement de l'onglet ;
+  jamais `localStorage`, jamais de cookie ; `localStorage['vx.localUi.used']` = `1`, simple marqueur non secret). Réserve : un moteur Chromium
+  (WebView2 sous Windows, Chrome en développement) peut écrire `sessionStorage` dans le profil pour restaurer la session ; le jeton y vit au plus
+  jusqu'à sa rotation suivante (+ 60 s), lisible seulement par le même compte du système.
+- **Rotation** : renouvelé toutes les `renewAfterMs` données par le back (10 min, avec un peu d'aléa) et dès le retour au premier plan s'il est
+  en retard ; refus ⇒ session perdue. Les onglets de la même origine se la passent par `BroadcastChannel('vx-local-ui')` (un nouvel onglet la
+  demande au plus 400 ms, un onglet qui la renouvelle prévient les autres).
+- **État** : `localUiSessionState()` (`unused` | `active` | `lost`), `onLocalUiSessionChange(listener)`. `AdminTokenGate` affiche
+  `common.admin.tokenGate.localUiLost` quand elle est perdue (rouvrir l'application).
+- Tests : `core/http/localUiSession.spec.ts` (inerte sans code, retrait immédiat du fragment, échange, même origine seulement, refus sans
+  nouvel essai, erreur réseau rejouée, rechargement, rotation et refus de rotation, intercepteur axios qui attend l'échange, passage entre onglets).
 
 ## Plugins du front — `plugins/`
 

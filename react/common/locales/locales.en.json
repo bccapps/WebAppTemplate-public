@@ -31,6 +31,7 @@
   "common.admin.tokenGate.submit": "Unlock",
   "common.admin.tokenGate.invalid": "Invalid admin key.",
   "common.admin.tokenGate.logout": "Lock admin",
+  "common.admin.tokenGate.localUiLost": "The local interface session has expired or is no longer valid: close and reopen the application.",
   "common.nav.sidebar.collapse": "Collapse menu",
   "common.nav.sidebar.expand": "Expand menu",
   "common.ui.confirm.confirm": "Confirm",

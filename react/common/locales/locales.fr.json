@@ -31,6 +31,7 @@
   "common.admin.tokenGate.submit": "Déverrouiller",
   "common.admin.tokenGate.invalid": "Clé d'administration invalide.",
   "common.admin.tokenGate.logout": "Verrouiller l'administration",
+  "common.admin.tokenGate.localUiLost": "La session de l'interface locale a expiré ou n'est plus valide : fermez puis rouvrez l'application.",
   "common.nav.sidebar.collapse": "Réduire le menu",
   "common.nav.sidebar.expand": "Déplier le menu",
   "common.ui.confirm.confirm": "Confirmer",

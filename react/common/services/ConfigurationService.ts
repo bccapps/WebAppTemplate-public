@@ -10,9 +10,8 @@
 import { HttpResult } from '../core/http/HttpResult';
 import { httpService } from '../core/http/HttpService';
 import { appSession } from '../core/session/AppSession';
+import { DEFAULT_API_URL } from '../core/http/apiBase';
 import { Configuration } from '@/config/config';
-
-const DEFAULT_API_URL: string = (import.meta as any).env?.VITE_API_URL || '/api/v1';
 
 /**
  * Prefix, on this app's own back, of the read relay that serves REMOTE modules to the browser

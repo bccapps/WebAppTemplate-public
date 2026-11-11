@@ -12,6 +12,8 @@ import type { AxiosError, AxiosRequestConfig, AxiosResponse } from 'axios';
 import { HttpResult } from './HttpResult';
 import { cryptService } from '../../services/CryptService';
 import { TRANSPORT_SESSION_HEADER } from '../../constants/crypt.constants';
+// Interface session of a local-trust app: its axios interceptor covers every axios request; streams below add it themselves.
+import { localUiSessionHeaders, whenLocalUiSessionReady } from './localUiSession';
 
 export type HttpRequestOptions = {
   skipTransport?: boolean;
@@ -530,7 +532,7 @@ class HttpService {
   }
 
   private buildStreamHeaders(url: string, base: Record<string, string>): Record<string, string> {
-    const headers = { ...base };
+    const headers = { ...base, ...localUiSessionHeaders(url) };
     const apiToken = this.getApiToken(url);
     if (apiToken) {
       headers['Authorization'] = `Bearer ${apiToken}`;
@@ -550,6 +552,7 @@ class HttpService {
     if (!retried && canSelfHeal && this.isTokenStaleProvider?.()) {
       await this.tokenRefresher!();
     }
+    await whenLocalUiSessionReady();
 
     const response = await fetch(url, { ...init, headers: this.buildStreamHeaders(url, init.headers) });
     if (!response.ok) {
