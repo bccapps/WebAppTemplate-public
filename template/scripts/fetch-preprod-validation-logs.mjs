@@ -27,7 +27,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,23 +58,41 @@ export class FetchError extends Error {
 }
 const refuse = (message) => new FetchError(message, 2);
 
-/** Only the `keys` of a `KEY=value` env file (no expansion, no execution; the last assignment wins, like `source`). */
+/**
+ * Only the `keys` of a `KEY=value` env file (no expansion, no execution; the last assignment wins, like `source`). A
+ * quoted value may span several lines (a certificate): its lines are part of the value, never read as assignments.
+ */
 export function parseEnvFile(text, keys = ENV_KEYS) {
   const wanted = new Set(keys);
   const values = {};
-  for (const raw of text.split(/\r?\n/)) {
-    const match = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.*)$/.exec(raw);
-    if (!match || !wanted.has(match[1])) continue;
+  const lines = text.replace(/^\ufeff/, '').split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.*)$/.exec(lines[i]);
+    if (!match) continue;
     let value = match[2].trim();
-    const quoted = /^(["'])(.*)\1$/.exec(value);
-    value = quoted ? quoted[2] : value.replace(/\s+#.*$/, '');
-    values[match[1]] = value;
+    const quote = /^["']/.exec(value)?.[0];
+    if (quote) {
+      let close = value.indexOf(quote, 1);
+      if (close === -1) {
+        const end = lines.findIndex((line, at) => at > i && line.includes(quote));
+        if (end === -1) throw refuse(`${match[1]}: unterminated quoted value in back/.env.preprod`);
+        value = [value, ...lines.slice(i + 1, end + 1)].join('\n');
+        close = value.indexOf(quote, 1);
+        i = end;
+      }
+      value = value.slice(1, close); // the quoted text; what follows the closing quote (a comment) is dropped
+    } else {
+      value = value.replace(/\s+#.*$/, '');
+    }
+    if (wanted.has(match[1])) values[match[1]] = value;
   }
   return values;
 }
 
 function checked(name, value, pattern) {
-  if (!pattern.test(value)) throw refuse(`${name}: unsafe or invalid value in back/.env.preprod (refused; it is not shown)`);
+  if (!pattern.test(value) || (pattern === SAFE.dir && value.split('/').includes('..'))) {
+    throw refuse(`${name}: unsafe or invalid value in back/.env.preprod (refused; it is not shown)`);
+  }
   return value;
 }
 
@@ -130,7 +148,7 @@ export const REMOTE_COMMANDS = Object.freeze({
     `docker ps --format '{{.Names}}|{{.Label "com.docker.compose.service"}}' --filter ${quote('compose project', `label=com.docker.compose.project=${project}`, /^label=com\.docker\.compose\.project=[a-z0-9][a-z0-9_-]{0,191}$/)}`,
   list: (container, dir) => `docker exec ${quote('container', container, SAFE.container)} ls -1 -- ${quote('log dir', dir, SAFE.dir)}`,
   read: (container, dir, file, bytes) =>
-    `docker exec ${quote('container', container, SAFE.container)} tail -c ${checked('byte count', String(bytes), /^[1-9]\d{0,9}$/)} -- ${quote('log file', `${dir}/${checked('log file', file, SAFE.file)}`, SAFE.dir)}`,
+    `docker exec ${quote('container', container, SAFE.container)} tail -c ${checked('byte count', String(bytes), /^[1-9]\d{0,9}$/)} -- ${quote('log file', `${checked('log dir', dir, SAFE.dir)}/${checked('log file', file, SAFE.file)}`, SAFE.dir)}`,
 });
 
 /** ssh arguments: no prompt, known host keys only, short timeouts, no forwarding of any kind. */
@@ -156,8 +174,13 @@ export function sshFailureReason(stderr) {
   return 'SSH connection failed';
 }
 
+/** The only variables ssh gets: what it needs to find its config, its known_hosts and the agent; nothing else leaks to it. */
+export function sshEnvironment(env = process.env) {
+  return Object.fromEntries(['PATH', 'HOME', 'USER', 'LOGNAME', 'SSH_AUTH_SOCK'].filter((k) => env[k] !== undefined).map((k) => [k, env[k]]));
+}
+
 function run(target, command, maxBytes) {
-  const result = spawnSync('ssh', sshArgs(target, command), { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: maxBytes + 65536, timeout: 300_000 });
+  const result = spawnSync('ssh', sshArgs(target, command), { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: maxBytes + 65536, timeout: 300_000, env: sshEnvironment() });
   if (result.error?.code === 'ENOENT') throw new FetchError('ssh is not installed on this machine', 3);
   if (result.error) throw new FetchError(`${target.label}: SSH command did not complete (${result.error.code ?? 'error'})`, 3);
   if (result.status === 255) throw new FetchError(`${target.label}: ${sshFailureReason(String(result.stderr))}`, 3);
@@ -236,11 +259,7 @@ function fetchContainer(target, container, outDir, options, budget) {
   return written;
 }
 
-/** Replaces the previous copy: `.validation-cache/preprod/` is emptied first (short local retention), then refilled. */
-export function fetchAll(targets, cacheRoot, options) {
-  const out = path.join(cacheRoot, 'preprod');
-  rmSync(out, { recursive: true, force: true });
-  mkdirSync(out, { recursive: true, mode: 0o700 });
+function fetchInto(out, targets, options) {
   const budget = { left: LIMITS.totalBytes };
   let files = 0;
   for (const [hostIndex, target] of targets.entries()) {
@@ -254,9 +273,41 @@ export function fetchAll(targets, cacheRoot, options) {
   return files;
 }
 
+/**
+ * Replaces the previous copy atomically (short local retention): everything is fetched into a fresh private directory
+ * of `.validation-cache/`, which then takes the place of `preprod/`; on failure the previous copy is left as it was.
+ */
+export function fetchAll(targets, cacheRoot, options) {
+  const fresh = mkdtempSync(path.join(cacheRoot, 'preprod.tmp-'));
+  try {
+    const files = fetchInto(fresh, targets, options);
+    const out = path.join(cacheRoot, 'preprod');
+    const old = existsSync(out) ? `${fresh}.old` : null;
+    if (old) renameSync(out, old);
+    renameSync(fresh, out);
+    if (old) rmSync(old, { recursive: true, force: true });
+    return files;
+  } catch (error) {
+    rmSync(fresh, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/** Whether something that is not a real directory (a symbolic link, even dangling, or a file) sits at `target`. */
+function isOtherThanDirectory(target) {
+  try {
+    return !lstatSync(target).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /** `.validation-cache/` (0700) with its own `.gitignore` (`*`): nothing fetched can be committed. */
 export function ensureCache(root) {
   const dir = path.join(root, '.validation-cache');
+  for (const target of [dir, path.join(dir, 'preprod')]) {
+    if (isOtherThanDirectory(target)) throw refuse(`${path.relative(root, target)} is not a plain directory (symbolic link refused)`);
+  }
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   chmodSync(dir, 0o700);
   if (!existsSync(path.join(dir, '.gitignore'))) writeFileSync(path.join(dir, '.gitignore'), '*\n', { mode: 0o600 });

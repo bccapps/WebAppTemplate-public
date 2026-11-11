@@ -9,7 +9,9 @@
 
 /**
  * Evaluation of the registry checks against the trace lines (validation by observation, `nest/common/README.md`) and
- * the difference between two runs (`--follow-up`). Pure functions, zero dependencies, ESM.
+ * the difference between two runs (`--follow-up`). Evaluation is PER SOURCE: a front trace never counts for a check
+ * that is not declared `"front"`, and a critical/high check is only OBSERVED_OK on back traces (the front, reachable
+ * without a session for pre-login checks, cannot fake the evidence). Pure functions, zero dependencies, ESM.
  */
 
 import { scrubForDisplay } from './validation-logs.mjs';
@@ -18,6 +20,7 @@ export const STATUS = Object.freeze({ VIOLATION: 'VIOLATION', OK: 'OBSERVED_OK',
 const BLOCKING = new Set(['critical', 'high']);
 const MAX_SAMPLES = 3;
 const MAX_SAMPLE_LENGTH = 400;
+const KINDS = ['ok', 'info', 'violation', 'forbidden'];
 
 /** `<trace>` or `<trace>:<outcome>` → matcher of a trace line. */
 function forbiddenMatcher(spec) {
@@ -30,47 +33,68 @@ function weight(entry) {
   return entry.kind === 'summary' ? Number(entry.suppressed) || 0 : 1;
 }
 
-function sample(line) {
-  const text = scrubForDisplay(line.raw);
-  return text.length > MAX_SAMPLE_LENGTH ? `${text.slice(0, MAX_SAMPLE_LENGTH)}…` : text;
+const sourceOf = (entry) => (entry.source === 'front' ? 'front' : 'back');
+
+/**
+ * What a sample line shows. By default only the shape (time, check, outcome, source, field NAMES): the report is read at
+ * every session start and pasted into conversations. Values only with `showValues` (scrubbed again, cut at 400).
+ */
+export function sampleOf(line, showValues = false) {
+  if (showValues) {
+    const text = scrubForDisplay(line.raw.slice(0, 4096));
+    return text.length > MAX_SAMPLE_LENGTH ? `${text.slice(0, MAX_SAMPLE_LENGTH)}…` : text;
+  }
+  const { ts, check, outcome, fields } = line.entry;
+  const names = fields && typeof fields === 'object' ? Object.keys(fields).join(', ') : '';
+  return `${ts ?? '?'} ${check} ${outcome} (${sourceOf(line.entry)})${names ? ` fields: ${names}` : ''}`;
 }
 
 function newResult(check) {
+  const zero = () => ({ back: 0, front: 0 });
   return {
-    id: check.id, module: check.module, title: check.title, severity: check.severity, status: STATUS.NOT_YET,
-    counts: { ok: 0, info: 0, violation: 0, forbidden: 0 }, first: null, last: null, samples: [], file: check.file,
+    id: check.id, module: check.module, title: check.title, severity: check.severity, sources: check.sources, status: STATUS.NOT_YET,
+    counts: Object.fromEntries(KINDS.map((k) => [k, zero()])), ignoredFront: 0, first: null, last: null, samples: [], note: null, file: check.file,
   };
 }
 
-function record(result, line, kind) {
+function record(result, line, kind, showValues) {
   const ts = line.entry.ts ?? null;
-  result.counts[kind] += weight(line.entry);
+  result.counts[kind][sourceOf(line.entry)] += weight(line.entry);
   if (ts && (!result.first || ts < result.first)) result.first = ts;
   if (ts && (!result.last || ts > result.last)) result.last = ts;
-  const wantsSample = kind === 'violation' || kind === 'forbidden' || result.counts.violation + result.counts.forbidden === 0;
-  if (wantsSample && line.entry.kind !== 'summary') {
-    if (kind === 'violation' || kind === 'forbidden') result.samples = result.samples.filter((s) => s.bad);
-    if (result.samples.length < MAX_SAMPLES) result.samples.push({ bad: kind === 'violation' || kind === 'forbidden', text: sample(line) });
-  }
+  const bad = kind === 'violation' || kind === 'forbidden';
+  if (line.entry.kind === 'summary' || (!bad && result.samples.some((s) => s.bad))) return;
+  if (bad) result.samples = result.samples.filter((s) => s.bad);
+  if (result.samples.length < MAX_SAMPLES) result.samples.push({ bad, text: sampleOf(line, showValues) });
 }
 
-function statusOf(result, expected) {
-  if (result.counts.violation + result.counts.forbidden > 0) return STATUS.VIOLATION;
-  return result.counts[expected] > 0 ? STATUS.OK : STATUS.NOT_YET;
+const total = (pair) => pair.back + pair.front;
+
+function statusOf(result, check) {
+  const { counts } = result;
+  if (total(counts.violation) + total(counts.forbidden) > 0) return STATUS.VIOLATION;
+  const expected = counts[check.expect.outcome];
+  if (expected.back > 0) return STATUS.OK;
+  if (expected.front > 0 && !BLOCKING.has(check.severity)) return STATUS.OK;
+  if (expected.front > 0) result.note = 'front traces only: a critical/high check is proven by back traces';
+  return STATUS.NOT_YET;
 }
 
-/** One result per check: status, counts, first/last occurrence, up to 3 scrubbed sample lines. */
-export function evaluateChecks(checks, lines) {
+/** One result per check: status, counts per source, first/last occurrence, up to 3 sample lines. */
+export function evaluateChecks(checks, lines, { showValues = false } = {}) {
   return checks.map((check) => {
     const traces = new Set(check.expect.traces);
     const forbidden = (check.mustNotHappen ?? []).map(forbiddenMatcher);
+    const acceptsFront = check.sources.includes('front');
     const result = newResult(check);
     for (const line of lines) {
       const { entry } = line;
-      if (forbidden.some((matches) => matches(entry))) record(result, line, 'forbidden');
-      else if (traces.has(entry.check) && ['ok', 'info', 'violation'].includes(entry.outcome)) record(result, line, entry.outcome);
+      const matches = forbidden.some((m) => m(entry)) ? 'forbidden' : traces.has(entry.check) && KINDS.includes(entry.outcome) ? entry.outcome : null;
+      if (!matches) continue;
+      if (sourceOf(entry) === 'front' && !acceptsFront) result.ignoredFront += weight(entry);
+      else record(result, line, matches, showValues);
     }
-    result.status = statusOf(result, check.expect.outcome);
+    result.status = statusOf(result, check);
     result.samples = result.samples.map((s) => s.text);
     return result;
   });
@@ -92,21 +116,23 @@ export function isBlocking(result) {
   return result.status === STATUS.VIOLATION && BLOCKING.has(result.severity);
 }
 
+const violationsOf = (r) => total(r.counts.violation) + total(r.counts.forbidden);
+
 /** Compact state saved between two `--follow-up` runs. */
 export function toState(results, leaks) {
   return {
-    checks: Object.fromEntries(results.map((r) => [r.id, { status: r.status, violation: r.counts.violation + r.counts.forbidden, ok: r.counts.ok + r.counts.info }])),
-    leaks: [...new Set(leaks.map((l) => `${l.type}|${l.fingerprint}`))],
+    checks: Object.fromEntries(results.map((r) => [r.id, { status: r.status, violation: violationsOf(r), ok: total(r.counts.ok) + total(r.counts.info) }])),
+    leaks: [...new Set(leaks.map((l) => l.identity))],
   };
 }
 
-/** Changes since the previous state: new/removed checks, status changes, more violations, new leak fingerprints. */
+/** Changes since the previous state: new/removed checks, status changes, more violations, new leaks. */
 export function diffStates(previous, results, leaks) {
   const changes = [];
   const before = previous?.checks ?? {};
   for (const result of results) {
     const old = before[result.id];
-    const violations = result.counts.violation + result.counts.forbidden;
+    const violations = violationsOf(result);
     if (!old) changes.push({ kind: 'new-check', id: result.id, status: result.status });
     else if (old.status !== result.status) changes.push({ kind: 'status', id: result.id, from: old.status, to: result.status });
     else if (violations > old.violation) changes.push({ kind: 'more-violations', id: result.id, added: violations - old.violation });
@@ -114,7 +140,7 @@ export function diffStates(previous, results, leaks) {
   const ids = new Set(results.map((r) => r.id));
   for (const id of Object.keys(before)) if (!ids.has(id)) changes.push({ kind: 'removed-check', id });
   const knownLeaks = new Set(previous?.leaks ?? []);
-  const fresh = leaks.filter((l) => !knownLeaks.has(`${l.type}|${l.fingerprint}`));
+  const fresh = leaks.filter((l) => !knownLeaks.has(l.identity));
   if (fresh.length) changes.push({ kind: 'new-leaks', leaks: fresh });
   return changes;
 }

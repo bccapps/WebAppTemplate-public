@@ -11,11 +11,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { REMOTE_COMMANDS, composeProjectName, parseEnvFile, remoteLogDir, resolveTargets, selectFiles, sshFailureReason } from './fetch-preprod-validation-logs.mjs';
+import { REMOTE_COMMANDS, composeProjectName, parseEnvFile, remoteLogDir, resolveTargets, selectFiles, sshEnvironment, sshFailureReason } from './fetch-preprod-validation-logs.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, 'fetch-preprod-validation-logs.mjs');
@@ -27,9 +27,13 @@ const PROJECT = 'demo7f3a';
 /** Fake `ssh`: records its argv, never connects, answers the allow-listed commands from canned data. */
 const FAKE_SSH = `#!/usr/bin/env node
 const fs = require('fs');
+const path = require('path');
+// Configuration from a file next to the stub: the real script gives ssh a minimal environment (PATH, HOME, USER...).
+const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'ssh-config.json'), 'utf8'));
 const argv = process.argv.slice(2);
-fs.appendFileSync(process.env.FAKE_SSH_LOG, JSON.stringify(argv) + '\\n');
-const mode = process.env.FAKE_SSH_MODE || 'ok';
+fs.appendFileSync(cfg.log, JSON.stringify(argv) + '\\n');
+fs.appendFileSync(cfg.log + '.env', JSON.stringify(Object.keys(process.env).sort()) + '\\n');
+const mode = cfg.mode;
 if (mode === 'hostkey') { process.stderr.write('Host key verification failed for ${HOST}.\\n'); process.exit(255); }
 if (mode === 'denied') { process.stderr.write('${USER}@${HOST}: Permission denied (publickey).\\n'); process.exit(255); }
 const command = argv[argv.length - 1];
@@ -41,7 +45,7 @@ if (command.startsWith('docker ps')) {
 } else if (command.includes(' tail -c ')) {
   const bytes = Number(command.split(' tail -c ')[1].split(' ')[0]);
   const content = '{"partial":' + '\\n' + '{"v":1,"check":"demo.a","outcome":"ok"}\\n';
-  process.stdout.write(process.env.FAKE_SSH_BIG ? content.slice(-bytes).padStart(bytes, 'x') : content.slice(content.indexOf('\\n') + 1));
+  process.stdout.write(cfg.big ? content.slice(-bytes).padStart(bytes, 'x') : content.slice(content.indexOf('\\n') + 1));
 } else { process.exit(1); }
 `;
 
@@ -58,10 +62,12 @@ function setup({ env = {}, mode = 'ok', big = false } = {}) {
   mkdirSync(path.join(root, 'back'));
   writeFileSync(path.join(root, 'back', '.env.preprod'), Object.entries(values).map(([k, v]) => `${k}=${v}`).join('\n') + '\n');
   const log = path.join(root, 'ssh-calls.jsonl');
-  const runEnv = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, FAKE_SSH_LOG: log, FAKE_SSH_MODE: mode, ...(big ? { FAKE_SSH_BIG: '1' } : {}) };
+  writeFileSync(path.join(bin, 'ssh-config.json'), JSON.stringify({ log, mode, big }));
+  const runEnv = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, CANARY_SECRET: 'never-passed-to-ssh' };
   const run = (...args) => spawnSync(process.execPath, [SCRIPT, '--root', root, ...args], { encoding: 'utf8', env: runEnv });
   const calls = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
-  return { root, key, secret, run, calls };
+  const envKeys = () => readFileSync(`${log}.env`, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  return { root, key, secret, run, calls, envKeys };
 }
 
 const SSH_OPTIONS = (key) => [
@@ -76,7 +82,7 @@ const ALLOWED = [
 ];
 
 test('copies the recent validation files read-only, through the allow-listed commands only', () => {
-  const { root, key, secret, run, calls } = setup();
+  const { root, key, secret, run, calls, envKeys } = setup();
   const res = run('--since', '7d');
   assert.equal(res.status, 0, res.stderr);
   const all = calls();
@@ -98,7 +104,27 @@ test('copies the recent validation files read-only, through the allow-listed com
   assert.equal(statSync(path.join(root, '.validation-cache')).mode & 0o777, 0o700);
   assert.equal(readFileSync(path.join(root, '.validation-cache', '.gitignore'), 'utf8'), '*\n');
   for (const output of [res.stdout, res.stderr]) for (const value of [HOST, USER, key, secret, PROJECT]) assert.ok(!output.includes(value));
+  for (const keys of envKeys()) assert.ok(keys.every((k) => ['PATH', 'HOME', 'USER', 'LOGNAME', 'SSH_AUTH_SOCK', '__CF_USER_TEXT_ENCODING'].includes(k)), keys.join(','));
+  assert.deepEqual(readdirSync(path.join(root, '.validation-cache')).sort(), ['.gitignore', 'preprod']);
   rmSync(root, { recursive: true });
+});
+
+test('a failed fetch leaves the previous copy untouched (atomic replacement); a symlinked cache is refused', () => {
+  const { root, run } = setup();
+  assert.equal(run().status, 0);
+  const before = readFileSync(path.join(root, '.validation-cache', 'preprod', 'host1', 'back-1', `validation-${day(0)}.jsonl`), 'utf8');
+  const { root: other, run: runDenied } = setup({ mode: 'denied' });
+  rmSync(path.join(other, '.validation-cache'), { recursive: true, force: true });
+  cpSync(path.join(root, '.validation-cache'), path.join(other, '.validation-cache'), { recursive: true });
+  assert.equal(runDenied().status, 3);
+  assert.equal(readFileSync(path.join(other, '.validation-cache', 'preprod', 'host1', 'back-1', `validation-${day(0)}.jsonl`), 'utf8'), before);
+  assert.deepEqual(readdirSync(path.join(other, '.validation-cache')).sort(), ['.gitignore', 'preprod']);
+  const elsewhere = mkdtempSync(path.join(tmpdir(), 'vfetch-target-'));
+  rmSync(path.join(root, '.validation-cache'), { recursive: true });
+  symlinkSync(elsewhere, path.join(root, '.validation-cache'));
+  assert.equal(run().status, 2);
+  assert.deepEqual(readdirSync(elsewhere), []);
+  for (const dir of [root, other, elsewhere]) rmSync(dir, { recursive: true, force: true });
 });
 
 test('drops the cut first line when a file is larger than --max-mb', () => {
@@ -155,6 +181,12 @@ test('missing env file, bad options → exit 2; --dry-run connects nowhere and s
 
 test('pure helpers: env parsing, log dir, file selection, command builders refuse unsafe input', () => {
   assert.deepEqual(parseEnvFile('export REMOTE_HOST="h.example"\nDB_PASSWORD=x\n# REMOTE_USER=a\nREMOTE_USER=b # note\nREMOTE_USER=c\n'), { REMOTE_HOST: 'h.example', REMOTE_USER: 'c' });
+  assert.deepEqual(parseEnvFile('\ufeffREMOTE_HOST=real.example\r\nTLS="-----BEGIN X\nREMOTE_HOST=other.example\n-----END X"\n'), { REMOTE_HOST: 'real.example' });
+  assert.throws(() => parseEnvFile('TLS="never closed\nREMOTE_HOST=other.example\n'), (e) => e.exitCode === 2);
+  assert.deepEqual(parseEnvFile('REMOTE_HOST="h.example" # preprod\nREMOTE_USER=\'deploy\' # note\n'), { REMOTE_HOST: 'h.example', REMOTE_USER: 'deploy' });
+  assert.throws(() => REMOTE_COMMANDS.list('c1', '/app/../../etc'));
+  assert.throws(() => REMOTE_COMMANDS.read('c1', '/app/../../etc', `validation-${day(0)}.jsonl`, 10));
+  assert.deepEqual(Object.keys(sshEnvironment({ PATH: 'p', HOME: 'h', SSH_AUTH_SOCK: 's', DB_PASSWORD: 'x', AWS_SECRET_ACCESS_KEY: 'y' })), ['PATH', 'HOME', 'SSH_AUTH_SOCK']);
   assert.equal(remoteLogDir({}), '/app/logs');
   assert.equal(remoteLogDir({ LOG_DIR: 'shared/logs' }), '/app/shared/logs');
   assert.equal(remoteLogDir({ APP_DATA_DIR: '/app/shared' }), '/app/shared/logs');

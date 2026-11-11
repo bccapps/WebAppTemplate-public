@@ -85,9 +85,12 @@ function validateArray(value, schema, root, at) {
 
 function validateObject(value, schema, root, at) {
   const errors = (schema.required ?? []).filter((key) => !(key in value)).map((key) => `${at}: missing "${key}"`);
-  for (const [key, item] of Object.entries(value)) {
-    const sub = schema.properties?.[key];
-    if (sub) errors.push(...validateSchema(item, sub, root, `${at}.${key}`));
+  const keys = Object.keys(value);
+  if (schema.maxProperties !== undefined && keys.length > schema.maxProperties) errors.push(`${at}: more than ${schema.maxProperties} properties`);
+  for (const key of keys) {
+    if (schema.propertyNames) errors.push(...validateSchema(key, schema.propertyNames, root, `${at} key "${key}"`));
+    const sub = schema.properties?.[key] ?? (typeof schema.additionalProperties === 'object' ? schema.additionalProperties : undefined);
+    if (sub) errors.push(...validateSchema(value[key], sub, root, `${at}.${key}`));
     else if (schema.additionalProperties === false) errors.push(`${at}: unknown property "${key}"`);
   }
   return errors;
@@ -96,6 +99,11 @@ function validateObject(value, schema, root, at) {
 /** Errors of `value` against the JSON Schema subset used by checks.schema.json ($ref, type, enum, string/array/object keywords). */
 export function validateSchema(value, schema, root = schema, at = '$') {
   if (schema.$ref) return validateSchema(value, resolveRef(root, schema.$ref), root, at);
+  if (schema.anyOf) {
+    const failures = schema.anyOf.map((option) => validateSchema(value, option, root, at));
+    return failures.some((f) => f.length === 0) ? [] : [`${at}: matches none of the allowed forms (${failures.map((f) => f[0]).join(' | ')})`];
+  }
+  if ('const' in schema && value !== schema.const) return [`${at}: must be ${JSON.stringify(schema.const)}`];
   if (schema.enum && !schema.enum.includes(value)) return [`${at}: must be one of ${schema.enum.join(', ')}`];
   const type = typeOf(value);
   if (schema.type && schema.type !== type) return [`${at}: must be ${schema.type}`];
@@ -109,18 +117,51 @@ export function readSchema(file = SCHEMA_PATH) {
   return JSON.parse(readFileSync(file, 'utf8'));
 }
 
+const traceNamesOf = (check) => [...check.expect.traces, ...(check.mustNotHappen ?? []).map((spec) => spec.split(':')[0])];
+
 function crossFileErrors(check, entry, seen) {
   const where = `${entry.file} ${check.id}`;
+  const sources = check.sources ?? ['back'];
   const errors = [];
   if (check.module !== entry.module) errors.push(`${where}: "module" is "${check.module}", the file belongs to "${entry.module}"`);
   if (seen.has(check.id)) errors.push(`${where}: id already declared in ${seen.get(check.id)}`);
-  if (check.preLogin && !(check.sources ?? ['back']).includes('front')) errors.push(`${where}: "preLogin" needs "front" in "sources"`);
+  if (check.preLogin && !sources.includes('front')) errors.push(`${where}: "preLogin" needs "front" in "sources"`);
+  if (check.fields === '*' && sources.includes('front')) errors.push(`${where}: "fields": "*" is refused for a check with a front source (declare each field)`);
+  if (check.fields === '*' && !check.fieldsJustification) errors.push(`${where}: "fields": "*" needs a "fieldsJustification"`);
+  return errors;
+}
+
+/**
+ * Rules across checks, per trace name: a name a front check sends may not be used by a back-only check (the front could
+ * otherwise fake its evidence), and two checks may not give one field of a trace two different types.
+ */
+function traceNameErrors(checks) {
+  const byName = new Map();
+  for (const check of checks) for (const name of traceNamesOf(check)) byName.set(name, [...(byName.get(name) ?? []), check]);
+  const errors = [];
+  for (const [name, users] of byName) {
+    const front = users.filter((c) => c.sources.includes('front'));
+    const backOnly = users.filter((c) => !c.sources.includes('front'));
+    if (front.length && backOnly.length) {
+      errors.push(`trace "${name}": sent by the front (${front.map((c) => c.id).join(', ')}) and used by back-only ${backOnly.map((c) => c.id).join(', ')}: use distinct names`);
+    }
+    const types = new Map();
+    for (const check of users.filter((c) => c.fields && c.fields !== '*')) {
+      for (const [field, type] of Object.entries(check.fields)) {
+        const seen = types.get(field);
+        if (seen && JSON.stringify(seen.type) !== JSON.stringify(type)) errors.push(`trace "${name}": field "${field}" typed differently by ${seen.id} and ${check.id}`);
+        if (!seen) types.set(field, { type, id: check.id });
+      }
+    }
+  }
   return errors;
 }
 
 /**
  * Loads and validates the check files. Returns every valid check (with its `file`), and the errors: invalid JSON,
- * schema violations, a `module` different from the folder, a duplicate id, `preLogin` without a front source.
+ * schema violations, a `module` different from the folder, a duplicate id, `preLogin` without a front source, `"*"`
+ * fields on a front check or without justification, a trace name shared by a front check and a back-only check, a
+ * field typed differently by two checks of one trace.
  */
 export function loadRegistry(entries, schema = readSchema()) {
   const checks = [];
@@ -147,5 +188,5 @@ export function loadRegistry(entries, schema = readSchema()) {
       checks.push({ ...check, sources: check.sources ?? ['back'], file: entry.file, origin: entry.origin });
     }
   }
-  return { checks, errors };
+  return { checks, errors: [...errors, ...traceNameErrors(checks)] };
 }
