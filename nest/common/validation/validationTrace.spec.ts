@@ -13,7 +13,9 @@ import * as os from 'os';
 import * as path from 'path';
 import { leaksSecret, secretFixtures } from './secretFixtures.testkit';
 import { TraceFileSink } from './traceFileSink';
-import { configureValidationTrace, flushValidationTrace, isValidationTraceEnabled, isValidationTraceEnabledFor, recordValidationTrace, vtrace } from './validationTrace';
+import {
+  configureValidationTrace, flushValidationTrace, isValidationTraceEnabled, isValidationTraceEnabledFor, recordValidationTrace, validationTraceClientCount, vtrace,
+} from './validationTrace';
 
 const DEV = { APP_ENV: 'dev', VALIDATION_TRACE: 'on', PROJECT_NAME: 'demo' };
 let roots: string;
@@ -143,6 +145,18 @@ describe('vtrace when active', () => {
     expect(out.parsed().find((l) => l.kind === 'summary')).toMatchObject({ source: 'front', suppressed: 7 });
     expect(out.lines.every((l) => JSON.parse(l.line).kind === 'summary' || l.cls === 'front')).toBe(true);
     expect(JSON.stringify(out.lines)).not.toContain('203.0.113.9');
+  });
+
+  it('bounds the in-memory table of front clients (expired, then least recently used, entries evicted)', () => {
+    let now = Date.parse('2026-11-11T10:00:00Z');
+    const out = memory();
+    configureValidationTrace({ env: { ...DEV, VALIDATION_TRACE_PER_MINUTE: '1000' }, sink: out.sink, log: () => undefined, now: () => now, checkRoots: [roots] });
+    for (let i = 0; i < 1500; i += 1) recordValidationTrace('demo.front', 'ok', { step: 'a' }, { source: 'front', client: `ip:10.0.${i >> 8}.${i & 255}` });
+    expect(validationTraceClientCount()).toBeLessThanOrEqual(1000);
+    now += 61_000;
+    for (let i = 0; i < 10; i += 1) recordValidationTrace('demo.front', 'ok', { step: 'b' }, { source: 'front', client: `ip:192.0.2.${i}` });
+    expect(validationTraceClientCount()).toBeLessThanOrEqual(1000);
+    expect(out.parsed().filter((l) => !l.kind && l.fields?.step === 'b')).toHaveLength(10);
   });
 
   it('never throws: failing sink, failing lazy fields, bad names, oversized line', () => {

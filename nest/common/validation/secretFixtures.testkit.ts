@@ -66,6 +66,14 @@ export function mustNotLeakCases(): [string, Record<string, unknown>, string][] 
     ['address', { address: '12 rue de la Paix' }, '12 rue de la Paix'], ['dob', { dob: '1990-01-01' }, '1990-01-01'], ['login', { login: 'jdupont' }, 'jdupont'],
     ['token as key', { [tok]: true }, tok], ['hex32 as key', { [hex32]: 1 }, hex32], ['session as key', { [sess]: 'active' }, sess],
     ['password in text', { detail: `login failed with password ${pwd}` }, pwd], ['pseudo e-mail', { input: `Summer@${pick('abcdefgh', 8)}1` }, '@'],
+    ['smscode (one word)', { smscode: '483920' }, '483920'], ['pincode number', { pincode: 4821 }, '4821'], ['authcode', { authcode: 'Xy7Q2' }, 'Xy7Q2'],
+    ['backupcodes', { backupcodes: '8f3k2 9d2k1' }, '8f3k2'], ['passcode', { passcode: 'hunter22' }, 'hunter22'], ['passkey', { passkey: 'correcthorse' }, 'correcthorse'],
+    ['privkey', { privkey: 'abc' }, 'abc'], ['mfa', { mfa: '483920' }, '483920'], ['2fa', { code2fa: '483920' }, '483920'],
+    ['mnemonic dash-joined', { detail: mnemonic.replace(/ /g, '-') }, 'absurd'], ['mnemonic underscore-joined', { detail: mnemonic.replace(/ /g, '_') }, 'absurd'],
+    ['mnemonic numbered', { detail: mnemonic.split(' ').map((w, i) => `${i + 1}. ${w}`).join(' ') }, 'absurd'],
+    ['mnemonic capitalized', { detail: mnemonic.split(' ').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ') }, 'Absurd'],
+    ['mnemonic 11 words', { detail: mnemonic.split(' ').slice(0, 11).join(' ') }, 'absurd'],
+    ['phone in text', { detail: 'call +33 6 12 34 56 78' }, '12 34 56 78'], ['phone under a neutral key', { contact: '+33612345678' }, '+33612345678'],
   ];
 }
 

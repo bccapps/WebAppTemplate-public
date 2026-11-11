@@ -77,8 +77,10 @@ function fingerprintWithLength(value: string): string {
 const SECRET_FRAGMENTS = [
   'secret', 'token', 'password', 'passwd', 'passphrase', 'pphrase', 'credential', 'signature', 'mnemonic', 'cookie', 'session',
   'bearer', 'authoriz', 'oauth', 'apikey', 'accesskey', 'privatekey', 'cipher', 'recovery', 'seed', 'salt', 'jwt', 'otp', 'hmac',
-  'csrf', 'xsrf', 'nonce', 'verification', 'cardnumber', 'creditcard', 'cvv', 'proof',
+  'csrf', 'xsrf', 'nonce', 'verification', 'cardnumber', 'creditcard', 'cvv', 'proof', 'mfa', '2fa', 'passcode', 'passkey', 'privkey',
 ];
+/** Endings of a one-word name (`smscode`, `pincode`, `backupcodes`, `privkey`, `userpass`): the name is sensitive. */
+const SECRET_SUFFIXES = ['code', 'codes', 'key', 'keys', 'pin', 'pass', 'pwd'];
 const SECRET_WORDS = new Set([
   'pass', 'pwd', 'pw', 'mdp', 'creds', 'cred', 'sid', 'sig', 'key', 'keys', 'auth', 'code', 'pin', 'cvc', 'cvn', 'card', 'cc', 'pan',
   'phrase', 'iv', 'entered', 'verify', 'verifier', 'challenge', 'answer', 'tan',
@@ -105,7 +107,8 @@ function normalizeKey(key: string): string {
 export function isSensitiveKey(key: string): boolean {
   const normalized = normalizeKey(key);
   if (SAFE_NAMES.has(normalized)) return false;
-  return SECRET_FRAGMENTS.some((f) => normalized.includes(f)) || nameWords(key).some((w) => SECRET_WORDS.has(w));
+  if (SECRET_FRAGMENTS.some((f) => normalized.includes(f)) || SECRET_SUFFIXES.some((suffix) => normalized.endsWith(suffix))) return true;
+  return nameWords(key).some((w) => SECRET_WORDS.has(w));
 }
 
 /** Whether a field NAME holds personal data (its value is replaced by a keyed fingerprint). */
@@ -209,15 +212,22 @@ function isIpv6(run: string): boolean {
   return run.split(':').every((group) => group.length <= 4) && /[0-9A-Fa-f]/.test(run);
 }
 
-/** Twelve or more consecutive short lower-case words (a BIP39-like recovery phrase). */
+/**
+ * Eleven or more consecutive short words (a BIP39-like recovery phrase, possibly joined by `-`, `_`, `.` or `,`,
+ * capitalized or numbered: list numbers are skipped).
+ */
 function hasMnemonic(text: string): boolean {
   let run = 0;
-  for (const word of text.split(/[\s,]+/)) {
-    run = /^[a-z]{3,8}$/.test(word) ? run + 1 : 0;
-    if (run >= 12) return true;
+  for (const word of text.split(/[\s,._-]+/)) {
+    if (/^\d{1,2}\)?$/.test(word)) continue;
+    run = /^[a-z]{3,8}$/i.test(word) ? run + 1 : 0;
+    if (run >= 11) return true;
   }
   return false;
 }
+
+/** International phone number (`+33 6 12 34 56 78`, `+33612345678`). */
+const PHONE = /(?<![\w+])\+\d(?:[ .-]?\d){7,14}(?!\w)/;
 
 /** An `@` that is not part of a plain e-mail address (`Summer@abcd1234`): the text is treated as a secret. */
 function hasPseudoEmail(text: string): boolean {
@@ -228,7 +238,7 @@ function hasPseudoEmail(text: string): boolean {
 function probeLooksSecret(probe: string): boolean {
   if (STRUCTURAL_SECRET_PATTERNS.some((pattern) => pattern.test(probe))) return true;
   if (IPV4.test(probe) || (probe.match(IPV6_CANDIDATE) ?? []).some(isIpv6)) return true;
-  if (hasCardNumber(probe) || hasMnemonic(probe) || hasPseudoEmail(probe)) return true;
+  if (hasCardNumber(probe) || hasMnemonic(probe) || hasPseudoEmail(probe) || PHONE.test(probe)) return true;
   return (probe.match(CANDIDATE_RUN) ?? []).some(runLooksSecret);
 }
 

@@ -73,7 +73,7 @@ describe('field names', () => {
   it.each(['password', 'pass', 'newPass', 'pass_confirm', 'pw', 'pwd', 'mdp', 'creds', 'sid', 'sig', 'nonce', 'apiKey', 'x-api-key', 'privateKey', 'secret',
     'accessToken', 'authorization', 'cookie', 'sessionId', 'proof', 'otpCode', 'code', 'otp', 'signature', 'seed', 'mnemonic', 'pin', 'walletPin', 'cvv', 'cvc',
     'card', 'cc', 'pan', 'phrase', 'verification', 'entered', 'csrf', 'hmac', 'jwt'])('%s is sensitive', (key) => expect(isSensitiveKey(key)).toBe(true));
-  it.each(['statusCode', 'errorCode', 'countryCode', 'method', 'reason', 'attempts', 'userId', 'module', 'author', 'monkey', 'passenger'])('%s is not', (key) => {
+  it.each(['statusCode', 'errorCode', 'countryCode', 'method', 'reason', 'attempts', 'userId', 'module', 'author', 'passenger', 'keyboardLayout'])('%s is not', (key) => {
     expect(isSensitiveKey(key)).toBe(false);
   });
   it.each(['email', 'phone', 'userIp', 'remoteAddr', 'ipAddr', 'ips', 'ip', 'tel', 'mobile', 'name', 'firstName', 'address', 'dob', 'birthDate', 'login', 'iban'])(

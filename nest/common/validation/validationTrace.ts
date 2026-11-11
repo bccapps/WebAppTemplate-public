@@ -67,7 +67,7 @@ interface SamplingWindow {
 
 /** Distinct sampling keys followed; beyond, lines are only counted under `validation.trace.overflow`. */
 const MAX_SAMPLING_KEYS = 1000;
-/** Distinct front clients followed (per check and outcome); beyond, they share one window. */
+/** Distinct front clients followed (per check and outcome); beyond, expired then least recently used entries are evicted. */
 const MAX_CLIENT_KEYS = 1000;
 const WINDOW_MS = 60_000;
 /** Detailed front lines per client, check and outcome and per minute (the global per-minute budget still applies). */
@@ -208,16 +208,35 @@ function suppress(rt: TraceRuntime, key: string, state: SamplingWindow, now: num
   return false;
 }
 
+/** Bounds the client table: expired windows go first, then the least recently used entries (Map order = LRU order). */
+function evictClients(rt: TraceRuntime, now: number): void {
+  for (const [key, state] of rt.clients) {
+    if (rt.clients.size < MAX_CLIENT_KEYS) return;
+    if (now - state.start >= WINDOW_MS) rt.clients.delete(key);
+  }
+  for (const key of rt.clients.keys()) {
+    if (rt.clients.size < MAX_CLIENT_KEYS) return;
+    rt.clients.delete(key);
+  }
+}
+
 /** Per-client budget of the front (in memory only: the client key is a fingerprint, never written). */
 function clientAllows(rt: TraceRuntime, clientKey: string, now: number): boolean {
-  const key = rt.clients.has(clientKey) || rt.clients.size < MAX_CLIENT_KEYS ? clientKey : 'overflow';
-  const state = rt.clients.get(key);
+  const state = rt.clients.get(clientKey);
+  rt.clients.delete(clientKey); // re-inserted below: most recently used last
   if (!state || now - state.start >= WINDOW_MS) {
-    rt.clients.set(key, { start: now, written: 1 });
+    evictClients(rt, now);
+    rt.clients.set(clientKey, { start: now, written: 1 });
     return true;
   }
   state.written += 1;
+  rt.clients.set(clientKey, state);
   return state.written <= FRONT_PER_CLIENT_PER_MINUTE;
+}
+
+/** Size of the in-memory client table (tests). */
+export function validationTraceClientCount(): number {
+  return runtime?.clients.size ?? 0;
 }
 
 /** Sampling per (source, check, outcome) — and per client for the front — then one summary line per window. */
