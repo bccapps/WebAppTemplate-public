@@ -11,7 +11,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { HttpException } from '@nestjs/common';
 import type { CallHandler, ExecutionContext } from '@nestjs/common';
 import { RejectApiTokenInterceptor } from './RejectApiTokenInterceptor';
-import { RequireHumanSessionInterceptor } from './RequireHumanSessionInterceptor';
+import { isHumanSessionRequest, RequireHumanSessionInterceptor } from './RequireHumanSessionInterceptor';
 
 const ctx = (req: object) => ({ switchToHttp: () => ({ getRequest: () => req }) }) as unknown as ExecutionContext;
 const handler = (): CallHandler => ({ handle: jest.fn().mockReturnValue('next') }) as unknown as CallHandler;
@@ -96,6 +96,15 @@ describe('RequireHumanSessionInterceptor (positive, fail closed)', () => {
     expect(r.status).toBe(403);
     expect(r.body).toMatchObject({ statusCode: 403, code: 'HUMAN_SESSION_REQUIRED' });
     expect(h.handle).not.toHaveBeenCalled();
+  });
+
+  it('refuses a human session carrying a machine credential besides, or without a positive id (aligned with the interaction module)', () => {
+    for (const extra of [{ servicePrincipal: SERVICE }, { mcpPrincipal: { kind: 'mcp' } }, { mcpCredential: { id: 'c-1' } }]) {
+      expect(refusal(() => i.intercept(ctx({ user: HUMAN, ...extra }), handler())).body).toMatchObject({ code: 'HUMAN_SESSION_REQUIRED' });
+    }
+    for (const id of [0, -1, 1.5, '7', undefined]) expect(refusal(() => i.intercept(ctx({ user: { ...HUMAN, id } }), handler())).status).toBe(403);
+    expect(isHumanSessionRequest({ user: HUMAN })).toBe(true);
+    expect(isHumanSessionRequest(null)).toBe(false);
   });
 
   it('refuses a service principal request (no req.user) and a missing user', () => {

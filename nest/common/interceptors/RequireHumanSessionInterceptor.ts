@@ -12,9 +12,11 @@ import type { Observable } from 'rxjs';
 import { PrincipalRefusedException } from './PrincipalRefusedException';
 
 /**
- * POSITIVE guard, fail closed: passes only a person's session principal, i.e. `req.user.kind === 'user'` AND
- * `req.user.isHumanSession === true` (strictly the boolean) AND `req.user.isApiToken !== true`. Every other principal
- * (API token, local-trust, admin-token, service key, a legacy principal without markers, a string `'true'`) gets
+ * POSITIVE guard, fail closed: passes only a person's session principal, i.e. `req.user.kind === 'user'` with a positive
+ * integer `id` AND `req.user.isHumanSession === true` (strictly the boolean) AND `req.user.isApiToken !== true`, on a
+ * request that carries no machine credential besides (`req.servicePrincipal`, `req.mcpPrincipal`, `req.mcpCredential`:
+ * the same rule as `isHumanSessionRequest` of the `interaction` module, 2026-11-11). Every other principal (API token,
+ * local-trust, admin-token, service key, a legacy principal without markers, a string `'true'`) gets
  * 403 `HUMAN_SESSION_REQUIRED`.
  *
  * It does NOT authenticate: it must run AFTER the app's auth so that `req.user` is set (listed after the route's
@@ -28,10 +30,24 @@ import { PrincipalRefusedException } from './PrincipalRefusedException';
 @Injectable()
 export class RequireHumanSessionInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
-    const user = context.switchToHttp().getRequest<{ user?: { kind?: unknown; isHumanSession?: unknown; isApiToken?: unknown } | null }>().user;
-    if (!user || user.kind !== 'user' || user.isHumanSession !== true || user.isApiToken === true) {
+    if (!isHumanSessionRequest(context.switchToHttp().getRequest<HumanSessionRequest>())) {
       throw new PrincipalRefusedException('HUMAN_SESSION_REQUIRED', 'This route needs a signed-in person (user session)');
     }
     return next.handle();
   }
+}
+
+interface HumanSessionRequest {
+  user?: { kind?: unknown; id?: unknown; isHumanSession?: unknown; isApiToken?: unknown } | null;
+  servicePrincipal?: unknown;
+  mcpPrincipal?: unknown;
+  mcpCredential?: unknown;
+}
+
+/** The rule of {@link RequireHumanSessionInterceptor}: a real person's session, and nothing machine-like on the request. */
+export function isHumanSessionRequest(req: HumanSessionRequest | null | undefined): boolean {
+  const user = req?.user;
+  if (!user || user.kind !== 'user' || typeof user.id !== 'number' || !Number.isSafeInteger(user.id) || user.id <= 0) return false;
+  if (user.isHumanSession !== true || user.isApiToken === true) return false;
+  return req.servicePrincipal === undefined && req.mcpPrincipal === undefined && req.mcpCredential === undefined;
 }

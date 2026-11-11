@@ -650,7 +650,7 @@ Un « jeton API » utilisateur (JWT `aud=api`, `sid=0`, sans expiration) passe l
 
 | Intercepteur | Sens | Passe si | Sinon |
 | --- | --- | --- | --- |
-| `RequireHumanSessionInterceptor` | **Positif**, échec fermé | `req.user.kind === 'user'` ET `isHumanSession === true` (booléen strict) ET `isApiToken !== true` | 403 `HUMAN_SESSION_REQUIRED` (jeton API, local-trust, admin-token, clé de service, principal sans marqueur, `'true'` texte, pas d'utilisateur) |
+| `RequireHumanSessionInterceptor` | **Positif**, échec fermé | `req.user.kind === 'user'` avec un `id` entier positif ET `isHumanSession === true` (booléen strict) ET `isApiToken !== true`, sans `req.servicePrincipal`, `req.mcpPrincipal` ni `req.mcpCredential` à côté (même règle que le module `interaction`, 2026-11-11 ; `isHumanSessionRequest` exporté) | 403 `HUMAN_SESSION_REQUIRED` (jeton API, local-trust, admin-token, clé de service, principal sans marqueur, `'true'` texte, pas d'utilisateur) |
 | `RejectApiTokenInterceptor` | **Négatif** | `req.user?.isApiToken !== true` (tout le reste passe, y compris l'absence d'utilisateur) | 403 `API_TOKEN_NOT_ALLOWED` |
 
 Aucun des deux n'authentifie : ils se placent APRÈS l'auth de l'app (auth globale, puis l'intercepteur d'auth/admin de la route : l'ordre dans `@UseInterceptors(AuthInterceptor, RequireHumanSessionInterceptor)` compte ; une requête non authentifiée garde le 401 de la couche d'auth).
