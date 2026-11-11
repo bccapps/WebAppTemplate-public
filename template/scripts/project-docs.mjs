@@ -72,10 +72,27 @@ function git(root, args) {
   }
 }
 
+/** Lines every project's `.gitignore` must hold (appended once when missing; the rest of the file is never touched). */
+export const REQUIRED_GITIGNORE = [
+  { line: '/AGENTS.md', present: /^\/AGENTS\.md\s*$/m, comment: 'Generated for agents that do not follow @imports (scripts/update_common.sh)' },
+  { line: 'logs/', present: /^\/?(?:\*\*\/)?logs\/?\s*$/m, comment: 'Logs (back-<day>.log, validation-<day>.jsonl): never committed' },
+  { line: '.validation-cache/', present: /^\/?\.validation-cache\/?\s*$/m, comment: 'Local copies and state of scripts/validation-report.mjs' },
+];
+
+/** `.gitignore` content with the missing required lines appended (pure). */
+export function withRequiredGitignore(text) {
+  let out = text;
+  for (const { line, present, comment } of REQUIRED_GITIGNORE) {
+    if (!present.test(out)) out = `${out.replace(/\n*$/, '\n')}\n# ${comment}\n${line}\n`;
+  }
+  return out.replace(/^\n+/, '');
+}
+
 function ensureGitignore(root) {
   const file = path.join(root, '.gitignore');
   const text = existsSync(file) ? readFileSync(file, 'utf8') : '';
-  if (!/^\/AGENTS\.md\s*$/m.test(text)) writeFileSync(file, `${text.replace(/\n*$/, '\n')}\n# Generated for agents that do not follow @imports (scripts/update_common.sh)\n/AGENTS.md\n`);
+  const next = withRequiredGitignore(text);
+  if (next !== text) writeFileSync(file, next);
 }
 
 export function ensure(root) {

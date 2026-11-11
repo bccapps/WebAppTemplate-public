@@ -143,6 +143,7 @@ success() { printf "${GREEN}==> %s${NC}\n" "$*"; }
 
 # Versioning, database backup and rollback (tag previous, state files, automatic/manual rollback).
 source "${SCRIPT_DIR}/lib/deploy-versions.sh"
+source "${SCRIPT_DIR}/lib/validation-guard.sh"
 # Phase timing (`==> [TIME]` lines + summary at exit) and SSH connection reuse.
 source "${SCRIPT_DIR}/lib/deploy-timing.sh"
 source "${SCRIPT_DIR}/lib/ssh-mux.sh"
@@ -1197,7 +1198,7 @@ build_back_locally() {
       _rel="${_f#${BACK_BUILD_DIR}/}"
       mkdir -p "${locales_dir}/modules/$(dirname "${_rel}")"
       cp "${_f}" "${locales_dir}/modules/${_rel}"
-    done < <(find -L "${_mdir}" -path '*/locales/*.json' 2>/dev/null)
+    done < <(find -L "${_mdir}" \( -path '*/locales/*.json' -o -path '*/validation/checks.json' \) 2>/dev/null)
   done
 
   # Sentinel so the optional *.crt COPY in the Dockerfile never fails when no cert exists.
@@ -1306,6 +1307,8 @@ done
 if [[ "${DEPLOY_TARGET}" != "front" ]]; then
   sync_file_into_context "${BACK_ENV_FILE}" "${BUILD_CONTEXT_DIR}/back/.env"
   stage_back_env_preprod "${BUILD_CONTEXT_DIR}/back/.env"
+  # Production: validation traces forced off, loud warning when APP_ENV is not prod (lib/validation-guard.sh).
+  vg_guard_prod_env "${BACK_ENV_FILE}" "${BUILD_CONTEXT_DIR}/back/.env"
   dv_env_set "${BUILD_CONTEXT_DIR}/back/.env" "DEPLOY_REVISION" "${DEPLOY_REVISION}"
   # PUBLIC_API_URL: the back's public base URL, derived from the front's VITE_API_URL, for an app that hands its own address out
   # (MCP, callbacks…) without a second setting; a non-empty value already in the back env wins.

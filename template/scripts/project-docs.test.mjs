@@ -13,7 +13,7 @@ import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, w
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { MARKER, ensure, renderAgentsMd, renderClaudeMd } from './project-docs.mjs';
+import { MARKER, ensure, renderAgentsMd, renderClaudeMd, withRequiredGitignore } from './project-docs.mjs';
 
 const project = (withPrivate) => {
   const root = mkdtempSync(path.join(tmpdir(), 'docs-'));
@@ -58,4 +58,13 @@ test('ensure: symlink CLAUDE.md/AGENTS.md replaced, private import only when mou
 
 test('renderAgentsMd flags a missing import', () => {
   assert.match(renderAgentsMd('@nope\nx', () => null), /missing import: nope/);
+});
+
+test('withRequiredGitignore appends logs/, .validation-cache/ and /AGENTS.md once, never rewrites the rest', () => {
+  const out = withRequiredGitignore('node_modules\n.env*\n');
+  assert.match(out, /^node_modules\n\.env\*\n/);
+  for (const line of ['/AGENTS.md', 'logs/', '.validation-cache/']) assert.equal(out.split('\n').filter((l) => l === line).length, 1);
+  assert.equal(withRequiredGitignore(out), out);
+  const legacy = 'logs\n/AGENTS.md\n.validation-cache\n';
+  assert.equal(withRequiredGitignore(legacy), legacy);
 });
