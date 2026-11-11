@@ -13,6 +13,7 @@ services:
       DB_PATH: /data/${PROJECT_NAME}_preprod.db
     volumes:
       - sqlite_data:/data
+      - back_logs:/app/logs
     ports:
       - '${NODE_PORT}:${NODE_PORT}'
     healthcheck:
@@ -87,6 +88,8 @@ services:
 
 volumes:
   sqlite_data:
+  # Logs of the back (back-<day>.log, validation-<day>.jsonl): mounted on the back only, never the front.
+  back_logs:
   # Voice engine (profile `voice`): downloaded models (several GB, kept across redeploys) and derived voice profiles (rebuildable).
   voice_models:
     name: ${PROJECT_NAME}_voice_models

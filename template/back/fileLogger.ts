@@ -19,6 +19,9 @@
  *   LOG_TO_FILE   "false" to disable file output (stdout prefix still applied). Default on.
  *   LOG_DIR       directory for log files. Default <APP_DATA_DIR>/logs, else <cwd>/logs.
  *   LOG_MAX_BYTES rotate the current day's file once it exceeds this size. Default 50MB.
+ *
+ * Logs may quote user data: the directory is created 0700 and the files 0600. In the containers LOG_DIR stays /app/logs,
+ * the dedicated `back_logs` volume (never the shared_directory volume, which the front serves).
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -43,7 +46,7 @@ export function installFileLogging(): void {
       if (day !== curDay || !stream) {
         if (stream) { try { stream.end(); } catch { /* ignore */ } }
         curDay = day;
-        stream = fs.createWriteStream(fileFor(day), { flags: 'a' });
+        stream = fs.createWriteStream(fileFor(day), { flags: 'a', mode: 0o600 });
         return;
       }
       try {
@@ -52,13 +55,13 @@ export function installFileLogging(): void {
           stream.end();
           const stamp = new Date().toISOString().replace(/[:.]/g, '-');
           fs.renameSync(f, path.join(dir, `back-${day}-${stamp}.log`));
-          stream = fs.createWriteStream(f, { flags: 'a' });
+          stream = fs.createWriteStream(f, { flags: 'a', mode: 0o600 });
         }
       } catch { /* ignore rotation errors */ }
     };
 
     try {
-      fs.mkdirSync(dir, { recursive: true });
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       write = (line: string) => {
         try { rotateIfNeeded(); stream?.write(line + '\n'); } catch { /* never throw from logging */ }
       };

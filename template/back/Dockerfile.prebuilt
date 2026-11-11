@@ -54,6 +54,9 @@ RUN mkdir -p "/app/${APP_RUNTIME_DIR}" && chown -R node:node "/app/${APP_RUNTIME
 # Persistent data dir for DB_ENGINE=sqlite (the compose files mount the sqlite_data volume here), owned by node.
 RUN mkdir -p /data && chown node:node /data
 
+# Log dir: the dedicated `back_logs` volume (back and back-worker only), 0700, owned by node (see back/Dockerfile).
+RUN mkdir -p /app/logs && chown node:node /app/logs && chmod 700 /app/logs
+
 COPY --chown=node:node _prebuilt_locales/app ./src/locales
 COPY --chown=node:node _prebuilt_locales/modules/src/ ./src/
 COPY --chown=node:node dist ./dist

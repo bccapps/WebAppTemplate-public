@@ -80,6 +80,7 @@ services:
       start_period: 120s
     volumes:
       - shared_directory:/app/shared
+      - back_logs:/app/logs
 
   # Worker-role instance: runs ALL background work (schedulers, trading engines, run workers),
   # owns runs and heartbeats to the WorkerRegistry. Deliberately NOT in the back-lb upstream so
@@ -119,6 +120,7 @@ services:
       start_period: 120s
     volumes:
       - shared_directory:/app/shared
+      - back_logs:/app/logs
 
   back-lb:
     image: nginx:1.30-alpine
@@ -382,6 +384,9 @@ volumes:
   # volume: `docker run --rm -v <project>_shared_directory:/shared alpine chown -R 1000:1000 /shared`.
   # A fresh volume on a rebuilt image no longer needs this.
   shared_directory:
+  # Logs of back + back-worker (back-<day>.log, validation-<day>.jsonl): a volume of its OWN, mounted on those two services
+  # only. Never put logs under shared_directory: the front mounts it and nginx serves it (/images/graphs/…).
+  back_logs:
   vmagent_data:
   # Voice engine (profile `voice`): downloaded models (several GB, kept across redeploys) and derived voice profiles (rebuildable).
   voice_models:

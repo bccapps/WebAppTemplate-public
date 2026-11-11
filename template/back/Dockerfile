@@ -50,11 +50,12 @@ RUN npm run build
 # Done here rather than via tsconfig so `nest start --debug` keeps its sourcemaps locally.
 RUN find dist \( -name '*.js.map' -o -name '*.d.ts' \) -delete
 
-# Collect locale JSONs (tsc doesn't copy them into dist)
+# Collect locale JSONs and the validation registries (`<module>/validation/checks.json`, read at runtime by the
+# validation trace relay; nest/common/README.md « Validation par observation ») — tsc doesn't copy them into dist.
 RUN mkdir -p /locales/app && \
     cp -r src/locales/* /locales/app/ && \
     mkdir -p /locales/modules && \
-    find -L src/modules src/modules_shared -path '*/locales/*.json' 2>/dev/null | \
+    find -L src/modules src/modules_shared \( -path '*/locales/*.json' -o -path '*/validation/checks.json' \) 2>/dev/null | \
     while IFS= read -r f; do \
       mkdir -p "/locales/modules/$(dirname "$f")"; \
       cp "$f" "/locales/modules/$f"; \
@@ -103,6 +104,10 @@ RUN mkdir -p "/app/${APP_RUNTIME_DIR}" && chown -R node:node "/app/${APP_RUNTIME
 # Persistent data dir (DB_ENGINE=sqlite: the compose files mount the `sqlite_data` volume here and set DB_PATH). It is
 # created owned by node so the named volume inherits write access for the unprivileged user; empty and unused otherwise.
 RUN mkdir -p /data && chown node:node /data
+
+# Log dir (back-<day>.log, validation-<day>.jsonl): the compose files mount the dedicated `back_logs` volume here (back and
+# back-worker only, never the front). Created 0700, owned by node, so a new volume inherits both.
+RUN mkdir -p /app/logs && chown node:node /app/logs && chmod 700 /app/logs
 
 COPY --chown=node:node --from=builder /locales/app ./src/locales
 COPY --chown=node:node --from=builder /locales/modules/src/ ./src/
