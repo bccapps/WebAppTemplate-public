@@ -128,7 +128,7 @@
         },
         "preLogin": {
           "type": "boolean",
-          "description": "Front traces sent before sign-in (unauthenticated route); requires `front` in `sources`."
+          "description": "Front traces sent before sign-in (unauthenticated route); requires `front` in `sources`; refused for a critical/high check. A violation reported by the front only is VIOLATION_TO_CONFIRM (not blocking)."
         },
         "fields": {
           "anyOf": [

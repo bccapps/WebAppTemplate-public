@@ -58,6 +58,17 @@ export class FetchError extends Error {
 }
 const refuse = (message) => new FetchError(message, 2);
 
+/** Index of the quote closing a value (in double quotes, one preceded by an odd number of backslashes is escaped). */
+function closingQuote(text, quote, from) {
+  for (let at = text.indexOf(quote, from); at !== -1; at = text.indexOf(quote, at + 1)) {
+    if (quote === "'") return at;
+    let slashes = 0;
+    while (at - slashes - 1 >= 0 && text[at - slashes - 1] === '\\') slashes += 1;
+    if (slashes % 2 === 0) return at;
+  }
+  return -1;
+}
+
 /**
  * Only the `keys` of a `KEY=value` env file (no expansion, no execution; the last assignment wins, like `source`). A
  * quoted value may span several lines (a certificate): its lines are part of the value, never read as assignments.
@@ -72,15 +83,16 @@ export function parseEnvFile(text, keys = ENV_KEYS) {
     let value = match[2].trim();
     const quote = /^["']/.exec(value)?.[0];
     if (quote) {
-      let close = value.indexOf(quote, 1);
+      let close = closingQuote(value, quote, 1);
       if (close === -1) {
-        const end = lines.findIndex((line, at) => at > i && line.includes(quote));
+        const end = lines.findIndex((line, at) => at > i && closingQuote(line, quote, 0) !== -1);
         if (end === -1) throw refuse(`${match[1]}: unterminated quoted value in back/.env.preprod`);
         value = [value, ...lines.slice(i + 1, end + 1)].join('\n');
-        close = value.indexOf(quote, 1);
+        close = closingQuote(value, quote, 1);
         i = end;
       }
-      value = value.slice(1, close); // the quoted text; what follows the closing quote (a comment) is dropped
+      // The quoted text (what follows the closing quote, a comment, is dropped); `\"` and `\\` unescaped in double quotes.
+      value = quote === '"' ? value.slice(1, close).replace(/\\(["\\])/g, '$1') : value.slice(1, close);
     } else {
       value = value.replace(/\s+#.*$/, '');
     }

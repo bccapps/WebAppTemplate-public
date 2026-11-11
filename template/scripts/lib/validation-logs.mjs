@@ -114,7 +114,7 @@ async function* readLines(file) {
  */
 export async function readTraceLines(files, { since = null, env } = {}) {
   const lines = [];
-  const stats = { files: 0, lines: 0, invalid: 0, capped: [] };
+  const stats = { files: 0, lines: 0, invalid: 0, capped: [], envs: [] };
   for (const file of files.filter((f) => VALIDATION_FILE.test(path.basename(f)))) {
     stats.files += 1;
     for await (const { line, number } of readLines(file)) {
@@ -127,6 +127,7 @@ export async function readTraceLines(files, { since = null, env } = {}) {
         continue;
       }
       if (typeof entry?.check !== 'string' || (since && !(Date.parse(entry.ts) >= since))) continue;
+      if (typeof entry.env === 'string' && !stats.envs.includes(entry.env)) stats.envs.push(entry.env);
       if (entry.check === 'validation.trace.capped') stats.capped.push({ file: path.basename(file), traceClass: entry.fields?.traceClass ?? 'all', ts: entry.ts });
       if (env && entry.env !== env) continue;
       stats.lines += 1;

@@ -77,6 +77,11 @@ function readArchive(file) {
   return /\.(tar\.gz|tgz)$/i.test(file) ? gunzipSync(raw, { maxOutputLength: MAX_ARCHIVE_BYTES }) : raw;
 }
 
+/** Base name of a member, `\\` (archives made on Windows) treated as a separator: the name that is checked is the name written. */
+export function baseName(name) {
+  return path.posix.basename(name.replace(/\\/g, '/'));
+}
+
 /**
  * Private copy of the validation files of an archive: `{ dir, files, cleanup }`. The temporary directory is removed
  * at once when anything fails.
@@ -84,11 +89,13 @@ function readArchive(file) {
 export function extractValidationFiles(file) {
   const dir = mkdtempSync(path.join(tmpdir(), 'validation-logs-'));
   try {
-    const members = regularMembers(readArchive(file)).filter((m) => VALIDATION_FILE.test(path.posix.basename(m.name.replace(/\\/g, '/'))));
+    const members = regularMembers(readArchive(file))
+      .map((m) => ({ base: baseName(m.name), data: m.data }))
+      .filter((m) => VALIDATION_FILE.test(m.base));
     members.forEach((member, index) => {
       const sub = path.join(dir, String(index));
       mkdirSync(sub, { mode: 0o700 });
-      writeFileSync(path.join(sub, path.posix.basename(member.name)), member.data, { flag: 'wx', mode: 0o600 });
+      writeFileSync(path.join(sub, member.base), member.data, { flag: 'wx', mode: 0o600 });
     });
     return { dir, files: members.length, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
   } catch (error) {

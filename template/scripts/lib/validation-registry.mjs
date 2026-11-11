@@ -126,6 +126,7 @@ function crossFileErrors(check, entry, seen) {
   if (check.module !== entry.module) errors.push(`${where}: "module" is "${check.module}", the file belongs to "${entry.module}"`);
   if (seen.has(check.id)) errors.push(`${where}: id already declared in ${seen.get(check.id)}`);
   if (check.preLogin && !sources.includes('front')) errors.push(`${where}: "preLogin" needs "front" in "sources"`);
+  if (check.preLogin && ['critical', 'high'].includes(check.severity)) errors.push(`${where}: "preLogin" is refused for a ${check.severity} check (anyone could send its traces)`);
   if (check.fields === '*' && sources.includes('front')) errors.push(`${where}: "fields": "*" is refused for a check with a front source (declare each field)`);
   if (check.fields === '*' && !check.fieldsJustification) errors.push(`${where}: "fields": "*" needs a "fieldsJustification"`);
   return errors;

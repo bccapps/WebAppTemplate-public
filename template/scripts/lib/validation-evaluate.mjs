@@ -16,7 +16,11 @@
 
 import { scrubForDisplay } from './validation-logs.mjs';
 
-export const STATUS = Object.freeze({ VIOLATION: 'VIOLATION', OK: 'OBSERVED_OK', NOT_YET: 'NOT_YET_OBSERVED' });
+/**
+ * `VIOLATION_TO_CONFIRM`: violations reported by the FRONT only, on a pre-login check (anyone can send those, without a
+ * session): shown, never blocking, to be reproduced with a back trace.
+ */
+export const STATUS = Object.freeze({ VIOLATION: 'VIOLATION', TO_CONFIRM: 'VIOLATION_TO_CONFIRM', OK: 'OBSERVED_OK', NOT_YET: 'NOT_YET_OBSERVED' });
 const BLOCKING = new Set(['critical', 'high']);
 const MAX_SAMPLES = 3;
 const MAX_SAMPLE_LENGTH = 400;
@@ -72,7 +76,13 @@ const total = (pair) => pair.back + pair.front;
 
 function statusOf(result, check) {
   const { counts } = result;
-  if (total(counts.violation) + total(counts.forbidden) > 0) return STATUS.VIOLATION;
+  const backViolations = counts.violation.back + counts.forbidden.back;
+  const frontViolations = counts.violation.front + counts.forbidden.front;
+  if (backViolations > 0 || (frontViolations > 0 && check.preLogin !== true)) return STATUS.VIOLATION;
+  if (frontViolations > 0) {
+    result.note = 'violation reported by the front only, on a pre-login check (unauthenticated): to confirm with a back trace';
+    return STATUS.TO_CONFIRM;
+  }
   const expected = counts[check.expect.outcome];
   if (expected.back > 0) return STATUS.OK;
   if (expected.front > 0 && !BLOCKING.has(check.severity)) return STATUS.OK;

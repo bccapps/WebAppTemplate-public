@@ -184,6 +184,7 @@ test('pure helpers: env parsing, log dir, file selection, command builders refus
   assert.deepEqual(parseEnvFile('\ufeffREMOTE_HOST=real.example\r\nTLS="-----BEGIN X\nREMOTE_HOST=other.example\n-----END X"\n'), { REMOTE_HOST: 'real.example' });
   assert.throws(() => parseEnvFile('TLS="never closed\nREMOTE_HOST=other.example\n'), (e) => e.exitCode === 2);
   assert.deepEqual(parseEnvFile('REMOTE_HOST="h.example" # preprod\nREMOTE_USER=\'deploy\' # note\n'), { REMOTE_HOST: 'h.example', REMOTE_USER: 'deploy' });
+  assert.deepEqual(parseEnvFile('REMOTE_HOST=real.example\nX="a \\" quote\nREMOTE_HOST=other.example\nend"\nREMOTE_USER="de\\"p"\n'), { REMOTE_HOST: 'real.example', REMOTE_USER: 'de"p' });
   assert.throws(() => REMOTE_COMMANDS.list('c1', '/app/../../etc'));
   assert.throws(() => REMOTE_COMMANDS.read('c1', '/app/../../etc', `validation-${day(0)}.jsonl`, 10));
   assert.deepEqual(Object.keys(sshEnvironment({ PATH: 'p', HOME: 'h', SSH_AUTH_SOCK: 's', DB_PASSWORD: 'x', AWS_SECRET_ACCESS_KEY: 'y' })), ['PATH', 'HOME', 'SSH_AUTH_SOCK']);

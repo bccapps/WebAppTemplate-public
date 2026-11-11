@@ -10,25 +10,30 @@
 # =============================================================================
 
 # Validation traces never run in production (nest/common/README.md, « Validation par observation »).
-# Sourced by deploy-full.sh. A production deploy is one whose back env file is `back/.env` (run.sh prod, a plain
-# deploy-full.sh); `back/.env.preprod` (run.sh preprod) is left alone.
+# Sourced by deploy-full.sh. Every deploy forces VALIDATION_TRACE=off in the env it ships, EXCEPT a preprod deploy: its
+# env file is `back/.env.preprod` (run.sh preprod) or it says APP_ENV=preprod. The file name alone never makes a deploy
+# "not production" (a custom BACK_ENV_FILE is treated as production).
 
-# vg_is_prod_env_file <env file path>: 0 when the deploy ships the production back env.
-vg_is_prod_env_file() {
-  [[ "$(basename "$1")" == ".env" ]]
+# vg_is_preprod <env file path> <APP_ENV value>: 0 for a preprod deploy.
+vg_is_preprod() {
+  [[ "$(basename "$1")" == ".env.preprod" || "$2" == "preprod" ]]
+}
+
+# vg_app_env <env file>: last APP_ENV of the file, unquoted, lower case ("" when absent).
+vg_app_env() {
+  # `|| true`: deploy-full.sh runs under `set -euo pipefail`, and grep finding no APP_ENV must not stop the deploy.
+  { grep -E '^[[:space:]]*(export[[:space:]]+)?APP_ENV=' "$1" 2>/dev/null || true; } | tail -n 1 | sed -E 's/^[^=]*=//; s/[[:space:]]+#.*$//; s/^["'\'']//; s/["'\'']$//' | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]'
 }
 
 # vg_guard_prod_env <source env file> <staged env file>
-# Production deploy only: forces VALIDATION_TRACE=off in the staged env (the env the containers get; the last assignment
-# wins), whatever APP_ENV says, and warns loudly when APP_ENV is not `prod` (a back/.env copied from the example says
-# `dev`: dev-only behaviours, such as the validation traces, would otherwise switch on). Never fails the deploy.
+# Not preprod: appends VALIDATION_TRACE=off to the staged env (the env the containers get; the last assignment wins) and
+# warns loudly when APP_ENV is not `prod` (a back/.env copied from the example says `dev`). Never fails the deploy.
 vg_guard_prod_env() {
   local source_file="$1" staged="$2" app_env
-  vg_is_prod_env_file "${source_file}" || return 0
-  # `|| true`: deploy-full.sh runs under `set -euo pipefail`, and grep finding no APP_ENV must not stop the deploy.
-  app_env="$({ grep -E '^[[:space:]]*APP_ENV=' "${staged}" 2>/dev/null || true; } | tail -n 1 | sed -E 's/^[^=]*=//; s/^["'\'']//; s/["'\'']$//' | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  app_env="$(vg_app_env "${staged}")"
+  vg_is_preprod "${source_file}" "${app_env}" && return 0
   if [[ "${app_env}" != "prod" ]]; then
-    echo "WARNING: production deploy with APP_ENV='${app_env:-<unset>}' in ${source_file}: set APP_ENV=prod. Validation traces are forced off for this deploy." >&2
+    echo "WARNING: deploy of ${source_file} with APP_ENV='${app_env:-<unset>}' treated as production: set APP_ENV=prod (or preprod). Validation traces are forced off for this deploy." >&2
   fi
-  printf '\n# Forced by deploy-full.sh (lib/validation-guard.sh): never validation traces in production.\nVALIDATION_TRACE=off\n' >> "${staged}"
+  printf '\n# Forced by deploy-full.sh (lib/validation-guard.sh): never validation traces outside dev/preprod.\nVALIDATION_TRACE=off\n' >> "${staged}"
 }

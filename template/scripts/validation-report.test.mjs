@@ -111,13 +111,32 @@ test('exit 0 when only low checks are violated and nothing leaks; --only and --s
   rmSync(root, { recursive: true });
 });
 
-test('a daily cap reached in the period is counted before the env filter and blocks', () => {
-  const capped = { check: 'validation.trace.capped', outcome: 'info', env: 'dev', fields: { traceClass: 'front', maxBytes: 20 } };
-  const root = project({ checks: [check('demo.settings.saved')], traces: [{ check: 'demo.settings.saved', outcome: 'ok', env: 'preprod' }, capped] });
+test('a back daily cap reached in the period is counted before the env filter and blocks; a front cap only warns', () => {
+  const capped = (traceClass) => ({ check: 'validation.trace.capped', outcome: 'info', env: 'dev', fields: { traceClass, maxBytes: 20 } });
+  const root = project({ checks: [check('demo.settings.saved')], traces: [{ check: 'demo.settings.saved', outcome: 'ok', env: 'preprod' }, capped('back')] });
   const res = report(root, '--env', 'preprod');
   assert.equal(res.status, 1);
-  assert.match(res.stdout, /BLOCKING: daily cap reached \(front\) in validation-/);
+  assert.match(res.stdout, /BLOCKING: daily cap reached \(back\) in validation-/);
   assert.equal(report(root, '--since', '2099-01-01').status, 0);
+  const front = project({ checks: [check('demo.settings.saved')], traces: [{ check: 'demo.settings.saved', outcome: 'ok' }, capped('front')] });
+  const out = report(front);
+  assert.equal(out.status, 0);
+  assert.match(out.stdout, /Warning: front share of the daily cap reached/);
+  for (const dir of [root, front]) rmSync(dir, { recursive: true });
+});
+
+test('a violation reported only by the front on a pre-login check is to confirm, never blocking', () => {
+  const root = project({
+    checks: [check('demo.login.form', { sources: ['front'], preLogin: true }), check('demo.front.session', { sources: ['back', 'front'] })],
+    traces: [{ check: 'demo.login.form', outcome: 'violation', source: 'front' }, { check: 'demo.front.session', outcome: 'violation', source: 'front' }],
+  });
+  const res = report(root, '--json');
+  assert.equal(res.status, 0);
+  const checks = byId(JSON.parse(res.stdout));
+  assert.equal(checks['demo.login.form'].status, 'VIOLATION_TO_CONFIRM');
+  assert.match(checks['demo.login.form'].note, /to confirm with a back trace/);
+  assert.equal(checks['demo.front.session'].status, 'VIOLATION');
+  assert.match(report(root).stdout, /VIOLATION_TO_CONFIRM \(1\)/);
   rmSync(root, { recursive: true });
 });
 
@@ -156,6 +175,19 @@ test('--follow-up prints only what changed since the last run (state in .validat
   assert.doesNotMatch(third.stdout, /demo\.settings\.saved/);
   assert.match(third.stdout, /still open: 1 violation/);
   assert.equal(third.status, 1);
+  rmSync(root, { recursive: true });
+});
+
+test('--show-values is refused for a copy under .validation-cache/ or for preprod lines, whatever --env says', () => {
+  const root = project({ checks: [check('demo.settings.saved')], traces: [{ check: 'demo.settings.saved', outcome: 'ok', env: 'preprod', fields: { step: 'x' } }] });
+  assert.equal(report(root, '--show-values').status, 2);
+  assert.equal(report(root, '--show-values', '--env', 'dev').status, 2);
+  const copy = path.join(root, '.validation-cache', 'preprod', 'host1');
+  mkdirSync(copy, { recursive: true });
+  writeFileSync(path.join(copy, `validation-${TODAY}.jsonl`), `${JSON.stringify({ v: 1, ts: now(), env: 'dev', check: 'demo.settings.saved', outcome: 'ok' })}\n`);
+  const res = report(root, '--show-values', '--logs', '.validation-cache/preprod', '--env', 'dev');
+  assert.equal(res.status, 2);
+  assert.match(res.stderr, /refused for preprod logs/);
   rmSync(root, { recursive: true });
 });
 
@@ -220,6 +252,11 @@ test('hostile archives never write nor read outside the private copy (canary int
     assert.ok(!existsSync(copy));
   }
   assert.deepEqual(readdirSync(dir).sort(), ['canary.txt', ...Object.keys(archives)].sort());
+  const windows = path.join(dir, 'backslash.tar');
+  writeFileSync(windows, Buffer.concat([tarEntry('..\\..\\evil\\validation-2026-11-11.jsonl', { data: line }), Buffer.alloc(1024)]));
+  const { dir: copy, cleanup } = openLogSource(windows);
+  assert.deepEqual(readdirSync(path.join(copy, '0')), ['validation-2026-11-11.jsonl']);
+  cleanup();
   assert.equal(regularMembers(Buffer.concat([...archives['names.tar'], Buffer.alloc(1024)])).length, 3);
   const broken = path.join(dir, 'broken.tar');
   writeFileSync(broken, Buffer.alloc(600, 'z'));
@@ -241,10 +278,12 @@ test('--check-registry: valid → 0; schema, module, duplicate, "*" and shared-n
     check('demo.f', { sources: ['front'], fields: '*', fieldsJustification: 'not allowed for the front' }), check('demo.g', { fields: '*' }),
     check('demo.h', { sources: ['front'] }), check('demo.i', { expect: { traces: ['demo.h'], outcome: 'ok' } }),
     check('demo.j', { fields: { n: 'number' } }), check('demo.k', { expect: { traces: ['demo.j'], outcome: 'ok' }, fields: { n: 'string' } }),
+    check('demo.l', { sources: ['front'], preLogin: true, severity: 'high' }),
   ] }));
   const out = report(bad, '--check-registry').stdout;
   for (const message of [/id already declared/, /"module" is "other"/, /"preLogin" needs "front"/, /"\*" is refused for a check with a front source/,
-    /"\*" needs a "fieldsJustification"/, /trace "demo\.h": sent by the front .* used by back-only demo\.i/, /field "n" typed differently/]) assert.match(out, message);
+    /"\*" needs a "fieldsJustification"/, /trace "demo\.h": sent by the front .* used by back-only demo\.i/, /field "n" typed differently/,
+    /"preLogin" is refused for a high check/]) assert.match(out, message);
   for (const dir of [ok, bad]) rmSync(dir, { recursive: true });
 });
 

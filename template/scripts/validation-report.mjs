@@ -118,11 +118,27 @@ function buildWarnings(root, source, files, stats, options) {
   return warnings;
 }
 
+/** What fails the run. A front cap is only a warning: anyone can fill the front share (pre-login route). */
 function blockingReasons(results, leakCounts, capped) {
   const reasons = results.filter(isBlocking).map((r) => `VIOLATION of ${r.severity} check ${r.id}`);
   if (leakCounts.high) reasons.push(`${leakCounts.high} high-severity secret leak(s) in the logs`);
-  for (const cap of capped) reasons.push(`daily cap reached (${cap.traceClass}) in ${cap.file}: later traces of that class were not written`);
+  for (const cap of capped.filter((c) => c.traceClass !== 'front')) reasons.push(`daily cap reached (${cap.traceClass}) in ${cap.file}: later traces of that class were not written`);
   return reasons;
+}
+
+function capWarnings(capped) {
+  return capped.filter((c) => c.traceClass === 'front').map((c) => `front share of the daily cap reached in ${c.file}: later front traces of that day were not written`);
+}
+
+/** `--show-values` never shows preprod values: refused for a source under `.validation-cache/` or any line of env `preprod`. */
+function refuseValuesOfPreprod(root, source, stats, options) {
+  if (!options['show-values']) return;
+  const cache = path.join(root, CACHE_DIR);
+  const resolved = existsSync(source) ? realpathSync(source) : path.resolve(source);
+  const cacheReal = existsSync(cache) ? realpathSync(cache) : cache;
+  if (resolved === cacheReal || resolved.startsWith(`${cacheReal}${path.sep}`) || stats.envs.includes('preprod')) {
+    throw new UsageError('--show-values is refused for preprod logs (a copy under .validation-cache/ or lines of env preprod)');
+  }
 }
 
 /** Runs the whole analysis; returns { exitCode, report } (report = the JSON form). */
@@ -140,6 +156,7 @@ export async function analyse(options) {
     const files = listLogFiles(dir);
     const since = options.since ? parseSince(options.since) : null;
     const { lines, stats } = await readTraceLines(files, { since, env });
+    refuseValuesOfPreprod(root, source, stats, options);
     const checks = registry.checks.filter((c) => !options.only || c.module === options.only);
     const results = evaluateChecks(checks, lines, { showValues: options['show-values'] === true });
     const { leaks, leakCounts, lowLeakShapes } = summarizeLeaks(await scanLeaks(files, dir));
@@ -147,7 +164,8 @@ export async function analyse(options) {
     const report = {
       generatedAt: new Date().toISOString(), source: options.preprod ? 'preprod' : path.relative(root, source) || '.', env: env ?? 'any',
       since: since ? new Date(since).toISOString() : null, stats, registry: { checks: registry.checks.length, files: new Set(registry.checks.map((c) => c.file)).size },
-      checks: results, unknownTraces: unknownTraces(checks, lines), leaks, leakCounts, lowLeakShapes, blocking, warnings: buildWarnings(root, source, files, stats, options),
+      checks: results, unknownTraces: unknownTraces(checks, lines), leaks, leakCounts, lowLeakShapes, blocking,
+      warnings: [...buildWarnings(root, source, files, stats, options), ...capWarnings(stats.capped)],
     };
     return { exitCode: blocking.length ? 1 : 0, report };
   } finally {
@@ -155,7 +173,7 @@ export async function analyse(options) {
   }
 }
 
-const STATUS_ORDER = [STATUS.VIOLATION, STATUS.NOT_YET, STATUS.OK];
+const STATUS_ORDER = [STATUS.VIOLATION, STATUS.TO_CONFIRM, STATUS.NOT_YET, STATUS.OK];
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
 
 function formatCounts(c) {
