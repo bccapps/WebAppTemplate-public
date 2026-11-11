@@ -41,6 +41,26 @@ describe('EmailService SMTP timeouts', () => {
   });
 });
 
+describe('EmailService credentials in logs', () => {
+  it('never logs any part of the Brevo key nor the SMTP login when the transport is created', async () => {
+    const apiKey = 'xkeysib-0123456789abcdef0123456789abcdef-SECRETTAIL';
+    const user = 'smtp-login@example.test';
+    const service = serviceWith({ common_email_provider: 'brevo', common_email_brevoUser: user, common_email_brevoApiKey: apiKey });
+    const logger = (service as unknown as { logger: { log: (m: string) => void; warn: (m: string) => void; error: (m: string) => void } }).logger;
+    const spies = (['log', 'warn', 'error'] as const).map((level) => jest.spyOn(logger, level).mockImplementation(() => undefined));
+    const create = jest.spyOn(nodemailer, 'createTransport').mockReturnValue({ sendMail: async () => ({ messageId: 'id-1', response: '250 OK' }), close: () => undefined } as never);
+    await service.sendEmail('jean.dupont@example.fr', 's', '<p>x</p>');
+    const lines = spies.flatMap((spy) => spy.mock.calls.map((call) => String(call[0]))).join('\n');
+    expect(lines).toContain('Brevo transport configured');
+    expect(lines).not.toContain('xkeysib');
+    expect(lines).not.toContain(apiKey.slice(0, 10));
+    expect(lines).not.toContain('SECRETTAIL');
+    expect(lines).not.toContain(user);
+    create.mockRestore();
+    spies.forEach((spy) => spy.mockRestore());
+  });
+});
+
 describe('EmailService log masking', () => {
   it('keeps the first character and the domain of every address in a text', () => {
     expect(maskEmailAddresses('550 5.1.1 <jean.dupont@example.fr>: Recipient address rejected')).toBe(

@@ -16,6 +16,7 @@ import { CryptService } from '../services/CryptService';
 import { CreateSessionDto } from '../dtos/CreateSessionDto';
 import { Public } from '../decorators/Public';
 import { AdminOnlyInterceptor } from '../interceptors/AdminOnlyInterceptor';
+import { RejectApiTokenInterceptor } from '../interceptors/RejectApiTokenInterceptor';
 
 /**
  * Budget of the anonymous transport handshake (an ECDH computation and a stored session each): a browser opens one per
@@ -65,7 +66,7 @@ export class CryptController {
   }
 
   @Post('admin/decrypt')
-  @UseInterceptors(AdminOnlyInterceptor)
+  @UseInterceptors(AdminOnlyInterceptor, RejectApiTokenInterceptor)
   decrypt(@Body() body: DecryptPayloadDto) {
     if (!body?.payload || typeof body.payload !== 'string') {
       throw new BadRequestException('payload is required');

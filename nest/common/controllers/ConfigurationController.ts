@@ -16,6 +16,7 @@ import { Public } from '../decorators/Public';
 import { AdminOnlyInterceptor } from '../interceptors/AdminOnlyInterceptor';
 import { NoTransportCrypt } from '../decorators/NoTransportCrypt';
 import { CacheControl } from '../decorators/CacheControl';
+import { RejectApiTokenInterceptor } from '../interceptors/RejectApiTokenInterceptor';
 
 @ApiTags('configuration')
 @Controller()
@@ -72,7 +73,7 @@ export class ConfigurationController {
     description: 'Unknown key (CFG_UNKNOWN_KEY), invalid value (CFG_INVALID_*, CFG_OUT_OF_RANGE, CFG_VALUE_TOO_LONG) or secret change (CFG_SECRET_READONLY)',
     type: FunctionalException
   })
-  @UseInterceptors(AdminOnlyInterceptor)
+  @UseInterceptors(AdminOnlyInterceptor, RejectApiTokenInterceptor)
   @Put('/api/v1/configurations')
   async updateConfiguration(@Body() payload: ConfigurationDto[]): Promise<ConfigurationDto[]> {
     return await this.configurationService.updateFromAdmin(payload);

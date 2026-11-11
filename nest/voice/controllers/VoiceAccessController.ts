@@ -23,6 +23,7 @@ import { AdminOnlyInterceptor } from '../../common/interceptors/AdminOnlyInterce
 import { IdParamDto } from '../../common/dtos/IdParamDto';
 import { UpsertVoiceAccessDto } from '../dto/UpsertVoiceAccessDto';
 import { VoiceAccessService } from '../services/VoiceAccessService';
+import { RejectApiTokenInterceptor } from '../../common/interceptors/RejectApiTokenInterceptor';
 
 @Controller('/api/v1/voice-accesses')
 @UseInterceptors(AdminOnlyInterceptor)
@@ -37,12 +38,14 @@ export class VoiceAccessController {
     return { data };
   }
 
+  @UseInterceptors(RejectApiTokenInterceptor)
   @Post()
   async create(@Body() payload: UpsertVoiceAccessDto) {
     const data = await this.voiceAccessService.create(payload);
     return { data };
   }
 
+  @UseInterceptors(RejectApiTokenInterceptor)
   @Put(':id')
   async update(
     @Param() params: IdParamDto,
@@ -52,6 +55,7 @@ export class VoiceAccessController {
     return { data };
   }
 
+  @UseInterceptors(RejectApiTokenInterceptor)
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param() params: IdParamDto) {

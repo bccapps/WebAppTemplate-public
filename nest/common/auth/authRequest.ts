@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import { createHash } from 'node:crypto';
 import { SecurityException } from '../exceptions/SecurityException';
 import type { AuthPort } from './AuthPort';
 import type { AuthPrincipal } from './AuthPrincipal';
@@ -41,12 +42,14 @@ export function authUserId(req: unknown): number {
   return id;
 }
 
-/** Fingerprint only: a rejected token is still a credential and must not reach the logs. */
+/**
+ * A rejected token is still a credential: no character of it (not even its last ones, which are signature bytes)
+ * may reach a response or a log. The one-way SHA-256 prefix and the length are enough to correlate two failures.
+ */
 export function unrecognizedTokenError(token: string): SecurityException {
-  return new SecurityException(
-    'AUT',
-    `Unrecognized token (len=${String(token).length}, ends=…${String(token).slice(-6)})`,
-  );
+  const text = String(token);
+  const fingerprint = createHash('sha256').update(text).digest('hex').slice(0, 8);
+  return new SecurityException('AUT', `Unrecognized token (len=${text.length}, sha256=${fingerprint})`);
 }
 
 /**

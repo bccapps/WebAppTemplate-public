@@ -35,7 +35,7 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 | Méthode | Endpoint | Auth | Description |
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/configurations` | Public | Récupère la configuration applicative. **Exemptée du chiffrement de transport** (`@NoTransportCrypt`, décision C — voir plus bas) ; `Cache-Control: public, max-age=60, stale-while-revalidate=600` (durées configurables). |
-| `PUT` | `/api/v1/configurations` | Admin | Met à jour des clés **existantes** (tableau `{ name, value, description }`). Validé par `ConfigurationService.updateFromAdmin` — voir « Écriture de la configuration : validation » ci-dessous. |
+| `PUT` | `/api/v1/configurations` | Admin (pas de jeton API) | Met à jour des clés **existantes** (tableau `{ name, value, description }`). Validé par `ConfigurationService.updateFromAdmin` — voir « Écriture de la configuration : validation » ci-dessous. |
 
 ### Module Config (`ModuleConfigController`)
 | Méthode | Endpoint | Auth | Description |
@@ -43,8 +43,8 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 | `GET` | `/api/v1/admin/module-configs/schemas` | Admin | Récupère tous les schémas de configuration de modules. |
 | `GET` | `/api/v1/admin/module-configs` | Admin | Récupère tous les modules avec leurs valeurs actuelles. |
 | `GET` | `/api/v1/admin/module-configs/:moduleId` | Admin | Récupère un module avec ses valeurs. |
-| `GET` | `/api/v1/admin/module-configs/:moduleId/secret/:key` | Admin | Déchiffre et renvoie la valeur d'un champ `secret` donné (`{ value }`), **seulement s'il déclare `revealable: true`** ; un secret sans ce drapeau est en écriture seule (400, jamais renvoyé). |
-| `PUT` | `/api/v1/admin/module-configs/:moduleId` | Admin | Met à jour les valeurs de configuration d'un module (clés hors schéma ignorées ; valeurs modifiées validées par le champ du schéma — voir ci-dessous). |
+| `GET` | `/api/v1/admin/module-configs/:moduleId/secret/:key` | Admin (pas de jeton API) | Déchiffre et renvoie la valeur d'un champ `secret` donné (`{ value }`), **seulement s'il déclare `revealable: true`** ; un secret sans ce drapeau est en écriture seule (400, jamais renvoyé). |
+| `PUT` | `/api/v1/admin/module-configs/:moduleId` | Admin (pas de jeton API) | Met à jour les valeurs de configuration d'un module (clés hors schéma ignorées ; valeurs modifiées validées par le champ du schéma — voir ci-dessous). |
 
 #### Écriture de la configuration : validation
 
@@ -87,7 +87,7 @@ Les deux routes d'écriture admin valident ce qu'elles stockent, **uniquement po
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/crypt/public-key` | Public | Clé publique ECDH du serveur et durée de session (`{ publicKey, ttlMs }`). |
 | `POST` | `/api/v1/crypt/session` | Public | Initie une session de chiffrement ECDH (échange de clés publiques, `clientPublicKey` ≤ 256 caractères ; clé invalide : 400). Budget `CRYPT_SESSION_THROTTLE` (30 / min par IP, voir « Limiteur de débit »). Sessions vivantes plafonnées par `common_cryptSessionMaxLive` (défaut 50 000) : au-delà, `CryptSessionService` évince les plus anciennes (mémoire : ordre d'insertion ; Redis : ensemble trié `crypt:session-index` + script Lua atomique) ; une session évincée fait seulement repartir les réponses en clair (sur HTTPS) jusqu'à la renégociation du navigateur. |
-| `POST` | `/api/v1/crypt/admin/decrypt` | Admin | Déchiffre une valeur de colonne chiffrée (`DecryptPayloadDto`). `@Public()` est posé route par route, jamais sur la classe : sinon l'intercepteur d'auth global ne pose pas `req.user` et `AdminOnlyInterceptor` refusait tout le monde (corrigé 2026-10-29). |
+| `POST` | `/api/v1/crypt/admin/decrypt` | Admin (pas de jeton API) | Déchiffre une valeur de colonne chiffrée (`DecryptPayloadDto`). `@Public()` est posé route par route, jamais sur la classe : sinon l'intercepteur d'auth global ne pose pas `req.user` et `AdminOnlyInterceptor` refusait tout le monde (corrigé 2026-10-29). |
 
 #### Compression avant chiffrement (compress-then-encrypt)
 `TransportCryptInterceptor` peut deflater le JSON **avant** l'AES-GCM (PERFORMANCE_PLAN.md §2.3) — un
@@ -634,6 +634,33 @@ L'AppModule importe `AuthCoreModule.forRoot()` (voir « Plugins » pour le fourn
 | `@ApiScope(scope)` / `SERVICE_KEY_AUTH` (`decorators/ApiScope.ts`, `auth/ServiceKeyAuth.ts`) | Clés de service (machine à machine), facultatives. Une route de **lecture** marquée `@ApiScope('tradingplatform:read')` accepte, en plus du jeton utilisateur, une clé API portant ce scope, si un module fournit `SERVICE_KEY_AUTH` (`ServiceKeyAuthenticator`, fourni par `api-access`). `GlobalAuthInterceptor` consulte le fournisseur avant le jeton Bearer, uniquement sur ces routes : clé admise ⇒ `req.servicePrincipal = { kind: 'service', scope, tenantId, keyId }` et **pas de `req.user`** (`RequireUserInterceptor` et toute route par utilisateur restent fermées ; `servicePrincipalOf(req)` pour le lire) ; clé invalide ⇒ 401, scope absent ⇒ 403. Sans fournisseur, le décorateur ne change rien. Jamais sur une route d'écriture, d'admin ou par utilisateur. |
 
 Variable d'environnement : `ADMIN_TOKEN` (>= 32 caractères) — clé admin en mode anonyme, envoyée en `Authorization: Bearer`.
+
+### Jetons API et sessions humaines (`interceptors/`, 2026-11-10)
+
+Un « jeton API » utilisateur (JWT `aud=api`, `sid=0`, sans expiration) passe l'authentification comme une session. Le module `user` marque `req.user` (voir `user/README.md`, sessions humaines) : `isApiToken === true` pour un jeton API, `isHumanSession === true` (et `kind: 'user'`) pour une vraie session. Deux intercepteurs **duck-typés** (aucun import de `user`) exportés par `interceptors/index.ts` refusent le jeton API sur les routes critiques, avec UN corps uniforme `{ statusCode: 403, code, message }` (`PrincipalRefusedException`, jamais de jeton dans le message) :
+
+| Intercepteur | Sens | Passe si | Sinon |
+| --- | --- | --- | --- |
+| `RequireHumanSessionInterceptor` | **Positif**, échec fermé | `req.user.kind === 'user'` ET `isHumanSession === true` (booléen strict) ET `isApiToken !== true` | 403 `HUMAN_SESSION_REQUIRED` (jeton API, local-trust, admin-token, clé de service, principal sans marqueur, `'true'` texte, pas d'utilisateur) |
+| `RejectApiTokenInterceptor` | **Négatif** | `req.user?.isApiToken !== true` (tout le reste passe, y compris l'absence d'utilisateur) | 403 `API_TOKEN_NOT_ALLOWED` |
+
+Aucun des deux n'authentifie : ils se placent APRÈS l'auth de l'app (auth globale, puis l'intercepteur d'auth/admin de la route : l'ordre dans `@UseInterceptors(AuthInterceptor, RequireHumanSessionInterceptor)` compte ; une requête non authentifiée garde le 401 de la couche d'auth).
+
+Quand utiliser lequel :
+- **Positif** pour les routes que seules des personnes connectées utilisent (clés d'échange, ordres, tokens du proxy LLM, clés de fournisseurs). Attention : un principal `local-trust` / `admin-token` n'a pas de marqueur de session et est refusé, tout comme le chemin legacy `AuthInterceptor` seul (sans `AuthCoreModule` + `UserAuthProvider`).
+- **Négatif** quand le positif casserait un flux légitime sans session :
+  - routes derrière `OptionalAuthInterceptor` (commande/paiement de `commerce`) : le visiteur anonyme (sans jeton) n'existe que sur les apps legacy / en mode anonyme, et un contrôle positif le casserait. Sur une app avec `AuthCoreModule` + un fournisseur `users`, l'intercepteur global répond déjà 401 sans jeton (ces routes ne sont pas `@Public`) : la garde négative n'y écarte que le jeton API statique ;
+  - principal `local-trust` (`LOCAL_TRUST=true`, `auth/localTrust.ts`) : `kind: 'local-trust'` n'a pas de marqueur `isHumanSession`, le positif le refuse. Seul consommateur connu : la variante bureau d'AgentHub (application hors de cette base, `shared-modules.desktop.json` lie `llm-client` et `voice`) ; ces modules (routes utilisateur de `llm-client` et `voice`) utilisent donc le négatif ;
+  - mode anonyme `ADMIN_TOKEN` (principal `admin-token`) ;
+  - toutes les routes **admin d'écriture** (après `AdminOnlyInterceptor`/`AdminAuthInterceptor`, dont les sessions admin passent) : un jeton API d'administrateur ne doit pas pouvoir révéler un secret, réécrire une configuration, créer/supprimer un accès fournisseur, ni déchiffrer.
+- Posés ici : `ConfigurationController` (`PUT /configurations`), `ModuleConfigController` (révélation de secret + `PUT`), `CryptController` (`POST admin/decrypt`).
+
+Garde-fou de dérive : `testing/controllerInterceptors.testkit.ts` (sans app ni base, d'après les métadonnées Nest) :
+- `routesOf(controller)` énumère les routes (méthode, chemin, intercepteurs de classe puis de route) ;
+- `findRouteMismatches(controller, CRITICAL_ROUTES)` vérifie que chaque route listée existe et porte les intercepteurs attendus dans l'ordre ;
+- `findUnclassifiedWriteRoutes(controller, CRITICAL_ROUTES, OPEN_ROUTES)` exige que TOUTE route non-GET du contrôleur soit dans `CRITICAL_ROUTES` ou dans `OPEN_ROUTES` (`{ method, path, reason }`, une raison d'une ligne : webhook signé, checkout anonyme, lecture par `POST`…), signale une entrée `OPEN_ROUTES` sans raison, périmée ou doublon, et une route à paramètre déclarée avant une sœur statique qu'elle masquerait (`findShadowedRoutes`, `PUT :id` avant `PUT default-model`). Une nouvelle route d'écriture sans décision fait donc échouer le spec.
+
+Chaque contrôleur concerné a un `*.principal.spec.ts` avec ses listes `CRITICAL_ROUTES` et `OPEN_ROUTES` : une nouvelle route sensible s'ajoute à la première, une exception assumée à la seconde. Tests des intercepteurs : `interceptors/principalGuards.spec.ts`.
 
 ### Mode local de confiance (`LOCAL_TRUST`, `auth/localTrust.ts`)
 

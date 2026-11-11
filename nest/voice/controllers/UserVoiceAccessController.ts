@@ -29,6 +29,7 @@ import { TtsRequestDto } from '../dto/TtsRequestDto';
 import { UserVoiceAccessService } from '../services/UserVoiceAccessService';
 import { VoiceUserDispatchService } from '../services/VoiceUserDispatchService';
 import { RequireVoiceOwnerInterceptor } from './RequireVoiceOwnerInterceptor';
+import { RejectApiTokenInterceptor } from '../../common/interceptors/RejectApiTokenInterceptor';
 
 @Controller('/api/v1/user/voice-accesses')
 @UseInterceptors(RequireVoiceOwnerInterceptor)
@@ -53,6 +54,7 @@ export class UserVoiceAccessController {
     return { data };
   }
 
+  @UseInterceptors(RejectApiTokenInterceptor)
   @Post()
   async create(@Req() req: Request, @Body() payload: UserUpsertVoiceAccessDto) {
     const userId = this.getUid(req);
@@ -60,6 +62,7 @@ export class UserVoiceAccessController {
     return { data };
   }
 
+  @UseInterceptors(RejectApiTokenInterceptor)
   @Put(':id')
   async update(
     @Req() req: Request,
@@ -75,6 +78,7 @@ export class UserVoiceAccessController {
     return { data };
   }
 
+  @UseInterceptors(RejectApiTokenInterceptor)
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   async delete(@Req() req: Request, @Param() params: IdParamDto) {

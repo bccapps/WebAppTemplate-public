@@ -60,11 +60,17 @@ describe('GlobalAuthInterceptor', () => {
       );
     });
 
-    it('throws with a fingerprint for an unknown token', async () => {
+    it('throws with a one-way fingerprint, never a character of the token, for an unknown token', async () => {
       const { interceptor } = build('users', null);
-      await expect(interceptor.intercept(ctx(bearer('abcdefghij')), handler)).rejects.toThrow(
-        'Unrecognized token (len=10, ends=…efghij)',
+      const token = 'abcdefghij';
+      // sha256('abcdefghij') starts with 72399361
+      const error = await interceptor.intercept(ctx(bearer(token)), handler).then(
+        () => null,
+        (e: unknown) => e as Error,
       );
+      expect(error?.message).toBe('Unrecognized token (len=10, sha256=72399361)');
+      expect(error?.message).not.toContain('efghij');
+      expect(error?.message).not.toContain(token);
     });
 
     it('sets req.user and mirrors uid/user for a valid token', async () => {

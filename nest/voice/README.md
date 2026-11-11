@@ -35,13 +35,13 @@ Provides Text-to-Speech (TTS), Speech-to-Text (STT), and Speech-to-Speech (S2S) 
 | PUT | `/api/v1/voice-provider-catalog/:id` | Admin | Update a voice provider |
 | DELETE | `/api/v1/voice-provider-catalog/:id` | Admin | Delete a voice provider |
 | GET | `/api/v1/voice-accesses` | Admin | List all admin voice accesses |
-| POST | `/api/v1/voice-accesses` | Admin | Create an admin voice access |
-| PUT | `/api/v1/voice-accesses/:id` | Admin | Update an admin voice access |
-| DELETE | `/api/v1/voice-accesses/:id` | Admin | Delete an admin voice access |
+| POST | `/api/v1/voice-accesses` | Admin (no API token) | Create an admin voice access |
+| PUT | `/api/v1/voice-accesses/:id` | Admin (no API token) | Update an admin voice access (400 when the provider or base URL override changes without a new secret while one is stored; an empty `password` clears it) |
+| DELETE | `/api/v1/voice-accesses/:id` | Admin (no API token) | Delete an admin voice access |
 | GET | `/api/v1/user/voice-accesses` | User | List user's voice accesses |
-| POST | `/api/v1/user/voice-accesses` | User | Create a user voice access |
-| PUT | `/api/v1/user/voice-accesses/:id` | User | Update a user voice access |
-| DELETE | `/api/v1/user/voice-accesses/:id` | User | Delete a user voice access |
+| POST | `/api/v1/user/voice-accesses` | User (no API token) | Create a user voice access |
+| PUT | `/api/v1/user/voice-accesses/:id` | User (no API token) | Update a user voice access |
+| DELETE | `/api/v1/user/voice-accesses/:id` | User (no API token) | Delete a user voice access |
 | POST | `/api/v1/user/voice-accesses/:id/tts` | User | Synthesize with one of the caller's own accesses (JSON body `TtsRequestDto`: `text`, `voice?`, `language?`, `speed?`, `outputFormat?`, `gender?`); answers the audio (WAV, or `audio/L16;rate=N;channels=1` for raw PCM), `X-Audio-Duration-Ms` when known |
 | POST | `/api/v1/user/voice-accesses/:id/stt?language=&model=` | User | Transcribe with one of the caller's own accesses (raw audio body, WAV recommended); answers `{ data: { text, segments?, language? } }`; no `language` = detection when the provider offers it |
 | POST | `/api/v1/voice/tts?accessId=N` | Auth (user or admin-token) | Synthesize text to speech (returns audio binary) |
@@ -53,6 +53,8 @@ Auth column: `Admin` = `AdminOnlyInterceptor`; `User` = `RequireVoiceOwnerInterc
 
 ## Desktop: the local person owns accesses (2026-11-10)
 `RequireUserInterceptor` refuses the `local-trust` principal (an administrator with id 0: nobody to own a key). `RequireVoiceOwnerInterceptor`, on the six `/user/voice-accesses` routes, additionally admits a `local-trust` principal **whose id is a positive integer**, which only an app that gave its local person a real `user` row produces (AgentHub desktop: `LocalUserAuthProvider` swaps the id of the anonymous principal for that row's id). The access then belongs to that row (`user_id`), is sealed (`enc:v1:`), checked for ownership and SSRF-guarded exactly like a hub user's. Still refused: an anonymous request, the `ADMIN_TOKEN` identity, and a plain local-trust principal (id 0). A server never runs `LOCAL_TRUST` (it refuses to start on a non-loopback host), so a hub or an app without a local user row behaves as before. Consumers: AgentHub only (VxScore and TradeKong keep their users; none of them runs `LOCAL_TRUST`). Same routes, same response shapes. Also fixed: `POST /user/voice-accesses/:id/tts|stt` handed the dispatch the route id as a string when the app has no global `ValidationPipe({ transform: true })` (AgentHub), which then answered 404 for every access; the id is now converted to a number.
+
+**API tokens refused (2026-11-10).** `POST`, `PUT :id` and `DELETE :id` of `/api/v1/user/voice-accesses` (a user's provider keys) run `RequireVoiceOwnerInterceptor` (class) then `RejectApiTokenInterceptor` (`common/interceptors`): a static user API token (`req.user.isApiToken === true`) gets 403 `API_TOKEN_NOT_ALLOWED`. The guard is negative, not `RequireHumanSessionInterceptor`, because the `LOCAL_TRUST` principal (`kind: 'local-trust'`, see `nest/common/README.md`) carries no human-session marker and the positive guard refuses it; AgentHub's desktop flavour (an app outside this base: `LOCAL_TRUST=true`, `shared-modules.desktop.json` links `voice`) runs on that principal, so a positive check would break it. The administrator routes `POST`, `PUT :id`, `DELETE :id` of `/api/v1/voice-accesses` (provider keys) run `AdminOnlyInterceptor` (class) then `RejectApiTokenInterceptor`: even an administrator's static API token gets 403 `API_TOKEN_NOT_ALLOWED`. Reads stay open, and so do the dispatch routes `POST :id/tts` and `POST :id/stt` (they use one of the caller's own accesses server-side and never reveal, change or redirect its key: same exposure as `POST /voice/tts|stt`; listed in `OPEN_ROUTES`). Drift guards: `controllers/{UserVoiceAccess,VoiceAccess}Controller.principal.spec.ts` (`CRITICAL_ROUTES` + `OPEN_ROUTES`).
 
 ## Entities
 

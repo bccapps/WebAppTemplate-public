@@ -139,7 +139,8 @@ export class EmailService {
         this.logger.warn('Brevo provider selected but credentials are missing');
         return null;
       }
-      this.logger.log(`Brevo transport: user=${user}, apiKey=${apiKey.substring(0, 10)}...${apiKey.substring(apiKey.length - 4)} (len=${apiKey.length})`);
+      // Never log any part of the credentials (key fragments, SMTP login): the configuration state is enough to diagnose.
+      this.logger.log('Brevo transport configured');
       return nodemailer.createTransport({
         host: 'smtp-relay.brevo.com',
         port: 587,

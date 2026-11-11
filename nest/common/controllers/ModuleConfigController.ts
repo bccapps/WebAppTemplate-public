@@ -13,6 +13,7 @@ import { FunctionalException } from '../exceptions/FunctionalException';
 import { ModuleConfigService } from '../services/ModuleConfigService';
 import { ModuleConfigSchema, ModuleConfigWithValues } from '../types/ModuleConfigSchema';
 import { AdminOnlyInterceptor } from '../interceptors/AdminOnlyInterceptor';
+import { RejectApiTokenInterceptor } from '../interceptors/RejectApiTokenInterceptor';
 
 @ApiTags('module-config')
 @UseInterceptors(AdminOnlyInterceptor)
@@ -59,6 +60,7 @@ export class ModuleConfigController {
     description: 'Module not found, field is not a secret field, or the secret is write-only (not `revealable`)',
     type: FunctionalException,
   })
+  @UseInterceptors(RejectApiTokenInterceptor)
   @Get('/api/v1/admin/module-configs/:moduleId/secret/:key')
   async getSecretValue(
     @Param('moduleId') moduleId: string,
@@ -78,6 +80,7 @@ export class ModuleConfigController {
     description: 'Module not found or invalid values',
     type: FunctionalException,
   })
+  @UseInterceptors(RejectApiTokenInterceptor)
   @Put('/api/v1/admin/module-configs/:moduleId')
   async updateModuleConfig(
     @Param('moduleId') moduleId: string,
