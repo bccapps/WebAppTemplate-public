@@ -43,6 +43,8 @@ const TYPE_MAP: Readonly<Record<string, string>> = {
   'time without time zone': 'time',
   bytea: 'blob',
   'character varying': 'varchar',
+  // `char(n)` (a fixed-length hash, e.g. `mcp_credential.secret_hash`): TypeORM's SQLite driver knows it as `character`.
+  char: 'character',
   bpchar: 'character',
   int2: 'smallint',
   int4: 'integer',

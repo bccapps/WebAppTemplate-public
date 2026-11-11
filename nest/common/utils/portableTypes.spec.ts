@@ -35,6 +35,8 @@ describe('mapPostgresType', () => {
     expect(mapPostgresType('enum')).toBe('simple-enum');
     expect(mapPostgresType('bytea')).toBe('blob');
     expect(mapPostgresType('character varying')).toBe('varchar');
+    expect(mapPostgresType('char')).toBe('character');
+    expect(mapPostgresType('char(64)')).toBe('character');
     expect(mapPostgresType('int8')).toBe('bigint');
     expect(mapPostgresType('citext')).toBe('varchar');
   });

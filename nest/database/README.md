@@ -150,7 +150,7 @@ Sous Postgres rien n'est appelé : le comportement est identique.
 |---|---|
 | `jsonb` / `json` / `hstore`, `array: true` | `simple-json` (texte JSON) |
 | `timestamptz`, `timestamp [with/without time zone]`, `timetz` | `datetime` / `time` (`precision` retiré) |
-| `enum` | `simple-enum` ; `bytea` → `blob` ; `int2/int4/int8/float4/float8/bool` → types SQLite ; `citext/inet/cidr/…` → `varchar` |
+| `enum` | `simple-enum` ; `bytea` → `blob` ; `int2/int4/int8/float4/float8/bool` → types SQLite ; `char(n)` → `character(n)` ; `citext/inet/cidr/…` → `varchar` |
 | défauts `() => 'now()'`, `gen_random_uuid()`, `'[]'::jsonb`, `'{}'` (tableau) | `CURRENT_TIMESTAMP`, expression UUID v4, `'[]'` |
 | index `concurrent/spatial/fulltext…`, `where` avec casts | retirés / casts supprimés ; un index **unique** partiel inexprimable est supprimé (sinon il sur-contraindrait) |
 | `@Check` avec casts, `@Entity({ schema })`, `generated: 'identity'` | casts supprimés / schéma ignoré / `increment` |
