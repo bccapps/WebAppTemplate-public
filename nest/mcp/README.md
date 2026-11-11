@@ -51,10 +51,15 @@ export class McpController {
     await serveMcp(req, res, this.factory.create(principal));  // un serveur PAR requête, lié au principal
   }
 
-  @Get() @Delete()
+  @Get()
   notAllowed(@Res() res: Response): void { rejectMcpMethod(res); }
+
+  @Delete()
+  notAllowedDelete(@Res() res: Response): void { rejectMcpMethod(res); }
 }
 ```
+
+⚠️ Un décorateur de méthode par verbe : empiler `@Get() @Delete()` sur une même méthode n'enregistre que **GET** (le second écrase le premier), et `DELETE` répondrait 404 au lieu de 405. Un test qui monte les routes à la main (`app.delete(...)`) ne le voit pas : vérifier le routage Nest réel (métadonnée `method` de chaque handler).
 
 Dans la fabrique : `new McpServer(info, { instructions })`, puis `registerTool(name, { inputSchema: z.object({...}) }, handler)`
 (une forme brute `{ a: z.string() }` est une surcharge dépréciée : envelopper dans `z.object`), et le handler renvoie
