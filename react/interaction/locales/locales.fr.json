@@ -118,6 +118,8 @@
   "interaction.errors.CANCELLED": "Cette question a été annulée.",
   "interaction.errors.EMAIL_UNAVAILABLE": "L'e-mail n'est pas disponible.",
   "interaction.errors.EXPIRED": "Cette question a expiré.",
+  "interaction.errors.ANSWER_REFUSED": "L'application a refusé cette réponse ; la question reste ouverte.",
+  "interaction.errors.IN_PROGRESS": "Une autre réponse à cette question est en cours : réessayez dans un instant.",
   "interaction.errors.ROUTE_REQUIRED": "Les approbations et les notices de sécurité exigent au moins un canal.",
   "interaction.errors.RATE_LIMITED": "Trop de tentatives : réessaie plus tard.",
   "interaction.errors.UPSTREAM_UNAVAILABLE": "Le service est injoignable : réessaie plus tard.",

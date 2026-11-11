@@ -213,7 +213,7 @@ Le toast cliquable (`toastService.notice`) n'a pas de jeton ici : ses styles (`.
 `interaction.page.*`, `.notice.*` (`openHint`), `.modal.*` (dont `outcome.<answered|expired|cancelled>`), `.inbox.*`, `.categories.<security|approval|info>`,
 `.prompt.*`, `.channels.*` (communs : état, test, suppression, enregistrement ; `.state.*`, `.inapp.*`, `.browser.*` dont `permission.<état>` et `pushError.*`,
 `.telegram.*` dont `mode.<own|operator>`, `.email.title`, `.webhook.title`), `.prefs.*`, `.admin.*` (dont `columns.*`), `.errors.<CODE>` (un par code de
-`INTERACTION_ERROR_CODES`, plus `UNKNOWN`). Une clé manquante s'affiche telle quelle (pas de valeur par défaut). Un nouveau `kind` d'app
+`INTERACTION_ERROR_CODES`, plus `UNKNOWN` ; `ANSWER_REFUSED` et `IN_PROGRESS` depuis C2 : porte de réponse du `kind`). Une clé manquante s'affiche telle quelle (pas de valeur par défaut). Un nouveau `kind` d'app
 ajoute `interaction.channels.<kind>.title` dans les libellés de l'app.
 
 ## Fichiers

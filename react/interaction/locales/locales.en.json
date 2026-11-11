@@ -118,6 +118,8 @@
   "interaction.errors.CANCELLED": "This question was cancelled.",
   "interaction.errors.EMAIL_UNAVAILABLE": "E-mail is not available.",
   "interaction.errors.EXPIRED": "This question has expired.",
+  "interaction.errors.ANSWER_REFUSED": "The app refused this answer; the question is still open.",
+  "interaction.errors.IN_PROGRESS": "Another answer to this question is being applied: try again in a moment.",
   "interaction.errors.ROUTE_REQUIRED": "Approvals and security notices need at least one channel.",
   "interaction.errors.RATE_LIMITED": "Too many attempts: try again later.",
   "interaction.errors.UPSTREAM_UNAVAILABLE": "The service is unreachable: try again later.",
