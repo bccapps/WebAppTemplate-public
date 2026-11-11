@@ -12,6 +12,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { Request } from 'express';
 import { And, LessThanOrEqual, MoreThanOrEqual, Repository, type FindOptionsWhere } from 'typeorm';
 import { AdminOnlyInterceptor } from '../../common/interceptors/AdminOnlyInterceptor';
+import { RejectApiTokenInterceptor } from '../../common/interceptors/RejectApiTokenInterceptor';
 import type { InteractionChannelAdminDto } from '../dtos/InteractionChannelAdminDto';
 import type { InteractionDeliveryAdminDto } from '../dtos/InteractionDeliveryAdminDto';
 import type { InteractionTicketAdminDto } from '../dtos/InteractionTicketAdminDto';
@@ -31,11 +32,12 @@ import { adminActorOf } from './interactionRequest';
 const KIND = /^[a-z][a-z0-9_]{1,15}$/;
 
 /**
- * Administrators' routes (04 §11.2): `/api/v1/admin/interaction/*` (`AdminOnlyInterceptor`). Metadata only: no
- * address, URL, chat id, Telegram id, endpoint, token nor any text of a notice or a question.
+ * Administrators' routes (04 §11.2): `/api/v1/admin/interaction/*` (`AdminOnlyInterceptor`, then `RejectApiTokenInterceptor`:
+ * an administrator's static API token is refused, 403 `API_TOKEN_NOT_ALLOWED`, C2). Metadata only: no address, URL, chat
+ * id, Telegram id, endpoint, token nor any text of a notice or a question.
  */
 @Controller('/api/v1/admin/interaction')
-@UseInterceptors(AdminOnlyInterceptor, InteractionErrorInterceptor)
+@UseInterceptors(AdminOnlyInterceptor, RejectApiTokenInterceptor, InteractionErrorInterceptor)
 export class InteractionAdminController {
   constructor(
     private readonly channels: InteractionChannelService,

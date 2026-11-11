@@ -98,6 +98,11 @@ export class InteractionInboxService {
     await this.notices.delete({ userId });
   }
 
+  /** A recipient withdrawn from a ticket (C2): their notices of it go (the question's texts with them). */
+  async forgetTicketFor(userId: number, ticketId: string): Promise<void> {
+    await this.notices.delete({ userId, ticketId });
+  }
+
   async purge(before: Date): Promise<void> {
     await this.notices.delete({ createdAt: LessThan(before) });
   }

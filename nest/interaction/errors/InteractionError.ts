@@ -27,6 +27,8 @@ export type InteractionHttpErrorCode =
   | 'CANCELLED'
   | 'EMAIL_UNAVAILABLE'
   | 'EXPIRED'
+  | 'ANSWER_REFUSED'
+  | 'IN_PROGRESS'
   | 'ROUTE_REQUIRED'
   | 'RATE_LIMITED'
   | 'UPSTREAM_UNAVAILABLE'
@@ -63,6 +65,10 @@ export const INTERACTION_ERRORS: Record<InteractionErrorCode, ErrorSpec> = {
   CANCELLED: { status: 409, message: 'This question was cancelled' },
   EMAIL_UNAVAILABLE: { status: 409, message: 'E-mail is not available' },
   EXPIRED: { status: 410, message: 'This question has expired' },
+  // C2, answer gates (`onAnswer(kind, handler, { gate })`): the app refused the answer (its own state); the ticket stays open.
+  ANSWER_REFUSED: { status: 409, message: 'The answer was refused' },
+  // C2, answer gates: another answer of this question is being applied (retry in a moment).
+  IN_PROGRESS: { status: 409, message: 'An answer to this question is being applied' },
   ROUTE_REQUIRED: { status: 422, message: 'Approval and security notices need at least one channel' },
   RATE_LIMITED: { status: 429, message: 'Too many requests' },
   UPSTREAM_UNAVAILABLE: { status: 502, message: 'The channel service is unreachable' },

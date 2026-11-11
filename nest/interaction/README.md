@@ -137,8 +137,8 @@ répond `500 INTERNAL` (« Internal error »), jamais son message ; elle est jou
 | `GET` | `/api/v1/interaction/me/notices/:id` | Utilisateur | → `InteractionNoticeDto` (404 si pas la sienne). |
 | `POST` | `/api/v1/interaction/me/notices/read` | Utilisateur | `{ ids: string[] (≤ 100) }` ou `{ all: true }` → `{ success: true }`. |
 | `GET` | `/api/v1/interaction/me/tickets/:id` | Utilisateur | → `InteractionTicketDto` (non destinataire ⇒ 404, identique à un id inconnu). |
-| `POST` | `/api/v1/interaction/me/tickets/:id/answer` | Utilisateur, 30/min | `{ actionId, stepUpProof? }` → `InteractionTicketDto` ; `403 CHANNEL_NOT_ALLOWED { required }`, `403 STEP_UP_REQUIRED { methods, purpose }`, `409 ALREADY_ANSWERED { via, at }`, `409 CANCELLED`, `410 EXPIRED`, `400 INVALID_INPUT`. |
-| `GET` | `/api/v1/admin/interaction/channels?userId=&kind=` | Admin | → `InteractionChannelAdminDto[]` (métadonnées : jamais adresse, URL, `chat_id`, id Telegram, endpoint, jeton). |
+| `POST` | `/api/v1/interaction/me/tickets/:id/answer` | Utilisateur, 30/min | `{ actionId, stepUpProof? }` → `InteractionTicketDto` ; `403 CHANNEL_NOT_ALLOWED { required }`, `403 STEP_UP_REQUIRED { methods, purpose }`, `409 ALREADY_ANSWERED { via, at }`, `409 CANCELLED`, `409 ANSWER_REFUSED { reason }` / `409 IN_PROGRESS` (porte de réponse du `kind`), `410 EXPIRED`, `400 INVALID_INPUT`. |
+| `GET` | `/api/v1/admin/interaction/channels?userId=&kind=` | Admin (toutes les routes `/admin` : jamais un jeton d'API, `RejectApiTokenInterceptor`, C2) | → `InteractionChannelAdminDto[]` (métadonnées : jamais adresse, URL, `chat_id`, id Telegram, endpoint, jeton). |
 | `PATCH` | `/api/v1/admin/interaction/users/:userId/channels/:kind` | Admin | `{ adminDisabled: boolean }` (crée la ligne si absente) → `{ success: true }` ; journalisé sans cible. |
 | `GET` | `/api/v1/admin/interaction/telegram/bots` | Admin | → `TelegramBotAdminDto[]` (état de réception, compteurs, `@username`). |
 | `POST` | `/api/v1/admin/interaction/telegram/operator/check` | Admin | `getMe` du bot de l'exploitant → `{ ok, botUsername, code }`. |
@@ -153,7 +153,7 @@ seule une session `kind: 'user'` peut s'abonner au sujet.
 
 Codes d'erreur (§12) : `INVALID_INPUT`, `INVALID_CONFIG { field, reason }`, `VERIFICATION_FAILED { reason }`,
 `CHANNEL_NOT_ALLOWED`, `STEP_UP_REQUIRED`, `NOT_FOUND`, `ADMIN_DISABLED`, `KIND_DISABLED`, `NOT_CONFIGURED`, `BOT_IN_USE`,
-`ALREADY_ANSWERED`, `CANCELLED`, `EMAIL_UNAVAILABLE`, `EXPIRED`, `ROUTE_REQUIRED`, `RATE_LIMITED { cap }` (`user`, `ip`, `target`, `global`, `pending` ; + `Retry-After`),
+`ALREADY_ANSWERED`, `CANCELLED`, `EMAIL_UNAVAILABLE`, `EXPIRED`, `ANSWER_REFUSED { reason }` (409, porte de réponse), `IN_PROGRESS` (409), `ROUTE_REQUIRED`, `RATE_LIMITED { cap }` (`user`, `ip`, `target`, `global`, `pending` ; + `Retry-After`),
 `UPSTREAM_UNAVAILABLE`, `INTERNAL` (500, toute erreur qui n'est pas celle du module ; le front la lit comme `UNKNOWN`). Levées vers l'app : `INTERACTION_NO_HUMAN`, `INVALID_QUESTION { field }`, `UNKNOWN_QUESTION_KIND`,
 `STEP_UP_UNAVAILABLE`, `INVALID_NOTICE { field }`, `SECRET_UNREADABLE`. Codes de remise (`interaction_delivery.code`,
 `last_error`) : `DISABLED`, `ADMIN_DISABLED`, `KIND_DISABLED`, `ROUTED_OFF`, `QUIET_HOURS`, `CAPPED`, `NOT_CONFIGURED`,
@@ -179,6 +179,18 @@ Codes d'erreur (§12) : `INVALID_INPUT`, `INVALID_CONFIG { field, reason }`, `VE
 
 ## Questions (`ask`, §8, §21)
 
+- **Porte de réponse** (C2, `onAnswer(kind, handler, { source, gate })`, `InteractionAnswerGate`, revue humaine requise) : rend les réponses
+  d'un `kind` EFFECTIVES et atomiques avec l'état de l'app (un billet n'est jamais `answered` quand l'app refuse la réponse). Ordre : contrôles du
+  module → `gate.check` (sans effet : un refus laisse le billet intact et ne dépense aucune preuve) → **réservation** du billet
+  (`dispatch_status = 'applying'` jusqu'à `now + timeoutMs + 30 s` ; une réponse concurrente attend 3 s puis `409 IN_PROGRESS` ; le balayage
+  d'expiration et `cancel` laissent une réservation vivante) → preuve `freshProof` consommée par le réservataire seul → `gate.apply` (l'effet,
+  borné par `timeoutMs`, 30 s par défaut, 120 s au plus ; un refus lève la réservation, billet ouvert, `409 ANSWER_REFUSED { reason: <code> }` —
+  une `InteractionError` passe telle quelle, jamais un message ; un dépassement garde la réservation jusqu'à son échéance) → `open → answered`
+  lié à la réservation, sans condition d'échéance (l'effet est fait). Un réservataire mort laisse un billet ouvert dont la réservation échoit
+  (reprise par la réponse suivante, le balayage ou `cancel`). `openTickets(source, { correlationId?, limit? })` → `[{ ticketId, correlationId,
+  applying, recipients }]` (500 au plus) : l'app réconcilie ses billets ouverts avec son état ; `revokeRecipient(source, correlationId, userId,
+  reason)` retire un destinataire (ligne, notices, cartes fermées, `ticket.closed` ; billet annulé quand plus personne) : le billet lui devient
+  inconnu (`NOT_FOUND`).
 - `onAnswer(kind, handler, { source })` : un gestionnaire par `kind` ; `source` lie le `kind` à UNE source : un `ask` de ce
   `kind` venu d'une autre source est refusé (`INVALID_QUESTION { field: 'source' }`), un billet stocké d'une autre source
   n'est jamais remis au gestionnaire (sa remise passe `failed` aussitôt). Le gestionnaire vérifie quand même `a.source` et
@@ -386,6 +398,10 @@ côté front). SQLite exige `better-sqlite3` (sinon ignoré) ; Postgres exige `I
   `PATCH` / `PUT` / `DELETE` du propriétaire, et un parcours où l'API Bot et le service de push échouent de toutes les
   façons sans qu'un jeton, un secret de webhook, un code de liaison ou un endpoint apparaisse dans un journal, une erreur,
   une ligne d'audit ou une ligne de base.
+- `testing/interactionGate.testkit.ts` (`gate.sqlite.spec.ts`, et `conformance.postgres.spec.ts`) : portes de réponse (effet puis billet,
+  refus de `check` / `apply` qui laissent le billet ouvert, preuve non dépensée avant tout effet, réponses concurrentes, `IN_PROGRESS`, réservation
+  vivante respectée par `cancel` et le balayage même après l'échéance, dépassement, crash puis reprise, `openTickets`, `revokeRecipient`).
+  `controllers/interactionControllers.principal.spec.ts` : chaque route d'écriture classée (gardes des contrôleurs).
 - `testing/interactionReview.testkit.ts` (`review.sqlite.spec.ts`, et `conformance.postgres.spec.ts` pour Postgres) : les
   constats F1-F9 de la revue indépendante, chaque exploit retourné en test de non-régression (jeton d'API refusé,
   interrupteurs qui arrêtent les réponses et les gestionnaires Telegram en mode `operator`, `kind` lié à sa source,

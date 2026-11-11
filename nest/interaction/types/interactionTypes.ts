@@ -153,9 +153,56 @@ export interface InteractionAnswer {
 
 export type InteractionAnswerHandler = (answer: InteractionAnswer) => Promise<void>;
 
-/** `onAnswer` options (review F3): `source` binds the kind to the questions of ONE source (`ask` of another is refused). */
+/** An answer about to be decided, as an answer gate sees it (never the question's text). */
+export interface PendingAnswer {
+  ticketId: string;
+  kind: string;
+  source: string;
+  correlationId: string;
+  actionId: string;
+  via: ChannelKind;
+  answeredBy: number;
+}
+
+/**
+ * C2 (AgentHub): makes the answers of one question kind EFFECTFUL and atomic with the app's own state, so that a ticket is
+ * never `answered` when the app refused the answer. Order (human review required):
+ * 1. the module's own checks (recipient, active, channel, action, open and not expired);
+ * 2. `check` — no effect: a refusal leaves the ticket untouched and spends nothing (a step-up proof included);
+ * 3. the ticket is CLAIMED (conditional UPDATE, `dispatch_status = 'applying'` until `now + timeout + 30 s`); a concurrent
+ *    answer waits a few seconds, then gets `IN_PROGRESS`; the expiry sweep and `cancel` leave a live claim alone;
+ * 4. a `freshProof` question: the proof is consumed by the claimant only (invalid: claim released, `STEP_UP_REQUIRED`);
+ * 5. `apply` — the effect, bounded by `timeoutMs`; a throw releases the claim (ticket open again, the error reaches the
+ *    answerer: an `InteractionError` as is, anything else `ANSWER_REFUSED { reason: <its code> }`); a timeout KEEPS the
+ *    claim until it lapses (the effect may still land) and answers `ANSWER_REFUSED { reason: 'TIMEOUT' }`;
+ * 6. success: the conditional UPDATE `open → answered` bound to this claim, judged without `expires_at` (the effect is
+ *    done). The outcome then reaches the handler as usual.
+ * A claimant that dies between 3 and 6 leaves an OPEN ticket whose claim lapses (the next answer, the sweep or a
+ * cancellation take over); the app reconciles its open tickets with its state through `openTickets(source)`.
+ */
+export interface InteractionAnswerGate {
+  check?(answer: PendingAnswer): Promise<void>;
+  apply(answer: PendingAnswer): Promise<void>;
+  /** Bound of `apply`, 1 s to 120 s (default 30 s); the claim lasts it plus 30 s. */
+  timeoutMs?: number;
+}
+
+/**
+ * `onAnswer` options. `source` binds the kind to the questions of ONE source (review F3: an `ask` of another is refused);
+ * `gate` makes its answers effectful (above).
+ */
 export interface InteractionAnswerOptions {
   source?: string;
+  gate?: InteractionAnswerGate;
+}
+
+/** An open ticket of a source (`openTickets`): its question's correlation and whether an answer is being applied now. */
+export interface OpenTicketRef {
+  ticketId: string;
+  correlationId: string;
+  applying: boolean;
+  /** Its recipients now (`revokeRecipient` withdraws one). */
+  recipients: number[];
 }
 
 /** What apps (and the `McpInteractionPort` adapter) see: `UserInteractionService` implements it. */
@@ -168,5 +215,7 @@ export interface UserInteractionApi {
   getTicket(ticketId: string): Promise<InteractionTicket | null>;
   onAnswer(kind: string, handler: InteractionAnswerHandler, options?: InteractionAnswerOptions): () => void;
   reachableKinds(userId: number, category: InteractionCategory): Promise<ChannelKind[]>;
+  openTickets(source: string, options?: { correlationId?: string; limit?: number }): Promise<OpenTicketRef[]>;
+  revokeRecipient(source: string, correlationId: string, userId: number, reason: string): Promise<boolean>;
   forgetUser(userId: number): Promise<void>;
 }

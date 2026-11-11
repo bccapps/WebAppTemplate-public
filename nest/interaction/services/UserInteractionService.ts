@@ -23,6 +23,7 @@ import type {
   InteractionCategory,
   InteractionQuestion,
   InteractionTicket,
+  OpenTicketRef,
   UserInteractionApi,
   UserNotice,
 } from '../types/interactionTypes';
@@ -131,9 +132,29 @@ export class UserInteractionService implements UserInteractionApi, OnModuleInit,
     return (await this.tickets.getTicket(answered.id)) as InteractionTicket;
   }
 
-  /** One handler per kind; bind it to its source (`{ source }`), and check `answer.source` / `answer.ticketId` in it. */
+  /**
+   * One handler per kind; bind it to its source (`{ source }`), and check `answer.source` / `answer.ticketId` in it. A
+   * `gate` makes the answers effectful and atomic with the app's state (`InteractionAnswerGate`, C2).
+   */
   onAnswer(kind: string, handler: InteractionAnswerHandler, options?: InteractionAnswerOptions): () => void {
     return this.tickets.onAnswer(kind, handler, options);
+  }
+
+  /**
+   * The open tickets of a source (or its one ticket of `options.correlationId`), oldest first (500 at most): an app reconciles
+   * them with its own state (C2: a question it no longer asks is cancelled). `applying`: a gate is applying an answer now
+   * (leave it; `cancel` skips it anyway).
+   */
+  openTickets(source: string, options?: { correlationId?: string; limit?: number }): Promise<OpenTicketRef[]> {
+    return this.tickets.openTickets(source, options);
+  }
+
+  /**
+   * One recipient may no longer see a question (C2: the app judges they lost the access): withdrawn from it (notices, cards, `NOT_FOUND`
+   * from then on); the ticket is cancelled when nobody is left. False when they were no recipient of an open ticket.
+   */
+  revokeRecipient(source: string, correlationId: string, userId: number, reason: string): Promise<boolean> {
+    return this.tickets.revokeRecipient(source, correlationId, userId, reason);
   }
 
   /** `['inapp', …ready channels the routing of `category` keeps]` (the creation of an « ask » credential checks it). */

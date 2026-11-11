@@ -20,7 +20,18 @@ import { InteractionError } from '../errors/InteractionError';
 import { toTicketAdminDto, toTicketDto } from '../mappers/InteractionMapper';
 import { BODY_MAX, TITLE_MAX } from '../pure/text';
 import { answerableKinds, bringsFreshProof, normalizeRecipients, SOURCE_PATTERN, validateQuestion, type CleanNotice, type CleanQuestion } from '../pure/validation';
-import type { ChannelKind, DeliveryReport, InteractionAnswer, InteractionAnswerHandler, InteractionAnswerOptions, InteractionQuestion, InteractionTicket } from '../types/interactionTypes';
+import type {
+  ChannelKind,
+  DeliveryReport,
+  InteractionAnswer,
+  InteractionAnswerGate,
+  InteractionAnswerHandler,
+  InteractionAnswerOptions,
+  InteractionQuestion,
+  InteractionTicket,
+  OpenTicketRef,
+  PendingAnswer,
+} from '../types/interactionTypes';
 import { INTERACTION_AUDIT, INTERACTION_DIRECTORY, INTERACTION_REALTIME, INTERACTION_STEP_UP, stepUpPurposeOf } from '../types/ports';
 import type { InteractionAuditSink, InteractionDirectory, InteractionRealtimePort, InteractionStepUpPort } from '../types/ports';
 import type { RenderedAction } from '../types/providerTypes';
@@ -48,6 +59,17 @@ export const CLAIM_MS = 15_000;
 /** The step-up port must answer within this (strictly less than the claim's lease); later = an invalid proof. */
 const CONSUME_TIMEOUT_MS = 10_000;
 const CLAIM_POLL_MS = 25;
+/** An answer gate's claim (C2, `InteractionAnswerGate`): `apply` runs under it; the sweep and `cancel` leave it alone while live. */
+export const APPLY_CLAIM = 'applying';
+/** How much longer than `apply`'s bound a gate's claim lasts (a timed-out `apply` may still land: the claim outlives it). */
+export const APPLY_CLAIM_MARGIN_MS = 30_000;
+/** How long a concurrent answer waits for a gate's claim before `IN_PROGRESS`. */
+export const APPLY_WAIT_MS = 3_000;
+const GATE_TIMEOUT_DEFAULT_MS = 30_000;
+const GATE_TIMEOUT_MAX_MS = 120_000;
+const GATE_CHECK_TIMEOUT_MS = 10_000;
+const OPEN_TICKETS_MAX = 500;
+const GATE_TIMEOUT_REASON = 'TIMEOUT';
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -65,6 +87,39 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 interface ChannelGuard {
   userId: number;
   kind: string;
+}
+
+/** A held claim: its marker (`claimed` for a proof, `applying` for a gate) and its token (its end). */
+interface HeldClaim {
+  marker: string;
+  token: Date;
+}
+
+/** The marker of a gate's timeout (never shown: the answerer gets `ANSWER_REFUSED { reason: 'TIMEOUT' }`). */
+class GateTimeout extends Error {}
+
+function gateWithin<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new GateTimeout()), ms);
+    timer.unref?.();
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/** What a gate's refusal becomes for the answerer: an `InteractionError` as is, anything else a code only (never a message). */
+export function gateRefusal(error: unknown): InteractionError {
+  if (error instanceof InteractionError) return error;
+  if (error instanceof GateTimeout) return new InteractionError('ANSWER_REFUSED', { reason: GATE_TIMEOUT_REASON });
+  const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+  return new InteractionError('ANSWER_REFUSED', { reason: typeof code === 'string' && /^[A-Z][A-Z0-9_]{1,40}$/.test(code) ? code : 'ERROR' });
+}
+
+/** A gate's bound, 1 s to 120 s (default 30 s); throws at registration for anything else. */
+function gateTimeoutOf(gate: InteractionAnswerGate): number {
+  const ms = gate.timeoutMs ?? GATE_TIMEOUT_DEFAULT_MS;
+  if (!Number.isInteger(ms) || ms < 1 || ms > GATE_TIMEOUT_MAX_MS) throw new Error(`[interaction] an answer gate's timeoutMs must be an integer from 1 to ${GATE_TIMEOUT_MAX_MS}`);
+  return ms;
 }
 
 /** An answer, whatever the channel (04 §8.2): who, through which channel, which action (by id or by button index). */
@@ -85,7 +140,7 @@ export interface AnswerInput {
 @Injectable()
 export class InteractionTicketService {
   private readonly logger = new Logger('InteractionTickets');
-  private readonly handlers = new Map<string, { handler: InteractionAnswerHandler; source: string | null }>();
+  private readonly handlers = new Map<string, { handler: InteractionAnswerHandler; source: string | null; gate: InteractionAnswerGate | null }>();
 
   constructor(
     @InjectRepository(InteractionTicketEntity) private readonly tickets: Repository<InteractionTicketEntity>,
@@ -114,7 +169,12 @@ export class InteractionTicketService {
     if (this.handlers.has(kind)) throw new Error(`[interaction] a handler is already registered for "${kind}"`);
     const source = options.source ?? null;
     if (source !== null && (typeof source !== 'string' || !SOURCE_PATTERN.test(source))) throw new Error(`[interaction] invalid source "${String(source)}" bound to "${kind}"`);
-    const entry = { handler, source };
+    const gate = options.gate ?? null;
+    if (gate !== null) {
+      if (typeof gate.apply !== 'function' || (gate.check !== undefined && typeof gate.check !== 'function')) throw new Error(`[interaction] the answer gate of "${kind}" needs apply() (and check() when given)`);
+      gateTimeoutOf(gate);
+    }
+    const entry = { handler, source, gate };
     this.handlers.set(kind, entry);
     return () => {
       if (this.handlers.get(kind) === entry) this.handlers.delete(kind);
@@ -281,7 +341,12 @@ export class InteractionTicketService {
     // A channel other than `inapp` is checked AGAIN inside the deciding UPDATE (second review, finding 2): a switch
     // flipped during the claim wait or the step-up call (up to 2 × CLAIM_MS) still blocks the answer.
     const guard = input.via !== INAPP_KIND ? { userId: input.userId, kind: input.via } : null;
-    const won = ticket.freshProof ? await this.answerWithProof(ticket, input, fields, guard) : await this.decideNow(ticket.id, fields, guard);
+    const gate = this.gateOf(ticket);
+    const won = gate
+      ? await this.answerThroughGate(ticket, input, fields, gate)
+      : ticket.freshProof
+        ? await this.answerWithProof(ticket, input, fields, guard)
+        : await this.decideNow(ticket.id, fields, guard);
     const fresh = (await this.tickets.findOne({ where: { id: ticket.id } })) as InteractionTicketEntity;
     if (!won) {
       if (guard && fresh.status === 'open' && fresh.expiresAt.getTime() > Date.now()) await this.assertChannelOn(guard.userId, guard.kind);
@@ -307,9 +372,98 @@ export class InteractionTicketService {
    * The conditional UPDATE `open → answered` judged at the instant it runs (review F4: no clock read before a slow step),
    * and, for a channel other than `inapp`, only while that channel's row is still on and not disabled by an administrator.
    */
-  private decideNow(id: string, fields: Partial<InteractionTicketEntity>, guard: ChannelGuard | null, claim?: Date): Promise<boolean> {
+  private decideNow(id: string, fields: Partial<InteractionTicketEntity>, guard: ChannelGuard | null, claim?: HeldClaim): Promise<boolean> {
     const at = new Date();
     return this.transition(id, 'answered', at, { ...fields, answeredAt: at }, claim, guard);
+  }
+
+  /** The gate of a ticket's kind, only when its handler is bound to the ticket's source (or to none). */
+  private gateOf(ticket: InteractionTicketEntity): InteractionAnswerGate | null {
+    const entry = this.handlers.get(ticket.kind);
+    if (!entry?.gate || (entry.source !== null && entry.source !== ticket.source)) return null;
+    return entry.gate;
+  }
+
+  /**
+   * An answer through the kind's gate (C2, `InteractionAnswerGate`; human review required): `check` (no effect) → claim
+   * (`applying`) → the step-up proof consumed by the claimant → `apply` (the effect) → `open → answered` bound to the claim.
+   * A refusal before `apply` leaves the ticket untouched and the proof unspent; a refusal OF `apply` releases the claim
+   * (the ticket is open again); a timed-out `apply` keeps the claim until it lapses (the effect may still land).
+   */
+  private async answerThroughGate(ticket: InteractionTicketEntity, input: AnswerInput, fields: Partial<InteractionTicketEntity>, gate: InteractionAnswerGate): Promise<boolean> {
+    const pending: PendingAnswer = { ticketId: ticket.id, kind: ticket.kind, source: ticket.source, correlationId: ticket.correlationId, actionId: String(fields.answerAction), via: input.via, answeredBy: input.userId };
+    if (gate.check) await gateWithin(gate.check(pending), GATE_CHECK_TIMEOUT_MS).catch((error: unknown) => Promise.reject(gateRefusal(error)));
+    const proof = ticket.freshProof ? await this.proofCarried(ticket, input) : null;
+    const timeout = gateTimeoutOf(gate);
+    const token = await this.claimForAnswer(ticket.id, APPLY_CLAIM, timeout + APPLY_CLAIM_MARGIN_MS, APPLY_WAIT_MS);
+    if (token === 'busy') throw new InteractionError('IN_PROGRESS');
+    if (token === null) return false;
+    const claim: HeldClaim = { marker: APPLY_CLAIM, token };
+    if (proof) await this.consumeUnderClaim(ticket.id, input, proof, claim);
+    try {
+      await gateWithin(gate.apply(pending), timeout);
+    } catch (error) {
+      if (!(error instanceof GateTimeout)) await this.releaseClaim(ticket.id, claim);
+      throw gateRefusal(error);
+    }
+    const at = new Date();
+    const won = await this.transition(ticket.id, 'answered', at, { ...fields, answeredAt: at }, claim, null, true);
+    if (!won) this.logger.error(`ticket ${ticket.id}: the answer was applied but its claim was lost (the app reconciles it)`);
+    return won;
+  }
+
+  /** `freshProof`: the channel brings proofs and the answer carries one (else `CHANNEL_NOT_ALLOWED` / `STEP_UP_REQUIRED`, nothing spent). */
+  private async proofCarried(ticket: InteractionTicketEntity, input: AnswerInput): Promise<{ stepUp: InteractionStepUpPort; purpose: string; proof: string }> {
+    const purpose = stepUpPurposeOf(ticket.id);
+    if (!bringsFreshProof(this.registry.proofOf(input.via))) throw new InteractionError('CHANNEL_NOT_ALLOWED', { required: (ticket.answerableFrom ?? [INAPP_KIND]).filter((kind) => bringsFreshProof(this.registry.proofOf(kind))) });
+    const stepUp = this.stepUp;
+    if (!stepUp) throw new InteractionError('STEP_UP_REQUIRED', { methods: [] });
+    if (!input.stepUpProof) throw new InteractionError('STEP_UP_REQUIRED', { methods: await stepUp.methods(input.userId).catch(() => []), purpose });
+    return { stepUp, purpose, proof: input.stepUpProof };
+  }
+
+  /** The claimant consumes its proof (bounded); invalid: the claim goes, the ticket stays open, `STEP_UP_REQUIRED`. */
+  private async consumeUnderClaim(ticketId: string, input: AnswerInput, carried: { stepUp: InteractionStepUpPort; purpose: string; proof: string }, claim: HeldClaim): Promise<void> {
+    const ok = await withTimeout(carried.stepUp.consume(carried.proof, carried.purpose, input.userId), CONSUME_TIMEOUT_MS).catch(() => false);
+    if (ok === true) return;
+    await this.releaseClaim(ticketId, claim);
+    throw new InteractionError('STEP_UP_REQUIRED', { methods: await carried.stepUp.methods(input.userId).catch(() => []), purpose: carried.purpose });
+  }
+
+  /**
+   * The open tickets of a source (C2), or its one ticket of `correlationId`: an app reconciles them with its own state (a
+   * question it no longer asks is cancelled). `applying`: an answer is being applied now (leave it). Oldest first, 500 at most.
+   */
+  async openTickets(source: string, options: { correlationId?: string; limit?: number } = {}): Promise<OpenTicketRef[]> {
+    if (typeof source !== 'string' || !SOURCE_PATTERN.test(source)) return [];
+    const limit = Math.min(Math.max(1, Math.floor(options.limit ?? OPEN_TICKETS_MAX)), OPEN_TICKETS_MAX);
+    const where = { source, status: 'open', ...(typeof options.correlationId === 'string' ? { correlationId: options.correlationId } : {}) };
+    const rows = await this.tickets.find({ where, order: { createdAt: 'ASC' }, take: limit });
+    const recipients = rows.length > 0 ? await this.recipients.find({ where: { ticketId: In(rows.map((row) => row.id)) } }) : [];
+    const now = Date.now();
+    return rows.map((row) => ({
+      ticketId: row.id,
+      correlationId: row.correlationId,
+      applying: row.dispatchStatus === APPLY_CLAIM && (row.dispatchNextAt?.getTime() ?? 0) > now,
+      recipients: recipients.filter((recipient) => recipient.ticketId === row.id).map((recipient) => recipient.userId),
+    }));
+  }
+
+  /**
+   * One recipient may no longer see a question (C2: the app judges they lost the access): their recipient row, their notices of it and their
+   * open cards go (a card of the app's own channel is redrawn by the app), `ticket.closed` reaches them; with nobody left, the ticket is
+   * cancelled. From then on the ticket is unknown to them (`NOT_FOUND`, like any other). False when they were no recipient of an open ticket.
+   */
+  async revokeRecipient(source: string, correlationId: string, userId: number, reason: string): Promise<boolean> {
+    const ticket = await this.tickets.findOne({ where: { source, correlationId } });
+    if (!ticket || ticket.status !== 'open') return false;
+    const removed = await this.recipients.delete({ ticketId: ticket.id, userId });
+    if ((removed.affected ?? 0) === 0) return false;
+    await this.inbox.forgetTicketFor(userId, ticket.id);
+    await this.cards.closeFor(ticket.id, userId);
+    this.realtime.publish(userId, { type: 'ticket.closed', id: ticket.id, data: { status: 'cancelled' } });
+    if ((await this.recipients.count({ where: { ticketId: ticket.id } })) === 0) await this.cancelById(ticket.id, reason);
+    return true;
   }
 
   /** The audit line of an answer or of a refused one (review F9): ids and codes, never the question's text. */
@@ -344,18 +498,11 @@ export class InteractionTicketService {
    * across the port call can starve the pool the port itself needs.
    */
   private async answerWithProof(ticket: InteractionTicketEntity, input: AnswerInput, fields: Partial<InteractionTicketEntity>, guard: ChannelGuard | null): Promise<boolean> {
-    const purpose = stepUpPurposeOf(ticket.id);
-    if (!bringsFreshProof(this.registry.proofOf(input.via))) throw new InteractionError('CHANNEL_NOT_ALLOWED', { required: (ticket.answerableFrom ?? [INAPP_KIND]).filter((kind) => bringsFreshProof(this.registry.proofOf(kind))) });
-    const stepUp = this.stepUp;
-    if (!stepUp) throw new InteractionError('STEP_UP_REQUIRED', { methods: [] });
-    if (!input.stepUpProof) throw new InteractionError('STEP_UP_REQUIRED', { methods: await stepUp.methods(input.userId).catch(() => []), purpose });
-    const claim = await this.claimForProof(ticket.id);
-    if (claim === null) return false;
-    const ok = await withTimeout(stepUp.consume(input.stepUpProof, purpose, input.userId), CONSUME_TIMEOUT_MS).catch(() => false);
-    if (ok !== true) {
-      await this.releaseClaim(ticket.id, claim);
-      throw new InteractionError('STEP_UP_REQUIRED', { methods: await stepUp.methods(input.userId).catch(() => []), purpose });
-    }
+    const carried = await this.proofCarried(ticket, input);
+    const token = await this.claimForAnswer(ticket.id, PROOF_CLAIM, CLAIM_MS, 2 * CLAIM_MS);
+    if (token === null || token === 'busy') return false;
+    const claim: HeldClaim = { marker: PROOF_CLAIM, token };
+    await this.consumeUnderClaim(ticket.id, input, carried, claim);
     // Judged now, after the port answered: a check that outlasted `expires_at` is EXPIRED (review F4); a channel switched
     // off meanwhile refuses it (second review, finding 2), and the claim is released at once.
     const won = await this.decideNow(ticket.id, fields, guard, claim);
@@ -364,61 +511,70 @@ export class InteractionTicketService {
   }
 
   /**
-   * Step 2 of `answerWithProof`: the claim's token (its end), or null once the ticket is closed or past `expires_at`
-   * (judged at each attempt: a wait that outlasts the expiry ends there). While another answer holds a live claim,
-   * waits for it; a lapsed claim is taken over.
+   * Claims an open ticket not past `expires_at` (judged at each attempt: a wait that outlasts the expiry ends there):
+   * `dispatch_status = marker` until `now + durationMs`, that instant being the claim's token. A lapsed claim of either kind
+   * (`claimed`, `applying`) is taken over; while another answer holds a live one, waits up to `waitMs`, then `busy`. `null`
+   * once the ticket is closed or expired.
    */
-  private async claimForProof(ticketId: string): Promise<Date | null> {
-    const deadline = Date.now() + 2 * CLAIM_MS;
-    while (Date.now() < deadline) {
+  private async claimForAnswer(ticketId: string, marker: string, durationMs: number, waitMs: number): Promise<Date | 'busy' | null> {
+    const deadline = Date.now() + waitMs;
+    for (;;) {
       const at = new Date();
-      const until = new Date(at.getTime() + CLAIM_MS);
+      const until = new Date(at.getTime() + durationMs);
       const result = await this.tickets
         .createQueryBuilder()
         .update(InteractionTicketEntity)
-        .set({ dispatchStatus: PROOF_CLAIM, dispatchNextAt: until })
+        .set({ dispatchStatus: marker, dispatchNextAt: until })
         .where('id = :id', { id: ticketId })
         .andWhere('status = :open', { open: 'open' })
         .andWhere('expires_at > :at', { at })
-        .andWhere(new Brackets((free) => free.where('dispatch_status = :none', { none: 'none' }).orWhere(new Brackets((lapsed) => lapsed.where('dispatch_status = :claimed', { claimed: PROOF_CLAIM }).andWhere('dispatch_next_at <= :at', { at })))))
+        .andWhere(
+          new Brackets((free) =>
+            free.where('dispatch_status = :none', { none: 'none' }).orWhere(new Brackets((lapsed) => lapsed.where('dispatch_status IN (:...claims)', { claims: [PROOF_CLAIM, APPLY_CLAIM] }).andWhere('dispatch_next_at <= :at', { at }))),
+          ),
+        )
         .execute();
       if ((result.affected ?? 0) > 0) return until;
       const row = await this.tickets.findOne({ where: { id: ticketId } });
       if (!row || row.status !== 'open' || row.expiresAt.getTime() <= Date.now()) return null;
-      if (row.dispatchStatus !== 'none' && row.dispatchStatus !== PROOF_CLAIM) return null;
+      if (row.dispatchStatus !== 'none' && row.dispatchStatus !== PROOF_CLAIM && row.dispatchStatus !== APPLY_CLAIM) return null;
+      if (Date.now() >= deadline) return 'busy';
       await delay(CLAIM_POLL_MS);
     }
-    return null;
   }
 
-  /** An invalid proof: the claim goes, the ticket stays open (only this claim: a lapsed one taken over is not touched). */
-  private async releaseClaim(ticketId: string, claim: Date): Promise<void> {
+  /** A refused answer: the claim goes, the ticket stays open (only this claim: a lapsed one taken over is not touched). */
+  private async releaseClaim(ticketId: string, claim: HeldClaim): Promise<void> {
     await this.tickets
       .createQueryBuilder()
       .update(InteractionTicketEntity)
       .set({ dispatchStatus: 'none', dispatchNextAt: null })
       .where('id = :id', { id: ticketId })
       .andWhere('status = :open', { open: 'open' })
-      .andWhere('dispatch_status = :claimed', { claimed: PROOF_CLAIM })
-      .andWhere('dispatch_next_at = :claim', { claim })
+      .andWhere('dispatch_status = :marker', { marker: claim.marker })
+      .andWhere('dispatch_next_at = :claim', { claim: claim.token })
       .execute();
   }
 
   /**
    * The only way out of `open`. `answered` requires `expires_at > now` (and, for a `freshProof` answer, still holding its
-   * claim), `expired` requires `expires_at <= now`; the hand-over is scheduled in the same statement
-   * (`dispatch_status = 'pending'`, leased to this process). The sweep and a cancellation close a claimed ticket too.
+   * claim; a gated answer: holding its claim, judged without `expires_at`, `effectApplied`), `expired` requires
+   * `expires_at <= now`; the hand-over is scheduled in the same statement (`dispatch_status = 'pending'`, leased to this
+   * process). The sweep and a cancellation close a proof-claimed ticket too, never one whose gate is applying an answer
+   * now (a live `applying` claim: they take it once it lapses).
    */
-  private async transition(id: string, status: 'answered' | 'expired' | 'cancelled', now: Date, fields: Partial<InteractionTicketEntity>, claim?: Date, guard?: ChannelGuard | null): Promise<boolean> {
+  private async transition(id: string, status: 'answered' | 'expired' | 'cancelled', now: Date, fields: Partial<InteractionTicketEntity>, claim?: HeldClaim, guard?: ChannelGuard | null, effectApplied = false): Promise<boolean> {
     const query = this.tickets
       .createQueryBuilder()
       .update(InteractionTicketEntity)
       .set({ ...fields, status, dispatchStatus: 'pending', dispatchNextAt: new Date(now.getTime() + DISPATCH_LEASE_MS) })
       .where('id = :id', { id })
       .andWhere('status = :open', { open: 'open' });
-    if (status === 'answered') query.andWhere('expires_at > :now', { now });
+    if (status === 'answered' && !effectApplied) query.andWhere('expires_at > :now', { now });
     if (status === 'expired') query.andWhere('expires_at <= :now', { now });
-    if (claim) query.andWhere('dispatch_status = :claimed', { claimed: PROOF_CLAIM }).andWhere('dispatch_next_at = :claim', { claim });
+    // Never over a gate applying an answer now, except by that very claim (it lapses: then anyone takes the ticket).
+    if (claim?.marker !== APPLY_CLAIM) query.andWhere(new Brackets((idle) => idle.where('dispatch_status <> :applying', { applying: APPLY_CLAIM }).orWhere('dispatch_next_at <= :now', { now })));
+    if (claim) query.andWhere('dispatch_status = :claimed', { claimed: claim.marker }).andWhere('dispatch_next_at = :claim', { claim: claim.token });
     if (guard) {
       // Same statement: the answer is written only if the channel is on at that instant (a portable EXISTS subquery).
       const channelOn = this.channels.createQueryBuilder('guard').select('1').where('guard.userId = :guardUser').andWhere('guard.kind = :guardKind').andWhere('guard.enabled = :guardOn').andWhere('guard.adminDisabled = :guardOff').getQuery();

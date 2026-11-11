@@ -61,6 +61,12 @@ export class InteractionTicketCardStore {
     if (ticketIds.length > 0) await this.cards.delete({ ticketId: In(ticketIds) });
   }
 
+  /** The open cards of one recipient of a ticket are closed (their buttons stop answering); true when one was. */
+  async closeFor(ticketId: string, userId: number): Promise<boolean> {
+    const result = await this.cards.update({ ticketId, userId, state: 'open' }, { state: 'closed' });
+    return (result.affected ?? 0) > 0;
+  }
+
   async forgetUser(userId: number): Promise<void> {
     await this.cards.update({ userId, state: 'open' }, { state: 'closed' });
   }

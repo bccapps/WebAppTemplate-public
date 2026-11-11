@@ -17,6 +17,7 @@ import { randomBytes } from 'crypto';
 import { describeInteractionConcurrency } from './testing/interactionConcurrency.testkit';
 import { describeInteractionConformance } from './testing/interactionConformance.testkit';
 import { describeInteractionHardening } from './testing/interactionHardening.testkit';
+import { describeInteractionGate } from './testing/interactionGate.testkit';
 import { describeInteractionReview } from './testing/interactionReview.testkit';
 
 const url = process.env.INTERACTION_TEST_PG_URL;
@@ -44,6 +45,8 @@ if (url) {
   describeInteractionHardening('Postgres', { database });
   // The findings of the independent review (F1-F9), each exploit turned into a regression test.
   describeInteractionReview('Postgres', { database });
+  // C2: answer gates (an answer applied by the app, atomic with the ticket).
+  describeInteractionGate('Postgres', { database });
   // Races a single SQLite connection hides: a pool of connections, every contender launched at once.
   describeInteractionConcurrency('Postgres', { database });
 } else {
