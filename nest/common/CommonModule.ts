@@ -164,6 +164,8 @@ import { ValidationTraceModule } from './validation/ValidationTraceModule';
     PrivateStorageService,
     AppExceptionFilter,
     ThrottleRegistry,
+    // A module, not a provider: imported above (`register()`) and re-exported so importers of CommonModule get
+    // ValidationTraceService.
     ValidationTraceModule,
   ],
 })

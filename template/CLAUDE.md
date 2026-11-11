@@ -131,8 +131,8 @@ Feature access control (`hasFeature`, `@RequireFeature`, tiers) only exists with
 
 ### 8b. Validation by observation (dev/preprod)
 
-- **Principle (MANDATORY)**: the user does not test by hand; the logs are the test. A sensitive feature (auth, money, execution, rights, personal data) emits `vtrace(check, outcome, fields)` (back `common/validation`, front `validationTrace`) at its decision and control points, active with `APP_ENV` dev/preprod only; never a secret, a token or unmasked personal data in `fields` (simple values, sanitized anyway).
-- **Registry (MANDATORY)**: the module's `validation/checks.json` (scenario, expected traces, `mustNotHappen`, severity) is updated in the SAME change as the feature (gate: `--check-registry`).
+- **Principle (MANDATORY)**: the user does not test by hand; the logs are the test. A sensitive feature (auth, money, execution, rights, personal data) emits `vtrace(check, outcome, fields)` (back `common/validation`, front `validationTrace`) at its decision and control points, active in dev (preprod: `VALIDATION_TRACE=on`), never in production; never a secret, a token or unmasked personal data in `fields` (the sanitizer is a safety net, not a licence). A critical/high check is proven by back traces.
+- **Registry (MANDATORY)**: the module's `validation/checks.json` (scenario, expected traces, `mustNotHappen`, severity, the allowed `fields`) is updated in the SAME change as the feature (gate: `--check-registry`).
 - **Analysis**: at the start of a session and when asked, run `node scripts/validation-report.mjs` (dev, `back/logs`; `--follow-up`: only what changed); preprod: `node scripts/validation-report.mjs --preprod` (fetches the logs over read-only SSH). Report the VIOLATIONs (critical/high first), the NOT_YET_OBSERVED checks and any secret leak, and propose a fix. Detail: `nest/common/README.md`, « Validation par observation ».
 
 ## 9. Repo Map
