@@ -22,6 +22,7 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 | Plugins | `plugins/` : `NestModulePlugin` (`module` ou fabrique, `modules`, `order`), `resolvePluginModules`. Voir « Plugins » plus bas. |
 | Flux d'événements | `EventStreamService` + `EventStreamController` (`event-stream/`) : poussée serveur → navigateur en SSE (`GET /api/v1/events/stream`). Voir « Flux d'événements serveur » plus bas. |
 | Stockage d'images | `ImageStorageService` écrit sur disque local (défaut) ou sur un bucket Cloudflare R2, configurable depuis l'admin via `storageConfigSchema`. Voir « Stockage R2 » plus bas.
+| Validation par observation | `validation/` : `vtrace()` / `ValidationTraceService` (traces JSONL en dev/preprod, inertes en production), relais des traces du front, registre `checks.json` par module. Voir « Validation par observation » plus bas. |
 
 ## Intégrations clés
 - `TypeOrmModule.forFeature([ConfigurationEntity])` doit rester importé pour fournir les repositories utilisés par les services.
@@ -188,6 +189,14 @@ Widget de don non-custodial : affiche une adresse/QR/lien à payer, ne confirme 
 | `GET` | `/api/v1/donations/config` | Public | Configuration publique (méthodes activées, adresses, chaînes/actifs activés, montants prédéfinis) — ne renvoie jamais la clé secrète Stripe, seulement si elle est définie. |
 | `GET` | `/api/v1/donations/quote` | Public | `{ chain, asset, amountUsd }` → `{ amount, uri, chainId? }` : montant dans l'unité native + URI prête pour un wallet (BIP21 Bitcoin, EIP-681 EVM natif/ERC-20, Solana Pay). Refuse une combinaison chaîne/actif non activée par l'admin. |
 | `POST` | `/api/v1/donations/stripe/checkout-session` | Public | `{ amountUsd, successUrl, cancelUrl }` → `{ url }` : crée une session Stripe Checkout (carte/Apple Pay/Google Pay) et renvoie son URL de redirection. `amountUsd` entre 0,5 et 999 999. `successUrl`/`cancelUrl` (≤ 2048) : URL absolue d'une origine de `CLIENT_ORIGINS` ou chemin `/…` résolu sur la première, sinon 400 (`resolveFrontRedirectUrl`, `bootstrap/clientOrigins.ts` : pas de redirection ouverte depuis la page Checkout de l'opérateur ; `//hôte`, `javascript:`, identifiants dans l'URL refusés ; `*` ne correspond à rien). Budget `DONATION_CHECKOUT_THROTTLE` (10 / 10 min par IP). |
+
+### Validation par observation (`ValidationTraceController`, dev/preprod uniquement)
+Contrôleur enregistré **seulement** quand les traces sont actives (`APP_ENV` = `dev` ou `preprod`) : en production la route n'existe pas (404), et les gestionnaires répondent encore 404 si les traces sont coupées à l'exécution. Détail : « Validation par observation » plus bas.
+
+| Méthode | Endpoint | Auth | Description |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/validation/trace` | Principal authentifié (sans jeton en mode `anonymous`), jeton d'API refusé (`RejectApiTokenInterceptor`) | Une trace du front (`ValidationTraceDto { check, outcome, fields? }`) : `check` doit être un nom de trace d'un check `"sources": ["front"]` d'un `validation/checks.json` (sinon 400) ; `fields` objet de ≤ 24 clés et ≤ 2 Kio sérialisé (sinon 400), assaini comme une trace back, écrit avec `source: "front"`. 204. Budget `VALIDATION_TRACE_THROTTLE` (120 / min). |
+| `POST` | `/api/v1/validation/trace/public` | Public | Même chose avant connexion, pour les seuls checks `"preLogin": true` (sinon 400). Budget `VALIDATION_TRACE_PUBLIC_THROTTLE` (30 / min par IP). |
 
 ## Configuration requise
 - Variables d'environnement Prowl : `PROWL_API_KEY`, `PROWL_API_URL` (optionnel), `PROWL_APPLICATION_NAME`.
@@ -1029,6 +1038,118 @@ distinguer « worker d'un déploiement scindé » de « processus unique », lir
    - job sans cadence persistée (exclusion seule) → `runExclusive(key, fn)` (bail renouvelé, aucune
      transaction tenue, quelle que soit la durée du job) ;
    - job à cadence (« au plus une fois par N ») → `runIfDue`.
+
+## Validation par observation (`validation/`)
+
+L'utilisateur ne valide pas chaque fonctionnalité à la main : chaque fonctionnalité sensible émet, à ses points de décision et de contrôle, une trace `vtrace(check, outcome, fields)` ; en **dev et en preprod uniquement**, ces traces sont écrites en JSONL ; chaque module décrit dans `validation/checks.json` ce que les traces doivent montrer ; `scripts/validation-report.mjs` confronte les journaux au registre (`OBSERVED_OK`, `VIOLATION`, `NOT_YET_OBSERVED`) et cherche les fuites de secrets. La règle de travail est dans le `CLAUDE.md` du gabarit (« Validation by observation ») ; ce chapitre est la seule référence technique.
+
+### Activation (fail-closed)
+| Variable | Défaut | Effet |
+| --- | --- | --- |
+| `APP_ENV` | — | `dev` ou `preprod` (casse et espaces ignorés) : actif. Toute autre valeur (`prod`, `desktop`, `staging`…) ou absence : **inactif**. |
+| `VALIDATION_TRACE` | _(vide)_ | vide ou `on` : suit `APP_ENV` ; `off` ou toute autre valeur : coupé. N'active jamais hors dev/preprod. Sous Jest (`NODE_ENV=test`) : inactif sauf `on`. |
+| `VALIDATION_TRACE_PER_MINUTE` | `20` (1–1000) | lignes détaillées par couple (`check`, `outcome`) et par minute |
+| `VALIDATION_TRACE_MAX_MB` | `20` (1–500) | plafond du fichier du jour |
+| `VALIDATION_TRACE_RETENTION_DAYS` | `7` (1–90) | jours de fichiers conservés |
+| `LOG_DIR` / `APP_DATA_DIR` | — | même dossier que `back-<jour>.log` (`fileLogger.ts` du gabarit) : `LOG_DIR`, sinon `<APP_DATA_DIR>/logs`, sinon `<cwd>/logs` (`back/logs` en dev) |
+
+L'état est lu une fois (premier appel, ou import de `CommonModule`) ; `configureValidationTrace({ env, now, sink, log })` le relit (tests). Inactif, `vtrace` coûte un test booléen : rien n'est évalué (passer `fields` sous forme de fonction quand les calculer coûte), rien n'est écrit, le contrôleur du front n'est pas enregistré.
+
+### API
+```ts
+// back, hors DI ou dans un service (module partagé : '../common/validation' ; app : 'src/modules_shared/common/validation')
+import { vtrace } from '../common/validation';
+vtrace('user.login.otp-required', 'ok', () => ({ method: 'email', attempts }));
+// injectable (exporté par CommonModule) : constructor(private readonly validation: ValidationTraceService) → this.validation.trace(check, outcome, fields?)
+```
+- `check` : nom de trace `^[a-z0-9]+([._-][a-z0-9]+)*$`, ≤ 100 caractères, préfixé par le module. Nom ou issue invalide : trace ignorée, un avertissement.
+- `outcome` : `ok` (le contrôle s'est comporté comme spécifié), `violation` (non-conformité observée : un bug), `info` (contexte).
+- `fields` (optionnel) : objet ou fonction paresseuse, types simples ; `requestId` / `corrId` éventuels sont remontés sur la ligne (assainis).
+- `ValidationTraceService.enabled` / `isValidationTraceEnabled()` ; `flushValidationTrace()` écrit les résumés en attente (appelé à l'arrêt).
+- **Ne lève jamais** : un échec (disque, champ piégé, fonction paresseuse qui lève) est journalisé une fois (`validation trace file disabled (<code>)`, `validation trace dropped (<raison>)`), la trace est perdue, l'appelant continue.
+
+Front (`react/common/utils/validationTrace.ts`) : `validationTrace(check, outcome, fields?, { preLogin? })` n'envoie que si `VITE_APP_ENV` vaut `dev` ou `preprod` (`production`, autre valeur ou absence : jamais, rien n'est évalué) ; retire déjà les champs au nom sensible et les valeurs non simples ; ne lève pas, n'attend rien, n'affiche rien. Le back n'accepte que les noms déclarés `"sources": ["front"]` ; `preLogin: true` passe par la route publique, réservée aux checks `"preLogin": true`.
+
+Où tracer : aux points de décision et de contrôle d'une fonctionnalité sensible (authentification, argent, exécution, droits, données personnelles, intégrations) — branche refusée, branche acceptée, invariant vérifié (« jamais de session sans OTP ») ; pas dans une boucle chaude sans raison.
+
+### Format (`validation-YYYY-MM-DD.jsonl`, jour UTC, fichier 0600)
+```json
+{"v":1,"ts":"2026-11-11T10:00:00.000Z","app":"myapp","env":"dev","check":"user.login.otp-required","outcome":"ok","source":"back","requestId":"req-1","fields":{"method":"email"}}
+```
+Résumé d'échantillonnage : `{"v":1,…,"check":…,"outcome":…,"kind":"summary","suppressed":37,"windowMs":60000}`. Plafond atteint : `{"check":"validation.trace.capped","outcome":"info",…}`. La même ligne part au Logger Nest (contexte `validation`, niveau `log`), donc aussi dans `back-<jour>.log`.
+
+### Assainissement (`traceSanitizer.ts`)
+Aucune valeur secrète ne sort, quoi que passe l'appelant :
+- **nom de champ sensible** — fragments `secret`, `token`, `password`, `passwd`, `pwd`, `passphrase`, `pphrase`, `key`, `auth`, `bearer`, `cookie`, `session`, `credential`, `proof`, `code`, `otp`, `signature`, `seed`, `mnemonic`, `salt`, `jwt`, `cipher`, `recovery`, suffixe `pin` (exceptions exactes : `statusCode`, `errorCode`, `httpCode`, `reasonCode`, `countryCode`, `currencyCode`, `languageCode`, `localeCode`) : `[redacted:<longueur>]` pour une chaîne, `[redacted]` sinon ; booléens et `null` passent (`hasToken: true`). Sur-masquage assumé : renommer un champ anodin (`tokenSymbol` → `asset`) plutôt que réduire la liste ;
+- **donnée personnelle** — `email`, `phone`, `iban`, `ssn`, `birth`, `firstname`, `lastname`, `fullname`, `username`, `street`, `postal`, `zipcode`, `ipaddress`, `clientip`, `ip` : empreinte `sha256:<8 hex>` (corrélation possible, valeur jamais) ;
+- **chaîne qui ressemble à un secret** — JWT, `Bearer …`, `Basic …`, bloc PEM, identifiants dans une URL, `password=…` / `token: …`, préfixes `tk_`, `ctd_`, `mst_`, `ac_live_`, `ac_test_`, `sup_`, `sk-`, `AKIA` et ceux de `utils/redactPath.ts`, hex ≥ 32, base64 ≥ 32 à classes mixtes, segment aléatoire ≥ 20 caractères (`isSecretSegment`, UUID compris), où qu'ils soient dans la chaîne : la chaîne entière devient `sha256:<8 hex>;len=<n>` ;
+- e-mails masqués dans le texte (`maskEmailAddresses` : `j***@example.fr`), caractères de contrôle remplacés (pas d'injection de ligne) ;
+- types simples seulement : objet imbriqué → `[object]` (jamais sérialisé), fonction → `[function]`, `Error` → `[error <nom>]` (jamais son message), `Date` → ISO, tableau ≤ 10 éléments ;
+- plafonds : ≤ 24 champs (`_droppedFields` compte le reste et les noms invalides), clé ≤ 48, chaîne ≤ 200, ligne ≤ 4 Kio (sinon `fields: { "_truncated": true }`) ;
+- jamais de corps de requête ni de réponse : seuls les champs choisis par l'appelant sont tracés ; le contrôleur ne journalise aucun corps.
+
+Preuves : `traceSanitizer.spec.ts`, `validationTrace.spec.ts`, `ValidationTraceController.spec.ts` (secrets factices construits à l'exécution par `secretFixtures.testkit.ts` : aucune fenêtre de 10 caractères d'un secret ne sort, ni dans le fichier, ni dans le Logger, ni par le relais du front). L'analyseur re-contrôle chaque ligne écrite ; ses détecteurs sont un sous-ensemble de ce que l'assainisseur retire (à garder alignés).
+
+### Volume et rétention
+- Échantillonnage par couple (`check`, `outcome`) : au plus `VALIDATION_TRACE_PER_MINUTE` lignes détaillées par fenêtre d'une minute, ensuite seulement comptées ; une ligne `kind: "summary"` (`suppressed: n`) en fin de fenêtre, au premier appel suivant ou à l'arrêt. Les champs paresseux d'une trace écartée ne sont pas évalués. Au-delà de 1 000 couples suivis : comptage sous `validation.trace.overflow`.
+- Plafond du fichier du jour (`VALIDATION_TRACE_MAX_MB`) : une ligne `validation.trace.capped`, puis plus rien ce jour-là.
+- Rétention : à la première écriture de chaque jour, les `validation-YYYY-MM-DD.jsonl` plus vieux que `VALIDATION_TRACE_RETENTION_DAYS` jours (date du nom) sont supprimés ; aucun autre fichier n'est touché.
+- Écriture synchrone en ajout (une écriture par ligne) : rien de perdu sur un crash ; `back` et `back-worker` peuvent partager le dossier (plafond alors approximatif).
+- `logs/` doit être ignoré par git (`.gitignore` créé par `create-project.mjs`) ; l'analyseur avertit sinon.
+
+### Registre : `<module>/validation/checks.json`
+Un fichier par module **back** (`nest/<m>/validation/` d'une librairie, `back/src/modules/<m>/validation/` d'une app), y compris pour les traces émises par le front ; mis à jour **dans le même changement** que la fonctionnalité. Schéma : `validation/checks.schema.json` (référençable par `"$schema"`).
+```json
+{
+  "checks": [
+    {
+      "id": "user.login.otp-required",
+      "module": "user",
+      "title": "La connexion exige l'OTP",
+      "description": "Une session n'est délivrée qu'après la vérification de l'OTP.",
+      "scenario": "Un utilisateur se connecte par e-mail et saisit le code reçu.",
+      "expect": { "traces": ["user.login.otp-required"], "outcome": "ok" },
+      "mustNotHappen": ["user.login.session-without-otp"],
+      "severity": "critical",
+      "since": "2026-11-11"
+    }
+  ]
+}
+```
+- `id` unique dans le projet ; `module` = dossier du fichier ; `expect.traces` : noms `vtrace` qui prouvent le comportement ; `expect.outcome` : `ok` ou `info` ; `mustNotHappen` : `<trace>` ou `<trace>:<outcome>`, une seule occurrence suffit à la violation ; `severity` : `critical` | `high` | `medium` | `low` ; `since` : date d'introduction.
+- `sources` (défaut `["back"]`) : `"front"` met les noms de trace du check sur la liste blanche du relais ; `preLogin: true` (exige `front`) les accepte aussi sur la route publique.
+- Statut : `VIOLATION` si une trace attendue a l'issue `violation` ou si un `mustNotHappen` apparaît ; sinon `OBSERVED_OK` si une trace attendue a l'issue `expect.outcome` ; sinon `NOT_YET_OBSERVED` (le cas ne s'est pas encore présenté).
+- Découverte : modules liés de `shared-modules.json` (`scripts/lib-roots.mjs`, comme les README) puis modules de l'app ; à l'exécution, le back lit `src/modules_shared/*/validation/checks.json` et `src/modules/*/validation/checks.json` (relus au plus toutes les 30 s).
+- Porte CI : `node scripts/validation-report.mjs --check-registry` (schéma, `module` = dossier, `id` unique, `preLogin` ⇒ `front`) ; dans vx-public, `template/scripts/validation-report.test.mjs` valide tous les `checks.json` du dépôt.
+
+### Analyse : `scripts/validation-report.mjs`
+| Commande | Effet |
+| --- | --- |
+| `node scripts/validation-report.mjs` | dev : `back/logs` du projet |
+| `… --preprod` | récupère les traces de preprod en SSH lecture seule (ci-dessous) dans `.validation-cache/preprod/`, puis analyse (`--env preprod`) ; `--no-fetch` : la dernière copie |
+| `… --logs <dossier\|archive.tar.gz>` | journaux fournis (archive : seuls les membres `validation-*.jsonl` au nom sûr sont extraits, dans un dossier temporaire) |
+| `… --since 24h` (`30m`, `7d`, `YYYY-MM-DD`), `--env dev\|preprod`, `--only <module>`, `--json` | filtres, sortie JSON |
+| `… --follow-up` | seulement les changements depuis la dernière exécution de la même source : statuts, nouvelles violations, nouvelles fuites, checks ajoutés ou retirés (état : `.validation-cache/report-state.json`) |
+| `… --check-registry` | valide le registre seulement |
+
+Par check : statut, comptes (`ok`, `info`, `violation`, `must-not-happen`, résumés d'échantillonnage inclus), première et dernière occurrence, 3 lignes d'exemple (repassées dans les détecteurs de fuite avant affichage) ; aussi les traces sans check (instrumentation non déclarée), les jours plafonnés, les lignes illisibles, un `logs/` non ignoré par git. Sortie : `0` ; `1` une `VIOLATION` d'un check `critical`/`high` ou une fuite `high` ; `2` usage ou registre invalide ; `3` récupération preprod en échec.
+
+**Contrôle permanent « fuite de secret dans les logs »** : chaque fichier du dossier de logs (tous les journaux, pas seulement les traces) est parcouru : JWT, `Bearer`, jetons préfixés, clé AWS, clé privée PEM, identifiants dans une URL, affectation `password=` / `api_key:`… (`high`), e-mails complets (`high` dans un fichier de traces, `medium` ailleurs), hex 64 et base64 long (`high` dans un fichier de traces, `low` ailleurs : formes courantes et légitimes d'un journal applicatif, seulement comptées par type). **La valeur n'est jamais affichée** : type, empreinte `sha256:<8 hex>`, longueur, `fichier:ligne`, regroupés par empreinte.
+
+### Preprod : `scripts/fetch-preprod-validation-logs.mjs`
+Copie en **lecture seule** les `validation-*.jsonl` des conteneurs `back` et `back-worker` du projet compose de `deploy-full.sh` (`<PROJECT_NAME>-back-<hôte>`), sur chaque hôte de `BACK_HOSTS`, par le canal du déploiement : mêmes variables de `back/.env.preprod` (`BACK_HOSTS` | `BACK_REMOTE_HOST` | `REMOTE_HOST`, `BACK_REMOTE_USER` | `REMOTE_USER`, `BACK_SSH_PORT` | `REMOTE_SSH_PORT`, `BACK_SSH_KEY_FILE` | `SSH_KEY_FILE`, `PROJECT_NAME`, `LOG_DIR` / `APP_DATA_DIR`), puis `docker` sur l'hôte avec cet utilisateur SSH.
+- Seules ces clés sont lues (fichier jamais exécuté, valeurs jamais affichées ni exportées) ; chaque valeur doit passer un motif strict, sinon refus (sortie 2) sans la citer.
+- Commandes distantes en liste blanche fixe (`REMOTE_COMMANDS`) : `docker ps` filtré par projet compose, `docker exec <conteneur> ls -1 -- <dossier>`, `docker exec <conteneur> tail -c <octets> -- <dossier>/validation-YYYY-MM-DD.jsonl` ; arguments vérifiés puis entre apostrophes ; aucun autre fichier (ni `.env`, ni `back-*.log`), aucune écriture distante, aucun `sudo`.
+- `ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10`, aucune redirection (`ForwardAgent=no`, `ClearAllForwardings=yes`…) ; hôte inconnu, clé refusée, hôte injoignable : message clair (sans nom d'hôte), arrêt immédiat, sortie 3.
+- Bornes : `--since` (7 j par défaut, ≤ 31 j), `--max-files` par conteneur (8, ≤ 31), `--max-mb` par fichier (20, ≤ 100 ; au-delà, la fin du fichier, première ligne coupée retirée), 300 Mio au total.
+- Destination : `.validation-cache/preprod/host<n>/<service>-<k>/` (dossiers 0700, fichiers 0600, `.validation-cache/.gitignore` = `*`), **remplacée** à chaque récupération (rétention locale courte). `--dry-run` montre les commandes avec des substituts.
+- **Persistance en preprod** : dans l'image, `/app` n'est pas inscriptible par l'utilisateur `node` : sans réglage, aucun fichier de journal n'est écrit (`/app/logs` impossible à créer). Mettre `LOG_DIR=/app/shared/logs` dans `back/.env.preprod` : avec `docker-compose.yml` (Postgres auto-hébergé), volume `shared_directory` commun à `back` et `back-worker`, conservé entre déploiements ; avec `docker-compose-cloud.yml`, dossier inscriptible mais sans volume : les traces repartent de zéro à chaque déploiement.
+- Traces du front en preprod : le back doit trouver les `checks.json` sous `/app/src/…` ; l'image ne copie aujourd'hui que les `locales` (`back/Dockerfile`) : sans cette copie, le relais refuse (400) les traces du front en preprod ; celles du back restent écrites.
+
+### Analyse périodique
+- En session : au début de chaque session et à la demande, `node scripts/validation-report.mjs` (ou `--follow-up` pour la seule nouveauté) ; rapporter les `VIOLATION` (critiques et hautes d'abord), les `NOT_YET_OBSERVED` et toute fuite, proposer un correctif.
+- Dans une session Claude Code ouverte : `/loop 30m lance node scripts/validation-report.mjs --follow-up et rapporte les changements` (rien de neuf : « no change »).
+- Une routine planifiée distante (`/schedule`) n'a ni les journaux locaux ni la clé SSH : la réserver à une machine qui a les deux (`--preprod --follow-up`), ou utiliser `cron` / `launchd` sur la machine de l'utilisateur avec `--json`.
 
 ## Hooks pour une IA
 - Pour ajouter un nouveau service transverse, l'exporter depuis `providers` et `exports` afin qu'il soit réutilisable par les autres modules.

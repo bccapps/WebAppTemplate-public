@@ -73,8 +73,11 @@ import { AppExceptionFilter } from './exceptions/AppExceptionFilter';
 import { ConfigurationMapper } from './mappers/ConfigurationMapper';
 import ConfigurationEntity from './entities/ConfigurationEntity';
 
+// Validation by observation (dev/preprod traces; inert in production)
+import { ValidationTraceModule } from './validation/ValidationTraceModule';
+
 @Module({
-  imports: [TypeOrmModule.forFeature([ConfigurationEntity, ThemeEntity, CookieConsentEntity])],
+  imports: [TypeOrmModule.forFeature([ConfigurationEntity, ThemeEntity, CookieConsentEntity]), ValidationTraceModule.register()],
   controllers: [ConfigurationController, LocaleController, CryptController, ModuleConfigController, EmailController, BugReportController, SystemInfoController, ThemeController, CookieConsentController, DonationController, HealthController, EventStreamController],
   providers: [
     ConfigurationService,
@@ -161,6 +164,7 @@ import ConfigurationEntity from './entities/ConfigurationEntity';
     PrivateStorageService,
     AppExceptionFilter,
     ThrottleRegistry,
+    ValidationTraceModule,
   ],
 })
 export class CommonModule {}
@@ -173,3 +177,5 @@ export { ModuleConfigService } from './services/ModuleConfigService';
 export * from './auth';
 export * from './plugins';
 export * from './event-stream';
+export { vtrace, ValidationTraceService } from './validation';
+export type { ValidationOutcome } from './validation';

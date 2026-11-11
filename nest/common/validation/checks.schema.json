@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Validation checks of a module (validation by observation, nest/common/README.md)",
+  "description": "<module>/validation/checks.json: the behaviours the dev/preprod traces must show. Read by template/scripts/validation-report.mjs (which validates every file against this schema) and, for the traces of the front, by ValidationCheckRegistry.",
+  "type": "object",
+  "required": ["checks"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "checks": { "type": "array", "items": { "$ref": "#/$defs/check" } }
+  },
+  "$defs": {
+    "traceName": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+      "maxLength": 100
+    },
+    "check": {
+      "type": "object",
+      "required": ["id", "module", "title", "description", "scenario", "expect", "severity", "since"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/traceName", "description": "Unique across the project, prefixed by the module: `user.login.otp-required`." },
+        "module": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "Id of the module owning the file." },
+        "title": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "description": { "type": "string", "minLength": 3, "maxLength": 1000, "description": "The rule being verified." },
+        "scenario": { "type": "string", "minLength": 3, "maxLength": 1000, "description": "How the case arises in real use (what a user or a job does)." },
+        "expect": {
+          "type": "object",
+          "required": ["traces", "outcome"],
+          "additionalProperties": false,
+          "properties": {
+            "traces": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/traceName" },
+              "description": "Trace names (`vtrace` check argument) evidencing the behaviour; any of them with `outcome` makes the check OBSERVED_OK, any of them with `violation` makes it VIOLATION."
+            },
+            "outcome": { "enum": ["ok", "info"] }
+          }
+        },
+        "mustNotHappen": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::(?:ok|violation|info))?$", "maxLength": 110 },
+          "description": "`<trace>` or `<trace>:<outcome>`: one occurrence makes the check VIOLATION."
+        },
+        "severity": { "enum": ["critical", "high", "medium", "low"] },
+        "since": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "Date the check was introduced (YYYY-MM-DD)." },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["back", "front"] },
+          "description": "Who emits its traces (default [\"back\"]). `front` allow-lists them on POST /api/v1/validation/trace."
+        },
+        "preLogin": { "type": "boolean", "description": "Front traces sent before sign-in (unauthenticated route); requires `front` in `sources`." }
+      }
+    }
+  }
+}
