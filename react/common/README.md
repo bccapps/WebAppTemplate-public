@@ -359,17 +359,18 @@ Module chargé par `HttpService` (donc avant toute requête), **inerte** sans co
   les appels axios directs des modules), `HttpService.streamGet`/`streamFetch`, et `localUiSessionHeaders(url)` pour un `fetch` écrit à la main.
   Jamais vers une autre origine (API distante, autre port de boucle locale) ; si l'API de l'app elle-même est sur une autre origine
   (`VITE_API_URL` absolu), le code n'est pas envoyé du tout et la session est perdue (un build de bureau a une base relative).
-- **Conservation** : en mémoire et dans `sessionStorage['vx.localUi.session']` (par origine donc par port, survit au rechargement de l'onglet ;
-  jamais `localStorage`, jamais de cookie ; `localStorage['vx.localUi.used']` = `1`, simple marqueur non secret). Réserve : un moteur Chromium
-  (WebView2 sous Windows, Chrome en développement) peut écrire `sessionStorage` dans le profil pour restaurer la session ; le jeton y vit au plus
-  jusqu'à sa rotation suivante (+ 60 s), lisible seulement par le même compte du système.
-- **Rotation** : renouvelé toutes les `renewAfterMs` données par le back (10 min, avec un peu d'aléa) et dès le retour au premier plan s'il est
-  en retard ; refus ⇒ session perdue. Les onglets de la même origine se la passent par `BroadcastChannel('vx-local-ui')` (un nouvel onglet la
-  demande au plus 400 ms, un onglet qui la renouvelle prévient les autres).
+- **Conservation** : en mémoire et dans `sessionStorage['vx.localUi.session']` (par origine et par onglet, donc par port, survit au rechargement
+  de l'onglet ; jamais `localStorage`, jamais de cookie). **Jamais transmis à un autre document** (pas de `BroadcastChannel`, pas de
+  `postMessage`) : toute page de la même origine pourrait le demander ou en imposer un. Une seule fenêtre (celle du bureau) ; un autre onglet
+  n'a pas de session. Réserve (étape E4) : un moteur Chromium (WebView2 sous Windows, Chrome en développement) peut écrire `sessionStorage`
+  dans le profil pour restaurer la session ; le jeton y vit au plus jusqu'à sa rotation suivante (+ 60 s), lisible seulement par le même compte.
+- **Rotation** : renouvelé toutes les `renewAfterMs` données par le back (10 min) et dès le retour au premier plan s'il est en retard, une seule
+  rotation à la fois ; `401` (expiré, plafond de 7 jours) ou `409` (le jeton a déjà été renouvelé, par quelqu'un d'autre) ⇒ session perdue.
 - **État** : `localUiSessionState()` (`unused` | `active` | `lost`), `onLocalUiSessionChange(listener)`. `AdminTokenGate` affiche
   `common.admin.tokenGate.localUiLost` quand elle est perdue (rouvrir l'application).
 - Tests : `core/http/localUiSession.spec.ts` (inerte sans code, retrait immédiat du fragment, échange, même origine seulement, refus sans
-  nouvel essai, erreur réseau rejouée, rechargement, rotation et refus de rotation, intercepteur axios qui attend l'échange, passage entre onglets).
+  nouvel essai, erreur réseau rejouée, rechargement, rotation et refus de rotation, une rotation à la fois et `409`, intercepteur axios qui attend
+  l'échange, aucun échange avec un autre document).
 
 ## Plugins du front — `plugins/`
 

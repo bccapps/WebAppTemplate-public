@@ -9,15 +9,15 @@
 
 /**
  * Interface session of a local-trust app, page side (back: `nest/common/auth/localUiSession.ts`, README « Session d'interface locale »).
- * Inert unless the page was opened with a boot code (`#vx-local-ui=<code>`, the desktop shell does it) or a tab of the same origin holds a
- * session: then
+ * Inert unless the page was opened with a boot code (`#vx-local-ui=<code>`, the desktop shell does it) or its tab already holds a session:
+ * then
  *  - the code is removed from the address at once, then exchanged (`POST <api>/local-ui/session`) for a session token; every HTTP call waits
  *    for that exchange;
  *  - the token goes on every SAME-ORIGIN request as `X-Local-Session` (the axios interceptor installed here, `HttpService` streams,
  *    `localUiSessionHeaders()` for a hand-made `fetch`); never on another origin's request;
- *  - it is kept in memory and `sessionStorage` (per origin, so per port; a reload keeps it; never `localStorage` nor a cookie), rotated every
- *    `renewAfterMs` the back sent, and handed to another tab of the same origin over a `BroadcastChannel` (a new tab asks, a tab that rotated
- *    tells the others).
+ *  - it is kept in memory and `sessionStorage` (per origin and per tab, so per port; a reload keeps it; never `localStorage` nor a cookie)
+ *    and rotated every `renewAfterMs` the back sent. It is NEVER handed to another document (no `BroadcastChannel`, no `postMessage`): any
+ *    page of the same origin could ask for it, or push one of its own. One window: the desktop's. Another tab needs a new boot code.
  */
 
 import axios from 'axios';
@@ -28,10 +28,6 @@ export const LOCAL_UI_SESSION_HEADER = 'X-Local-Session';
 export const LOCAL_UI_BOOT_FRAGMENT_KEY = 'vx-local-ui';
 
 const STORAGE_KEY = 'vx.localUi.session';
-/** Not a secret: tells a new tab of this origin to ask the others for their session before its first request. */
-const USED_MARKER_KEY = 'vx.localUi.used';
-const CHANNEL_NAME = 'vx-local-ui';
-const ASK_PEERS_MS = 400;
 const EXCHANGE_TIMEOUT_MS = 15_000;
 const EXCHANGE_ATTEMPTS = 3;
 const RETRY_RENEW_MS = 60_000;
@@ -44,8 +40,6 @@ interface Issued {
   renewAfterMs: number;
 }
 
-type PeerMessage = { type: 'ask' } | { type: 'token'; token: string; renewAfterMs: number };
-
 export type LocalUiSessionState = 'unused' | 'active' | 'lost';
 
 let token: string | null = null;
@@ -56,14 +50,15 @@ let used = false;
 let lost = false;
 let pending: Promise<void> | null = null;
 let renewTimer: ReturnType<typeof setTimeout> | null = null;
-let channel: BroadcastChannel | null = null;
+/** The renewal in flight: the timer and the return to view never send the same token twice (the back answers 409 to a second one). */
+let renewing: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
 const hasWindow = (): boolean => typeof window !== 'undefined' && typeof window.location !== 'undefined';
 
-function storage(kind: 'session' | 'local'): Storage | null {
+function storage(): Storage | null {
   try {
-    return kind === 'session' ? window.sessionStorage : window.localStorage;
+    return window.sessionStorage;
   } catch {
     return null;
   }
@@ -71,7 +66,7 @@ function storage(kind: 'session' | 'local'): Storage | null {
 
 function readStored(): Issued | null {
   try {
-    const raw = storage('session')?.getItem(STORAGE_KEY);
+    const raw = storage()?.getItem(STORAGE_KEY);
     const parsed = raw ? (JSON.parse(raw) as Partial<Issued>) : null;
     return parsed && typeof parsed.token === 'string' && TOKEN_RE.test(parsed.token) ? { token: parsed.token, renewAfterMs: Number(parsed.renewAfterMs) || DEFAULT_RENEW_AFTER_MS } : null;
   } catch {
@@ -83,19 +78,17 @@ function notify(): void {
   for (const listener of listeners) listener();
 }
 
-function adopt(issued: Issued, tellPeers: boolean): void {
+function adopt(issued: Issued): void {
   token = issued.token;
   adoptedAt = Date.now();
   renewAfterMs = issued.renewAfterMs > 0 ? issued.renewAfterMs : DEFAULT_RENEW_AFTER_MS;
   used = true;
   lost = false;
   try {
-    storage('session')?.setItem(STORAGE_KEY, JSON.stringify({ token, renewAfterMs }));
-    storage('local')?.setItem(USED_MARKER_KEY, '1');
+    storage()?.setItem(STORAGE_KEY, JSON.stringify({ token, renewAfterMs }));
   } catch {
     // storage unavailable: memory only (a reload then needs a new boot code)
   }
-  if (tellPeers) channel?.postMessage({ type: 'token', token, renewAfterMs } satisfies PeerMessage);
   scheduleRenew(renewAfterMs);
   notify();
 }
@@ -104,7 +97,7 @@ function drop(): void {
   token = null;
   lost = used;
   try {
-    storage('session')?.removeItem(STORAGE_KEY);
+    storage()?.removeItem(STORAGE_KEY);
   } catch {
     // nothing stored
   }
@@ -160,7 +153,7 @@ async function exchange(code: string): Promise<void> {
     try {
       const response = await post('', { body: JSON.stringify({ code }) });
       const issued = response.ok ? issuedOf(await response.json()) : null;
-      if (issued) return adopt(issued, true);
+      if (issued) return adopt(issued);
       if (response.status === 401 || response.status === 404) break; // refused (already used, wrong code): retrying cannot help
     } catch {
       // network error or timeout: the code is still unused, try again
@@ -170,71 +163,40 @@ async function exchange(code: string): Promise<void> {
   drop();
 }
 
-async function renew(): Promise<void> {
-  const current = token;
-  if (!current) return;
+async function renewOnce(current: string): Promise<void> {
   try {
     const response = await post('/renew', { token: current });
     const issued = response.ok ? issuedOf(await response.json()) : null;
-    if (issued) return adopt(issued, true);
-    // Another tab may have rotated it first: keep the newer one it told us about.
-    if (response.status === 401 && token === current) return drop();
+    if (issued) return adopt(issued);
+    // 401: expired or refused; 409: someone else renewed this token first (it holds the chain now). Either way the page must be reopened.
+    if (response.status === 401 || response.status === 409) return drop();
   } catch {
     // network error: the token still lives for hours; try again soon
   }
   if (token === current) scheduleRenew(RETRY_RENEW_MS);
 }
 
+function renew(): Promise<void> {
+  const current = token;
+  if (!current) return Promise.resolve();
+  renewing ??= renewOnce(current).finally(() => (renewing = null));
+  return renewing;
+}
+
 function scheduleRenew(delayMs: number): void {
   if (renewTimer) clearTimeout(renewTimer);
-  // A little jitter so the tabs of one origin do not all rotate at once.
-  renewTimer = setTimeout(() => void renew(), delayMs + Math.floor(Math.random() * 15_000));
-}
-
-function askPeers(): Promise<void> {
-  return new Promise((resolve) => {
-    const finish = (): void => {
-      clearTimeout(timer);
-      listeners.delete(onToken);
-      resolve();
-    };
-    const onToken = (): void => {
-      if (token) finish();
-    };
-    const timer = setTimeout(finish, ASK_PEERS_MS);
-    listeners.add(onToken);
-    channel?.postMessage({ type: 'ask' } satisfies PeerMessage);
-  });
-}
-
-function onPeerMessage(event: MessageEvent<PeerMessage>): void {
-  const message = event.data;
-  if (message?.type === 'ask' && token) channel?.postMessage({ type: 'token', token, renewAfterMs } satisfies PeerMessage);
-  else if (message?.type === 'token' && typeof message.token === 'string' && TOKEN_RE.test(message.token) && message.token !== token) {
-    adopt({ token: message.token, renewAfterMs: message.renewAfterMs }, false);
-  }
+  renewTimer = setTimeout(() => void renew(), delayMs);
 }
 
 /** Starts the session of this page (called once, when this module loads in a browser). Exported for the tests. */
 export function startLocalUiSession(): void {
   if (!hasWindow()) return;
-  if (typeof BroadcastChannel !== 'undefined') {
-    channel = new BroadcastChannel(CHANNEL_NAME);
-    channel.onmessage = onPeerMessage;
-  }
   const code = takeBootCode();
   const stored = readStored();
   if (code) {
     pending = exchange(code).finally(() => (pending = null));
   } else if (stored) {
-    adopt(stored, false);
-  } else if (storage('local')?.getItem(USED_MARKER_KEY) === '1' && channel) {
-    // A new tab of an origin that used a session: another tab may hand it over (never blocks more than ASK_PEERS_MS).
-    used = true;
-    pending = askPeers().finally(() => {
-      pending = null;
-      if (!token) drop();
-    });
+    adopt(stored);
   }
   // Timers are throttled in a hidden page or a sleeping machine: back in view, a token past its renewal time is renewed at once.
   document.addEventListener?.('visibilitychange', () => {
@@ -242,7 +204,7 @@ export function startLocalUiSession(): void {
   });
 }
 
-/** Resolves once the boot exchange (or the hand-over from another tab) is over: wait for it before sending a request. */
+/** Resolves once the boot exchange is over: wait for it before sending a request. */
 export function whenLocalUiSessionReady(): Promise<void> {
   return pending ?? Promise.resolve();
 }
@@ -274,10 +236,9 @@ export function onLocalUiSessionChange(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-/** Test helper: forgets everything (memory, timers, channel). */
+/** Test helper: forgets everything (memory, timers). */
 export function resetLocalUiSessionForTests(): void {
   if (renewTimer) clearTimeout(renewTimer);
-  channel?.close();
   token = null;
   adoptedAt = 0;
   renewAfterMs = DEFAULT_RENEW_AFTER_MS;
@@ -285,7 +246,7 @@ export function resetLocalUiSessionForTests(): void {
   lost = false;
   pending = null;
   renewTimer = null;
-  channel = null;
+  renewing = null;
   listeners.clear();
 }
 

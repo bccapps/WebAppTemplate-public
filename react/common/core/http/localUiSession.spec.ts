@@ -108,9 +108,9 @@ describe('localUiSession (page side of the interface session)', () => {
     expect(mod.localUiSessionHeaders('http://127.0.0.1:5173/api/v1/x')).toEqual({});
     expect(mod.localUiSessionHeaders('https://hub.example.com/api/v1/x')).toEqual({});
     expect(mod.localUiSessionState()).toBe('active');
-    // Kept for a reload of this tab only (sessionStorage), never in localStorage (just a non-secret marker there).
+    // Kept for a reload of this tab only (sessionStorage), never in localStorage.
     expect(p.sessionStorage.getItem('vx.localUi.session')).toContain(tokenOf('t'));
-    expect(p.localStorage.getItem('vx.localUi.used')).toBe('1');
+    expect(p.localStorage.getItem('vx.localUi.session')).toBeNull();
   });
 
   it('a refused code leaves the page without session (lost), with no second try', async () => {
@@ -161,7 +161,6 @@ describe('localUiSession (page side of the interface session)', () => {
 
   it('rotates the token when the back says so; a refused renewal loses the session', async () => {
     vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0); // no jitter: the renewals fire exactly every renewAfterMs
     const sessionStorage = new MemoryStorage();
     sessionStorage.setItem('vx.localUi.session', JSON.stringify({ token: tokenOf('o'), renewAfterMs: 1_000 }));
     const p = page('', { sessionStorage });
@@ -195,30 +194,48 @@ describe('localUiSession (page side of the interface session)', () => {
     expect(foreign.size).toBe(0);
   });
 
-  it('a new tab of an origin that used a session gets it from another tab', async () => {
-    const localStorage = new MemoryStorage();
-    localStorage.setItem('vx.localUi.used', '1');
-    const peer = new BroadcastChannel('vx-local-ui');
-    peer.onmessage = (event: MessageEvent<{ type: string }>) => {
-      if (event.data.type === 'ask') peer.postMessage({ type: 'token', token: tokenOf('p'), renewAfterMs: 600_000 });
-    };
+  it('never hands its token to another document, nor takes one pushed to it (no BroadcastChannel)', async () => {
+    const sessionStorage = new MemoryStorage();
+    sessionStorage.setItem('vx.localUi.session', JSON.stringify({ token: tokenOf('m'), renewAfterMs: 600_000 }));
+    const asked: unknown[] = [];
+    const other = new BroadcastChannel('vx-local-ui');
+    other.onmessage = (event: MessageEvent) => asked.push(event.data);
     try {
-      const p = page('', { localStorage });
+      page('', { sessionStorage });
       mod = await load();
-      await mod.whenLocalUiSessionReady();
-      expect(p.fetch).not.toHaveBeenCalled();
-      expect(mod.localUiSessionHeaders('/api/v1/x')).toEqual({ 'X-Local-Session': tokenOf('p') });
+      other.postMessage({ type: 'ask' });
+      other.postMessage({ type: 'token', token: tokenOf('z'), renewAfterMs: 600_000 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(asked).toEqual([]);
+      expect(mod.localUiSessionHeaders('/api/v1/x')).toEqual({ 'X-Local-Session': tokenOf('m') });
     } finally {
-      peer.close();
+      other.close();
     }
   });
 
-  it('a new tab with no other tab to ask is told the session is lost (the window must be reopened)', async () => {
-    const localStorage = new MemoryStorage();
-    localStorage.setItem('vx.localUi.used', '1');
-    page('', { localStorage });
+  it('a new tab without a code nor a session of its own stays inert (no request, no wait)', async () => {
+    const p = page();
     mod = await load();
     await mod.whenLocalUiSessionReady();
+    expect(p.fetch).not.toHaveBeenCalled();
+    expect(mod.localUiSessionState()).toBe('unused');
+  });
+
+  it('one renewal at a time: the return to view during a renewal sends nothing more; a 409 (renewed elsewhere) loses the session', async () => {
+    vi.useFakeTimers();
+    const sessionStorage = new MemoryStorage();
+    sessionStorage.setItem('vx.localUi.session', JSON.stringify({ token: tokenOf('q'), renewAfterMs: 1_000 }));
+    const p = page('', { sessionStorage });
+    let release: (r: Response) => void = () => undefined;
+    p.fetch.mockReturnValueOnce(new Promise<Response>((resolve) => (release = resolve)));
+    mod = await load();
+    const onVisible = (globalThis.document.addEventListener as ReturnType<typeof vi.fn>).mock.calls[0]![1] as () => void;
+    await vi.advanceTimersByTimeAsync(1_000);
+    onVisible();
+    onVisible();
+    expect(p.fetch).toHaveBeenCalledTimes(1);
+    release(answer(409, { code: 'LOCAL_UI_SESSION_RENEWED' }));
+    await vi.advanceTimersByTimeAsync(0);
     expect(mod.localUiSessionState()).toBe('lost');
   });
 });
