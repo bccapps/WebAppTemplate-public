@@ -12,6 +12,7 @@ import { timingSafeEqual } from 'crypto';
 import type { AuthPort } from './AuthPort';
 import type { AuthPrincipal } from './AuthPrincipal';
 import { assertLocalTrustHost, isLocalTrustEnabled, isLocalTrustRequest, type LocalTrustRequest } from './localTrust';
+import { localUiSessionStore, localUiSessionToken, type LocalUiSessionStore } from './localUiSession';
 import { resolveListenHost } from '../bootstrap/configureHttpApp';
 
 const MIN_ADMIN_TOKEN_LENGTH = 32;
@@ -26,13 +27,21 @@ export class AnonymousAuthProvider implements AuthPort {
   private readonly logger = new Logger(AnonymousAuthProvider.name);
   private readonly expected: Buffer | null;
   private readonly localTrust: boolean;
+  /** Interface session (`localUiSession.ts`): required on top of the local checks when the app was started with `LOCAL_UI_BOOT_ANCHOR`. */
+  private readonly uiSessions: LocalUiSessionStore | null;
 
   constructor() {
     this.localTrust = isLocalTrustEnabled();
+    this.uiSessions = null;
     if (this.localTrust) {
-      // Refuses to start (the rejection stops bootstrap) when the server is reachable from the network.
+      // Refuses to start (the rejection stops bootstrap) when the server is reachable from the network, or when the boot anchor is malformed.
       assertLocalTrustHost(resolveListenHost());
-      this.logger.warn('LOCAL_TRUST=true: loopback requests with a local Host/Origin are administrators (no key needed)');
+      this.uiSessions = localUiSessionStore();
+      this.logger.warn(
+        this.uiSessions
+          ? 'LOCAL_TRUST=true: loopback requests with a local Host/Origin AND the interface session are administrators'
+          : 'LOCAL_TRUST=true: loopback requests with a local Host/Origin are administrators (no key needed)',
+      );
     }
     const token = process.env.ADMIN_TOKEN ?? '';
     if (token.length < MIN_ADMIN_TOKEN_LENGTH) {
@@ -53,9 +62,13 @@ export class AnonymousAuthProvider implements AuthPort {
     return { id: 0, admin: true, kind: 'admin-token' };
   }
 
-  /** Local trust: administrator for a genuine local request, `null` (normal anonymous behaviour) otherwise. */
+  /**
+   * Local trust: administrator for a genuine local request that also carries the interface session when one is required (every route,
+   * reads included: there is no list of routes to keep up to date), `null` (normal anonymous behaviour) otherwise.
+   */
   resolveRequest(req: LocalTrustRequest): AuthPrincipal | null {
     if (!this.localTrust || !isLocalTrustRequest(req)) return null;
+    if (this.uiSessions && !this.uiSessions.verify(localUiSessionToken(req))) return null;
     return { id: 0, admin: true, kind: 'local-trust' };
   }
 }

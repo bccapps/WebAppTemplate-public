@@ -13,6 +13,8 @@ export * from './AnonymousAuthProvider';
 export * from './authRequest';
 export * from './requestIdentity';
 export * from './localTrust';
+export * from './localUiSession';
+export * from './LocalUiSessionController';
 export * from './GlobalAuthInterceptor';
 export * from './RequireUserInterceptor';
 export * from './RequireAuthInterceptor';

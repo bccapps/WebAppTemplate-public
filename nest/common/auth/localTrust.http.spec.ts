@@ -7,11 +7,13 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { afterAll, afterEach, describe, expect, it } from '@jest/globals';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { createHash, randomBytes } from 'node:crypto';
 import request from 'supertest';
 import { AuthCoreModule } from './AuthCoreModule';
+import { resetLocalUiSessionStoreForTests } from './localUiSession';
 
 /**
  * End-to-end through a real HTTP socket (supertest connects from loopback), with `trust proxy` on as configureHttpApp
@@ -103,5 +105,83 @@ describe('local trust over HTTP', () => {
   it('refuses to start with LOCAL_TRUST=true and HOST=0.0.0.0', async () => {
     Object.assign(process.env, { LOCAL_TRUST: 'true', HOST: '0.0.0.0' });
     await expect(Test.createTestingModule({ imports: [AuthCoreModule.forRoot()] }).compile()).rejects.toThrow(/LOCAL_TRUST=true requires HOST/);
+  });
+
+  describe('with the interface session (LOCAL_UI_BOOT_ANCHOR)', () => {
+    // A fake boot code built at run time; the anchor the shell would give the back is its SHA-256.
+    let code: string;
+    let anchor: string;
+    beforeEach(() => {
+      resetLocalUiSessionStoreForTests();
+      code = randomBytes(32).toString('hex');
+      anchor = createHash('sha256').update(code, 'utf8').digest('hex');
+    });
+    afterEach(() => resetLocalUiSessionStoreForTests());
+
+    const exchange = (body: unknown, headers: Record<string, string> = { Host: 'localhost:3000' }) => {
+      let r = request(app.getHttpServer()).post('/api/v1/local-ui/session');
+      for (const [k, v] of Object.entries(headers)) r = r.set(k, v);
+      return r.send(body as object);
+    };
+
+    it('a local request without the session (curl, an agent) is no longer the administrator', async () => {
+      await boot({ LOCAL_TRUST: 'true', LOCAL_UI_BOOT_ANCHOR: anchor });
+      expect((await get({ Host: 'localhost:3000' })).status).toBe(401);
+      expect((await get({ Host: '127.0.0.1:3000', Origin: 'http://127.0.0.1:3000' })).status).toBe(401);
+      expect((await get({ Host: 'localhost:3000', 'X-Local-Session': randomBytes(32).toString('base64url') })).status).toBe(401);
+      expect((await request(app.getHttpServer()).get('/api/v1/local-ui/session').set('Host', 'localhost:3000')).body).toEqual({ required: true, active: false });
+    });
+
+    it('the boot code is exchanged once for a session that makes the window the administrator', async () => {
+      await boot({ LOCAL_TRUST: 'true', LOCAL_UI_BOOT_ANCHOR: anchor });
+      const res = await exchange({ code }, { Host: '127.0.0.1:3000', Origin: 'http://127.0.0.1:3000' });
+      expect(res.status).toBe(200);
+      const { token, ttlMs, renewAfterMs } = res.body as { token: string; ttlMs: number; renewAfterMs: number };
+      expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(renewAfterMs).toBeLessThan(ttlMs);
+      const admin = await get({ Host: '127.0.0.1:3000', Origin: 'http://127.0.0.1:3000', 'X-Local-Session': token });
+      expect(admin.status).toBe(200);
+      expect(admin.body).toEqual({ admin: true, mode: 'local-trust' });
+      expect((await request(app.getHttpServer()).get('/api/v1/local-ui/session').set('Host', 'localhost:3000').set('X-Local-Session', token)).body).toEqual({ required: true, active: true });
+      // Replayed: the anchor is spent.
+      expect((await exchange({ code })).status).toBe(401);
+    });
+
+    it('refuses a wrong code, a malformed body, and an exchange that is not a genuine local request', async () => {
+      await boot({ LOCAL_TRUST: 'true', LOCAL_UI_BOOT_ANCHOR: anchor });
+      expect((await exchange({ code: randomBytes(32).toString('hex') })).status).toBe(401);
+      expect((await exchange({ code: anchor })).status).toBe(401);
+      expect((await exchange({})).status).toBe(401);
+      expect((await exchange({ code }, { Host: 'evil.example:3000' })).status).toBe(401);
+      expect((await exchange({ code }, { Host: 'localhost:3000', Origin: 'http://localhost:8080' })).status).toBe(401);
+      expect((await exchange({ code }, { Host: 'localhost:3000', 'X-Forwarded-For': '8.8.8.8' })).status).toBe(401);
+      // None of these spent the code: the window still gets its session.
+      expect((await exchange({ code })).status).toBe(200);
+    });
+
+    it('rotates the token: both pass during the grace period, the new one afterwards', async () => {
+      await boot({ LOCAL_TRUST: 'true', LOCAL_UI_BOOT_ANCHOR: anchor });
+      const first = (await exchange({ code })).body.token as string;
+      const renewed = await request(app.getHttpServer()).post('/api/v1/local-ui/session/renew').set('Host', 'localhost:3000').set('X-Local-Session', first);
+      expect(renewed.status).toBe(200);
+      const second = renewed.body.token as string;
+      expect(second).not.toBe(first);
+      expect((await get({ Host: 'localhost:3000', 'X-Local-Session': second })).status).toBe(200);
+      expect((await get({ Host: 'localhost:3000', 'X-Local-Session': first })).status).toBe(200);
+      expect((await request(app.getHttpServer()).post('/api/v1/local-ui/session/renew').set('Host', 'localhost:3000')).status).toBe(401);
+    });
+
+    it('the admin key still works without the session', async () => {
+      await boot({ LOCAL_TRUST: 'true', LOCAL_UI_BOOT_ANCHOR: anchor });
+      const res = await get({ Host: 'localhost:3000', Authorization: `Bearer ${TOKEN}` });
+      expect(res.status).toBe(200);
+      expect(res.body.mode).toBe('anonymous');
+    });
+
+    it('is inert without LOCAL_TRUST: no session to hand out', async () => {
+      await boot({ LOCAL_TRUST: 'false', LOCAL_UI_BOOT_ANCHOR: anchor });
+      expect((await exchange({ code })).status).toBe(401);
+      expect((await request(app.getHttpServer()).get('/api/v1/local-ui/session').set('Host', 'localhost:3000')).body).toEqual({ required: false, active: false });
+    });
   });
 });

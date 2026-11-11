@@ -13,6 +13,7 @@ import { AdminSessionController } from './AdminSessionController';
 import { AnonymousAuthProvider } from './AnonymousAuthProvider';
 import { AUTH_PORT, type AuthPort } from './AuthPort';
 import { GlobalAuthInterceptor } from './GlobalAuthInterceptor';
+import { LocalUiSessionController } from './LocalUiSessionController';
 
 export interface AuthCoreOptions {
   /** Modules that provide the dependencies of `provider`. */
@@ -29,7 +30,7 @@ export class AuthCoreModule {
     return {
       module: AuthCoreModule,
       imports: opts.imports ?? [],
-      controllers: [AdminSessionController],
+      controllers: [AdminSessionController, LocalUiSessionController],
       providers: [
         provider,
         { provide: AUTH_PORT, useExisting: provider },
