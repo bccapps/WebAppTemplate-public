@@ -29,7 +29,7 @@ transporte que le résumé fourni par l'app, caviardé (`maskKnownSecrets`) et t
 | `interactionEntities.ts` | Les 14 entités (`INTERACTION_ENTITIES`). |
 | `types/` | `interactionTypes.ts` (vocabulaire, notice, question, billet, issue, rapport), `providerTypes.ts` (point d'extension), `ports.ts` (ports et jetons d'injection). |
 | `errors/` | `InteractionError(code, details)`, table des statuts HTTP ; `InteractionHttpException` + `InteractionErrorInterceptor` (corps `{ code, message, details? }`, `Retry-After`). |
-| `services/UserInteractionService.ts` | Ce que l'app utilise : `notify`, `notifyMany`, `notifyAdmins`, `ask`, `cancel`, `getTicket`, `onAnswer(kind, handler, { source })`, `answerFromProvider`, `reachableKinds`, `forgetUser`. |
+| `services/UserInteractionService.ts` | Ce que l'app utilise : `notify`, `notifyMany`, `notifyAdmins`, `ask`, `cancel`, `getTicket`, `onAnswer(kind, handler, { source })`, `answerFromProvider`, `reachableKinds`, `forgetUser`. Le billet rendu par `ask` / `getTicket` (`InteractionTicket`, côté serveur seulement, jamais un DTO) nomme la question qu'il pose (`kind`, `source`, `correlationId`) : un canal `reply` de l'app y applique ses propres règles avant `answerFromProvider` (C2, AgentHub). |
 | `services/InteractionDeliveryService.ts` | Algorithme de livraison (§7) : validation, inactif, `inapp`, plan, réservation, plafonds, envoi concurrent sous délai, rapport. `ping()` (envoi de test). |
 | `services/InteractionTicketService.ts` | Cycle de vie d'une question (§8) : création, réponse (UPDATE conditionnel), expiration, annulation, remise de l'issue (relances persistées), fermeture des autres surfaces. |
 | `services/InteractionChannelService.ts` | Canaux de l'utilisateur (configuration par le fournisseur, interrupteur, ordre, suppression, test) et vue / interrupteur administrateur. |
@@ -229,7 +229,8 @@ Codes d'erreur (§12) : `INVALID_INPUT`, `INVALID_CONFIG { field, reason }`, `VE
   `failed` + notice `security` `interaction.dispatch_failed` aux administrateurs) ; au moins une fois (le gestionnaire doit être
   idempotent par `ticketId`), y compris après un redémarrage.
 - Fermeture : `ticket.closed` à chaque destinataire, cartes redessinées sans bouton, notices du billet lues ; une réponse
-  donnée hors de l'app laisse une notice `security` `interaction.answered_elsewhere` dans la boîte des destinataires.
+  donnée hors de l'app laisse une notice `security` `interaction.answered_elsewhere` dans la boîte des destinataires — pas
+  celle d'un canal dont l'interface est dans l'app (`proof: 'in_app'`, ex. la messagerie d'AgentHub, C2).
 - Expiration : refus dès `expires_at` ; balayage (workers, `interaction_expirySweepMs`) ⇒ `expired` remise une fois.
 
 ## Telegram (§8.3, §9)

@@ -428,6 +428,9 @@ export function describeInteractionReview(label: string, options: ReviewOptions)
       expect(answered.status).toBe('answered');
       await idle(h);
       expect(handled).toEqual([expect.objectContaining({ ticketId: ticket.id, via: 'hubchat', actionId: 'approve' })]);
+      // C2: an in-app channel is not « outside the app »: no `answered_elsewhere` trace; `getTicket` names the question it asks.
+      expect(await h.dataSource.getRepository(InteractionNoticeEntity).count({ where: { userId: 1, type: 'interaction.answered_elsewhere' } })).toBe(0);
+      expect(await api.getTicket(ticket.id)).toMatchObject({ id: ticket.id, kind: 'test.approval', source: 'tests', correlationId: expect.any(String), status: 'answered' });
       // freshProof: the provider brings the proof its in-app interface obtained.
       const fresh = await api.ask(1, question({ freshProof: true, answerableFrom: ['inapp', 'hubchat'] }));
       await expect(api.answerFromProvider(provider, { ticketId: fresh.id, userId: 1, actionId: 'approve' })).rejects.toMatchObject({ code: 'STEP_UP_REQUIRED' });

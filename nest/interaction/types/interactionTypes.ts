@@ -123,6 +123,13 @@ export interface DeliveryReport {
 export interface InteractionTicket {
   /** uuid, never inside a Telegram button. */
   id: string;
+  /**
+   * The question it asks (`kind`, `source`, `correlationId` of `ask`): lets an app's own reply channel apply its rules to the question
+   * before answering it (C2, AgentHub's messaging). Server side only, never in a DTO.
+   */
+  kind: string;
+  source: string;
+  correlationId: string;
   status: TicketStatus;
   expiresAt: Date;
   recipients: number[];

@@ -157,7 +157,7 @@ export class InteractionTicketService {
     this.background.run('ticket.externals', async () => {
       for (const { userId, reserved } of pending) await this.delivery.sendReserved(userId, reserved, this.builder(ticket, userId));
     });
-    return { id: ticket.id, status: 'open', expiresAt: ticket.expiresAt, recipients: active, deliveries: reports };
+    return { id: ticket.id, kind: ticket.kind, source: ticket.source, correlationId: ticket.correlationId, status: 'open', expiresAt: ticket.expiresAt, recipients: active, deliveries: reports };
   }
 
   private async insertTicket(q: CleanQuestion): Promise<{ ticket: InteractionTicketEntity; created: boolean }> {
@@ -226,7 +226,7 @@ export class InteractionTicketService {
 
   private async toTicket(row: InteractionTicketEntity, deliveries: DeliveryReport[]): Promise<InteractionTicket> {
     const recipients = (await this.recipients.find({ where: { ticketId: row.id } })).map((r) => r.userId);
-    return { id: row.id, status: row.status as InteractionTicket['status'], expiresAt: row.expiresAt, recipients, deliveries };
+    return { id: row.id, kind: row.kind, source: row.source, correlationId: row.correlationId, status: row.status as InteractionTicket['status'], expiresAt: row.expiresAt, recipients, deliveries };
   }
 
   /** A ticket for one of its recipients; anyone else (and an unknown id) gets the same `NOT_FOUND`. */
@@ -533,7 +533,10 @@ export class InteractionTicketService {
     }
   }
 
-  /** `ticket.closed` to every recipient, cards redrawn, and a trace in the inbox when the answer came from outside the app. */
+  /**
+   * `ticket.closed` to every recipient, cards redrawn, and a trace in the inbox when the answer came from outside the app: a channel whose
+   * interface is inside the authenticated app (`proof: 'in_app'`, e.g. an app's own messaging, 04 §22) is not « outside » (C2).
+   */
   private async closeSurfaces(ticket: InteractionTicketEntity): Promise<void> {
     const recipients = (await this.recipients.find({ where: { ticketId: ticket.id } })).map((row) => row.userId);
     for (const userId of recipients) this.realtime.publish(userId, { type: 'ticket.closed', id: ticket.id, data: { status: ticket.status, ...(ticket.answeredVia ? { via: ticket.answeredVia } : {}) } });
@@ -544,7 +547,7 @@ export class InteractionTicketService {
       if (!provider?.closeCard) continue;
       await provider.closeCard({ ticketId: ticket.id, cardKey: card.cardKey, kind: card.kind, binding: card.binding, lang: card.lang }, answer).catch((error: unknown) => this.logger.warn(`card not redrawn (${errorCode(error)})`));
     }
-    if (ticket.status === 'answered' && ticket.answeredVia && ticket.answeredVia !== INAPP_KIND) {
+    if (ticket.status === 'answered' && ticket.answeredVia && this.registry.proofOf(ticket.answeredVia) !== 'in_app') {
       for (const userId of recipients) await this.inbox.write(userId, answeredElsewhere(ticket), null);
     }
   }
