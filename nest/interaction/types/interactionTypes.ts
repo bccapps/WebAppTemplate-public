@@ -191,6 +191,11 @@ export interface InteractionAnswerGate {
   apply(answer: PendingAnswer): Promise<void>;
   /** Bound of `apply`, 1 s to 120 s (default 30 s); the claim lasts it plus 30 s. */
   timeoutMs?: number;
+  /**
+   * An error of `apply` whose effect may still land (the app timed out waiting for its own system): treated like a timeout of `apply` — the
+   * claim is KEPT until it lapses (the ticket is not reopened for a second answer) and the answerer gets `ANSWER_REFUSED { reason }`.
+   */
+  isUncertain?(error: unknown): boolean;
 }
 
 /**
@@ -209,6 +214,8 @@ export interface OpenTicketRef {
   applying: boolean;
   /** Its recipients now (`revokeRecipient` withdraws one). */
   recipients: number[];
+  /** Whether an answer needs a recent proof (an app whose own rule tightened may cancel and ask again). */
+  freshProof: boolean;
 }
 
 /** What apps (and the `McpInteractionPort` adapter) see: `UserInteractionService` implements it. */

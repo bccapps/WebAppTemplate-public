@@ -157,6 +157,15 @@ export class UserInteractionService implements UserInteractionApi, OnModuleInit,
     return this.tickets.revokeRecipient(source, correlationId, userId, reason);
   }
 
+  /**
+   * C2 (review): the app's rule tightened after the question was asked — its open ticket now needs a recent proof (`freshProof`). An answer
+   * through a channel that cannot bring one is refused from then on. False when there is no such open ticket, it already needs one, or an
+   * answer is being applied (try again later).
+   */
+  requireFreshProof(source: string, correlationId: string): Promise<boolean> {
+    return this.tickets.requireFreshProof(source, correlationId);
+  }
+
   /** `['inapp', …ready channels the routing of `category` keeps]` (the creation of an « ask » credential checks it). */
   async reachableKinds(userId: number, category: InteractionCategory): Promise<ChannelKind[]> {
     if (!(await this.directory.isActive(userId))) return [];

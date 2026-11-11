@@ -403,7 +403,8 @@ export class InteractionTicketService {
     try {
       await gateWithin(gate.apply(pending), timeout);
     } catch (error) {
-      if (!(error instanceof GateTimeout)) await this.releaseClaim(ticket.id, claim);
+      // A timeout, or an error the app says may still have its effect: the claim stays until it lapses (no second answer meanwhile).
+      if (!(error instanceof GateTimeout) && gate.isUncertain?.(error) !== true) await this.releaseClaim(ticket.id, claim);
       throw gateRefusal(error);
     }
     const at = new Date();
@@ -446,6 +447,7 @@ export class InteractionTicketService {
       correlationId: row.correlationId,
       applying: row.dispatchStatus === APPLY_CLAIM && (row.dispatchNextAt?.getTime() ?? 0) > now,
       recipients: recipients.filter((recipient) => recipient.ticketId === row.id).map((recipient) => recipient.userId),
+      freshProof: row.freshProof === true,
     }));
   }
 
@@ -454,6 +456,19 @@ export class InteractionTicketService {
    * open cards go (a card of the app's own channel is redrawn by the app), `ticket.closed` reaches them; with nobody left, the ticket is
    * cancelled. From then on the ticket is unknown to them (`NOT_FOUND`, like any other). False when they were no recipient of an open ticket.
    */
+  /** `UserInteractionService.requireFreshProof`: a conditional UPDATE bound to the row as read (open, not yet `freshProof`, no live apply claim). */
+  async requireFreshProof(source: string, correlationId: string): Promise<boolean> {
+    if (typeof source !== 'string' || !SOURCE_PATTERN.test(source) || typeof correlationId !== 'string') return false;
+    const ticket = await this.tickets.findOne({ where: { source, correlationId, status: 'open' } });
+    if (!ticket || ticket.freshProof) return false;
+    if (ticket.dispatchStatus === APPLY_CLAIM && (ticket.dispatchNextAt?.getTime() ?? 0) > Date.now()) return false;
+    const result = await this.tickets.update(
+      { id: ticket.id, status: 'open', freshProof: false, dispatchStatus: ticket.dispatchStatus, dispatchNextAt: ticket.dispatchNextAt ?? IsNull() },
+      { freshProof: true },
+    );
+    return (result.affected ?? 0) > 0;
+  }
+
   async revokeRecipient(source: string, correlationId: string, userId: number, reason: string): Promise<boolean> {
     const ticket = await this.tickets.findOne({ where: { source, correlationId } });
     if (!ticket || ticket.status !== 'open') return false;

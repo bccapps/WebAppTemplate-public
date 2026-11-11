@@ -39,6 +39,9 @@ class TestGate implements InteractionAnswerGate {
   applyRefusal: unknown = null;
   applyHold: Promise<void> | null = null;
   timeoutMs = 2_000;
+  isUncertain(error: unknown): boolean {
+    return (error as { uncertain?: unknown } | null)?.uncertain === true;
+  }
   async check(answer: PendingAnswer): Promise<void> {
     this.checks.push(answer);
     if (this.checkRefusal) throw this.checkRefusal;
@@ -163,7 +166,7 @@ export function describeInteractionGate(label: string, options: GateOptions): vo
       const second = await answerInApp(ticket.id, 2);
       expect([second.status, second.body.code]).toEqual([409, 'IN_PROGRESS']);
       expect(await h.get(UserInteractionService).cancel('tests', ticket.correlationId, 'resolved')).toBe(false);
-      expect(await h.get(UserInteractionService).openTickets('tests')).toEqual([{ ticketId: ticket.id, correlationId: ticket.correlationId, applying: true, recipients: [1, 2] }]);
+      expect(await h.get(UserInteractionService).openTickets('tests')).toEqual([{ ticketId: ticket.id, correlationId: ticket.correlationId, applying: true, recipients: [1, 2], freshProof: false }]);
       expect(await h.get(UserInteractionService).openTickets('tests', { correlationId: 'another' })).toEqual([]);
       // Even past its expiry, a ticket being answered is not expired by the sweep, and the answer is confirmed.
       await h.dataSource.getRepository(InteractionTicketEntity).update({ id: ticket.id }, { expiresAt: new Date(Date.now() - 1000) });
@@ -187,7 +190,7 @@ export function describeInteractionGate(label: string, options: GateOptions): vo
       expect(held.dispatchNextAt?.getTime() ?? 0).toBeGreaterThan(Date.now());
       // A crash: the claimant is gone; its claim lapses (simulated), then the next answer takes the ticket over.
       await h.dataSource.getRepository(InteractionTicketEntity).update({ id: ticket.id }, { dispatchNextAt: new Date(Date.now() - 1) });
-      expect(await h.get(UserInteractionService).openTickets('tests')).toEqual([{ ticketId: ticket.id, correlationId: ticket.correlationId, applying: false, recipients: [1, 2] }]);
+      expect(await h.get(UserInteractionService).openTickets('tests')).toEqual([{ ticketId: ticket.id, correlationId: ticket.correlationId, applying: false, recipients: [1, 2], freshProof: false }]);
       gate.applyHold = null;
       expect((await answerInApp(ticket.id, 2)).status).toBe(200);
       expect(await row(ticket.id)).toMatchObject({ status: 'answered', answeredBy: 2 });
@@ -195,6 +198,29 @@ export function describeInteractionGate(label: string, options: GateOptions): vo
       const other = await ask();
       await h.dataSource.getRepository(InteractionTicketEntity).update({ id: other.id }, { dispatchStatus: APPLY_CLAIM, dispatchNextAt: new Date(Date.now() - 1) });
       expect(await h.get(UserInteractionService).cancel('tests', other.correlationId, 'resolved')).toBe(true);
+    });
+
+    it('requireFreshProof: an open ticket comes to need a proof — an answer without one is refused, then one with a proof goes', async () => {
+      h = await make();
+      const ticket = await ask();
+      expect(await h.get(UserInteractionService).requireFreshProof('tests', ticket.correlationId)).toBe(true);
+      expect(await h.get(UserInteractionService).requireFreshProof('tests', ticket.correlationId)).toBe(false);
+      expect((await row(ticket.id)).freshProof).toBe(true);
+      await expect(viaProvider(ticket.id)).rejects.toMatchObject({ code: 'STEP_UP_REQUIRED' });
+      expect(gate.applied).toHaveLength(0);
+      expect((await viaProvider(ticket.id, { stepUpProof: `ok:${stepUpPurposeOf(ticket.id)}:1` })).status).toBe('answered');
+    });
+
+    it('an apply error the app calls uncertain (its effect may still land) keeps the claim like a timeout: no second answer meanwhile', async () => {
+      h = await make();
+      const ticket = await ask();
+      gate.applyRefusal = Object.assign(new Error('runner slow'), { code: 'RUNNER_TIMEOUT', uncertain: true });
+      const uncertain = await answerInApp(ticket.id, 1);
+      expect([uncertain.status, uncertain.body.code, uncertain.body.details]).toEqual([409, 'ANSWER_REFUSED', { reason: 'RUNNER_TIMEOUT' }]);
+      expect(await row(ticket.id)).toMatchObject({ status: 'open', dispatchStatus: APPLY_CLAIM });
+      gate.applyRefusal = null;
+      expect((await answerInApp(ticket.id, 2)).body.code).toBe('IN_PROGRESS');
+      expect(gate.applied).toHaveLength(0);
     });
 
     it('withdraws a recipient: the ticket, its notices and answers are gone for them; nobody left cancels it', async () => {
