@@ -54,7 +54,9 @@ export type SendEmailResult = {
  */
 export const SMTP_TIMEOUTS = { connectionTimeout: 10_000, greetingTimeout: 10_000, socketTimeout: 30_000 } as const;
 
-const EMAIL_IN_TEXT = /([^\s<>,;:"'()@]+)@([^\s<>,;:"'()@]+)/g;
+// The look-behind starts a match only at the beginning of a run (start of text or after a separator): without it a long
+// run without `@` was rescanned from each of its characters (quadratic time on hostile text).
+const EMAIL_IN_TEXT = /(?<![^\s<>,;:"'()@])([^\s<>,;:"'()@]+)@([^\s<>,;:"'()@]+)/g;
 
 /**
  * Personal data stays out of the logs: every e-mail address in `text` keeps its first character and its domain only

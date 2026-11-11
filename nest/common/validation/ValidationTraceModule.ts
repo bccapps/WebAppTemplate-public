@@ -8,31 +8,23 @@
  */
 
 import { DynamicModule, Module } from '@nestjs/common';
-import { VALIDATION_CHECK_ROOTS, ValidationCheckRegistry, defaultCheckRoots } from './ValidationCheckRegistry';
+import { ValidationCheckRegistry } from './ValidationCheckRegistry';
 import { ValidationTraceController } from './ValidationTraceController';
 import { ValidationTraceService } from './ValidationTraceService';
 import { isValidationTraceEnabled } from './validationTrace';
 
-export interface ValidationTraceModuleOptions {
-  /** Module folders scanned for `validation/checks.json` (default `src/modules_shared` and `src/modules` of the cwd). */
-  checkRoots?: string[];
-}
-
 /**
- * Validation by observation (`nest/common/README.md`, « Validation par observation »). Imported once by `CommonModule`;
- * the front relay controller is registered only when traces are active when the module is defined.
+ * Validation by observation (`nest/common/README.md`, « Validation par observation »). Imported once by `CommonModule`
+ * (which re-exports it); the front relay controller is registered only when traces are active when the module is
+ * defined. Tests set the environment and the `checks.json` folders with `configureValidationTrace` first.
  */
 @Module({})
 export class ValidationTraceModule {
-  static register(options: ValidationTraceModuleOptions = {}): DynamicModule {
+  static register(): DynamicModule {
     return {
       module: ValidationTraceModule,
       controllers: isValidationTraceEnabled() ? [ValidationTraceController] : [],
-      providers: [
-        ValidationTraceService,
-        ValidationCheckRegistry,
-        { provide: VALIDATION_CHECK_ROOTS, useValue: options.checkRoots ?? defaultCheckRoots() },
-      ],
+      providers: [ValidationTraceService, ValidationCheckRegistry],
       exports: [ValidationTraceService],
     };
   }

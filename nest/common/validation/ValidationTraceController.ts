@@ -7,9 +7,10 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { BadRequestException, Body, Controller, HttpCode, NotFoundException, Post, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, HttpCode, NotFoundException, Post, Req, UseInterceptors } from '@nestjs/common';
 import { ApiNoContentResponse, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import type { Request } from 'express';
 import { Public } from '../decorators/Public';
 import { RejectApiTokenInterceptor } from '../interceptors/RejectApiTokenInterceptor';
 import { TRACE_LIMITS } from './traceSanitizer';
@@ -34,11 +35,18 @@ function assertSmallPlainObject(fields: unknown): Record<string, unknown> {
   return fields as Record<string, unknown>;
 }
 
+/** Who sent a trace, for the per-client budget only (never written): the signed-in user, else the client IP. */
+function clientOf(req: Request, preLogin: boolean): string {
+  const userId = preLogin ? undefined : (req as Request & { user?: { id?: unknown } }).user?.id;
+  return userId !== undefined && userId !== null ? `user:${String(userId)}` : `ip:${req.ip ?? 'unknown'}`;
+}
+
 /**
  * Relay of the front's validation traces. Registered only when traces are active (`APP_ENV` dev/preprod): absent in
  * production (404), and the handlers answer 404 again if traces are off at runtime. Only the trace names declared with
- * `"sources": ["front"]` in a `validation/checks.json` are accepted; the unauthenticated route only those also marked
- * `"preLogin": true`. Fields are sanitized like a back trace; no body is ever logged.
+ * `"sources": ["front"]` in a `validation/checks.json` (and used by no back-only check) are accepted; the unauthenticated
+ * route only those also marked `"preLogin": true`. Only the fields those checks declare are kept, then sanitized; the
+ * front has its own sampling (per client) and its own share of the daily file; no body is ever logged.
  */
 @ApiTags('validation')
 @Controller('api/v1/validation')
@@ -53,8 +61,8 @@ export class ValidationTraceController {
   @HttpCode(204)
   @UseInterceptors(RejectApiTokenInterceptor)
   @Throttle({ default: VALIDATION_TRACE_THROTTLE })
-  trace(@Body() body: ValidationTraceDto): void {
-    this.relay(body, false);
+  trace(@Body() body: ValidationTraceDto, @Req() req: Request): void {
+    this.relay(body, false, req);
   }
 
   @ApiNoContentResponse({ description: 'Pre-login trace recorded (dev/preprod only)' })
@@ -62,14 +70,14 @@ export class ValidationTraceController {
   @Post('trace/public')
   @HttpCode(204)
   @Throttle({ default: VALIDATION_TRACE_PUBLIC_THROTTLE })
-  tracePublic(@Body() body: ValidationTraceDto): void {
-    this.relay(body, true);
+  tracePublic(@Body() body: ValidationTraceDto, @Req() req: Request): void {
+    this.relay(body, true, req);
   }
 
-  private relay(body: ValidationTraceDto, preLogin: boolean): void {
+  private relay(body: ValidationTraceDto, preLogin: boolean, req: Request): void {
     if (!this.traces.enabled) throw new NotFoundException();
     const rule = this.registry.frontRule(body.check);
     if (!rule || (preLogin && !rule.preLogin)) throw new BadRequestException('Unknown validation check');
-    this.traces.relayFront(body.check, body.outcome, assertSmallPlainObject(body.fields));
+    this.traces.relayFront(body.check, body.outcome, assertSmallPlainObject(body.fields), clientOf(req, preLogin));
   }
 }

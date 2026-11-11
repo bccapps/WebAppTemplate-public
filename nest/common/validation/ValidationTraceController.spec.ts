@@ -17,7 +17,7 @@ import request from 'supertest';
 import { RejectApiTokenInterceptor } from '../interceptors/RejectApiTokenInterceptor';
 import { findRouteMismatches, findUnclassifiedWriteRoutes } from '../testing/controllerInterceptors.testkit';
 import { leaksSecret, secretFixtures } from './secretFixtures.testkit';
-import { loadFrontTraceRules } from './ValidationCheckRegistry';
+import { loadCheckIndex } from './checkIndex';
 import { ValidationTraceController } from './ValidationTraceController';
 import { ValidationTraceModule } from './ValidationTraceModule';
 import { configureValidationTrace } from './validationTrace';
@@ -33,23 +33,27 @@ beforeAll(() => {
   };
   const check = (id: string, extra: object) => ({ id, module: id.split('.')[0], expect: { traces: [id], outcome: 'ok' }, ...extra });
   write('user', JSON.stringify({ checks: [
-    check('user.login.form-shown', { sources: ['front'], preLogin: true }),
-    check('user.settings.saved', { sources: ['back', 'front'], mustNotHappen: ['user.settings.lost:violation'] }),
+    check('user.login.form-shown', { sources: ['front'], preLogin: true, fields: { step: ['email', 'otp'] } }),
+    check('user.settings.saved', { sources: ['back', 'front'], mustNotHappen: ['user.settings.lost:violation'], fields: { section: 'string', note: 'string', token: 'string', nested: 'string' } }),
     check('user.login.otp-required', { sources: ['back'] }),
+    check('user.front.shared', { sources: ['front'], fields: '*', fieldsJustification: 'refused for a front check anyway' }),
+    check('user.back.only', { sources: ['back'], expect: { traces: ['user.front.shared'], outcome: 'ok' } }),
   ] }));
   write('broken', '{ not json');
   fs.mkdirSync(path.join(roots, 'no-checks'));
 });
 afterAll(() => fs.rmSync(roots, { recursive: true, force: true }));
 
-describe('loadFrontTraceRules', () => {
-  it('allow-lists the traces of the front checks only, malformed files contributing nothing', () => {
-    const rules = loadFrontTraceRules([roots, path.join(roots, 'missing')]);
-    expect(Object.fromEntries(rules)).toEqual({
-      'user.login.form-shown': { preLogin: true },
-      'user.settings.saved': { preLogin: false },
-      'user.settings.lost': { preLogin: false },
+describe('loadCheckIndex', () => {
+  it('allow-lists the front traces only, minus names a back-only check uses; "*" is never granted to the front', () => {
+    const { front, back } = loadCheckIndex([roots, path.join(roots, 'missing')]);
+    expect(Object.fromEntries(front)).toEqual({
+      'user.login.form-shown': { preLogin: true, fields: { step: ['email', 'otp'] } },
+      'user.settings.saved': { preLogin: false, fields: { section: 'string', note: 'string', token: 'string', nested: 'string' } },
+      'user.settings.lost': { preLogin: false, fields: { section: 'string', note: 'string', token: 'string', nested: 'string' } },
     });
+    expect(back.get('user.login.otp-required')).toEqual({});
+    expect(back.has('user.front.shared')).toBe(true);
   });
 });
 
@@ -68,8 +72,8 @@ describe('POST /api/v1/validation/trace over HTTP', () => {
 
   async function boot(env: Record<string, string>): Promise<INestApplication> {
     lines = [];
-    configureValidationTrace({ env, sink: { write: (line) => (lines.push(line), true) }, log: () => undefined });
-    const mod = await Test.createTestingModule({ imports: [ValidationTraceModule.register({ checkRoots: [roots] })] }).compile();
+    configureValidationTrace({ env, sink: { write: (line) => (lines.push(line), true) }, log: () => undefined, checkRoots: [roots] });
+    const mod = await Test.createTestingModule({ imports: [ValidationTraceModule.register()] }).compile();
     app = mod.createNestApplication();
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
     await app.init();
@@ -96,20 +100,24 @@ describe('POST /api/v1/validation/trace over HTTP', () => {
     expect((await post(target, 'trace', { check: 'user.settings.saved', outcome: 'ok' })).status).toBe(404);
   });
 
-  it('records an allow-listed front trace, sanitized, with source "front"', async () => {
+  it('records an allow-listed front trace: declared fields only, sanitized, source "front", ids not promoted', async () => {
     const target = await boot(DEV);
     const { appToken, jwt } = secretFixtures();
-    const res = await post(target, 'trace', { check: 'user.settings.saved', outcome: 'ok', fields: { section: 'profile', note: `copied ${appToken}`, token: jwt, nested: { a: 1 } } });
+    const fields = { section: 'profile', note: `copied ${appToken}`, token: jwt, nested: { a: 1 }, undeclared: 'x', requestId: 'forged-by-the-front' };
+    const res = await post(target, 'trace', { check: 'user.settings.saved', outcome: 'ok', fields });
     expect(res.status).toBe(204);
     expect(lines).toHaveLength(1);
     const line = JSON.parse(lines[0]);
-    expect(line).toMatchObject({ check: 'user.settings.saved', outcome: 'ok', source: 'front', env: 'dev', fields: { section: 'profile', nested: '[object]' } });
-    expect(leaksSecret(lines[0], appToken) || leaksSecret(lines[0], jwt)).toBe(false);
+    expect(line).toMatchObject({ check: 'user.settings.saved', outcome: 'ok', source: 'front', env: 'dev', fields: { section: 'profile', token: '[redacted:' + jwt.length + ']', _droppedFields: 3 } });
+    expect(line.requestId).toBeUndefined();
+    expect(line.fields.note).toMatch(/^hmac:/);
+    expect(leaksSecret(lines[0], appToken) || leaksSecret(lines[0], jwt) || lines[0].includes('forged')).toBe(false);
   });
 
   it.each([
     ['an undeclared check', 'trace', { check: 'user.unknown', outcome: 'ok' }],
     ['a back-only check', 'trace', { check: 'user.login.otp-required', outcome: 'ok' }],
+    ['a front name also used by a back-only check', 'trace', { check: 'user.front.shared', outcome: 'ok' }],
     ['a front check that is not pre-login, on the public route', 'trace/public', { check: 'user.settings.saved', outcome: 'ok' }],
     ['a bad outcome', 'trace', { check: 'user.settings.saved', outcome: 'maybe' }],
     ['a bad check name', 'trace', { check: 'User Settings', outcome: 'ok' }],
@@ -124,7 +132,7 @@ describe('POST /api/v1/validation/trace over HTTP', () => {
 
   it('accepts a pre-login check on the public route', async () => {
     const target = await boot(DEV);
-    expect((await post(target, 'trace/public', { check: 'user.login.form-shown', outcome: 'info' })).status).toBe(204);
-    expect(JSON.parse(lines[0])).toMatchObject({ check: 'user.login.form-shown', outcome: 'info', source: 'front' });
+    expect((await post(target, 'trace/public', { check: 'user.login.form-shown', outcome: 'info', fields: { step: 'otp' } })).status).toBe(204);
+    expect(JSON.parse(lines[0])).toMatchObject({ check: 'user.login.form-shown', outcome: 'info', source: 'front', fields: { step: 'otp' } });
   });
 });

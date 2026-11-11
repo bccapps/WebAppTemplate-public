@@ -33,10 +33,13 @@ export class ValidationTraceService implements OnApplicationShutdown {
     vtrace(check, outcome, fields);
   }
 
-  /** Relay of a trace sent by the front (`ValidationTraceController` only): recorded with `source: 'front'`. */
-  relayFront(check: string, outcome: ValidationOutcome, fields: Record<string, unknown>): void {
+  /**
+   * Relay of a trace sent by the front (`ValidationTraceController` only): recorded with `source: 'front'`, the fields the
+   * front checks declare only, sampled per client (`client`: user id or IP, kept in memory as a fingerprint).
+   */
+  relayFront(check: string, outcome: ValidationOutcome, fields: Record<string, unknown>, client: string): void {
     if (!this.enabled) return;
-    recordValidationTrace(check, outcome, fields, 'front');
+    recordValidationTrace(check, outcome, fields, { source: 'front', client });
   }
 
   onApplicationShutdown(): void {
