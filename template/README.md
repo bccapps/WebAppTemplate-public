@@ -249,6 +249,7 @@ blocks of the template examples are kept only for the linked modules; `# @module
 `.env.example` being generated like `package.json`: `build-package.mjs` rewrites it on every install/build from the
 template example, the `env` of the linked modules' `module.json` and the project's `<stack>/.env.example.local`
 (project-specific variables and notes — the only file to edit), so it follows the template and the module list,
+all `.env*` files use the same 3 sections (`# ===== 1. Common — required =====`, `2. Common — optional`, `3. App-specific`): section 1 and 2 come from the template and module manifests, section 3 is the content of `<stack>/.env.example.local` (the generator adds its header),
 `back/src/config/defaultConfig.ts`. Inconsistent answers are refused with a message (private module without private access,
 selling without accounts, a module that does not support the chosen database, unknown module...).
 

@@ -6,7 +6,6 @@
   "category": "core",
   "requires": [],
   "env": [
-    "ADMIN_TOKEN",
     "VITE_APP_ENV",
     "VITE_PROJECT_NAME",
     "VITE_PROWL_API_KEY",

@@ -113,7 +113,8 @@ test('.env.example is generated: header, linked blocks only, manifest variables,
   assert.match(text, /# --- Common \(module common\) ---\n# ADMIN_TOKEN=/);
   assert.match(text, /# TIERS_FILE=/);
   assert.equal((text.match(/JWT_SECRET/g) ?? []).length, 1, 'a variable of the template is not repeated');
-  assert.match(text, /# Project-specific \(back\/\.env\.example\.local\)\n# =+\n# App note\nAPP_FLAG=1\n$/);
+  assert.match(text, /# ===== 3\. App-specific =====\n# App note\nAPP_FLAG=1\n$/);
+  assert.equal(buildEnvExample('back', back), text, 'regeneration is idempotent');
   rmSync(root, { recursive: true, force: true });
 });
 
