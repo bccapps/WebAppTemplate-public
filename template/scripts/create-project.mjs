@@ -313,6 +313,10 @@ build
 # SQLite database files (DB_ENGINE=sqlite, DB_PATH=data/<project>.db)
 back/data/
 
+# Logs (back-<day>.log, validation-<day>.jsonl) and the local copies of the validation report (scripts/validation-report.mjs)
+logs/
+.validation-cache/
+
 # Shared modules (materialized as symlinks by link-shared.mjs)
 modules_shared
 
