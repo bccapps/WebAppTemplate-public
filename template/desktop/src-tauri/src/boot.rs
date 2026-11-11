@@ -19,7 +19,10 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
 use crate::config::{DesktopConfig, ProcessConfig, SERVER_NAME};
-use crate::environment::{ensure_secrets, process_env, random_key_b64, random_token_hex, server_core_env, substitute, Placeholders, ServerFacts};
+use crate::environment::{
+    ensure_secrets, link_tokens, process_env, random_key_b64, random_token_hex, server_core_env, substitute, ui_boot_code, window_url, LaunchTokens,
+    Placeholders, ServerFacts,
+};
 use crate::health::{free_ports, http_ok};
 use crate::logs::{open_rotated_log, shell_log, tail};
 use crate::process::{spawn_process, Managed, Processes, SpawnSpec};
@@ -104,7 +107,11 @@ struct Context {
     logs_dir: PathBuf,
     ports: BTreeMap<String, u16>,
     secrets: BTreeMap<String, String>,
-    token: String,
+    tokens: LaunchTokens,
+    /// The interface boot code of this launch: only ever put in the fragment of the window's first URL, then wiped (`run`).
+    ui_boot_code: String,
+    /// `sha256_hex(ui_boot_code)`, given to the back as `LOCAL_UI_BOOT_ANCHOR`.
+    ui_boot_anchor: String,
 }
 
 impl Context {
@@ -138,7 +145,10 @@ fn prepare(app: &AppHandle, cfg: &DesktopConfig) -> Result<Context, BootError> {
     let secrets = ensure_secrets(&data_dir.join("secrets.json"), &random_key_b64)
         .map_err(|e| BootError::new("secrets", vec![param("detail", e)]))?;
     let ports = allocate_ports(cfg).map_err(|e| BootError::new("noPort", vec![param("detail", e)]))?;
-    Ok(Context { resources, data_dir, logs_dir, ports, secrets, token: random_token_hex() })
+    // One token per link (`linkTokens`): the runner never holds the voice engine's token, nor the reverse.
+    let tokens = LaunchTokens { shared: random_token_hex(), links: link_tokens(&cfg.link_names(env::consts::OS), &random_token_hex) };
+    let (ui_boot_code, ui_boot_anchor) = ui_boot_code();
+    Ok(Context { resources, data_dir, logs_dir, ports, secrets, tokens, ui_boot_code, ui_boot_anchor })
 }
 
 /// The processes to run on this OS, sidecars first, the server last.
@@ -164,7 +174,7 @@ fn spawn_spec(cfg: &DesktopConfig, p: &ProcessConfig, ctx: &Context) -> Result<S
     let log_path = ctx.logs_dir.join(format!("{}.log", p.name()));
     let log = open_rotated_log(&log_path).map_err(&fail)?;
     let extra = (p.name() == SERVER_NAME).then(|| server_core_env(&server_facts(cfg, ctx)));
-    let env = process_env(p, &ph, &ctx.token, extra.as_ref().map(|core| (&ctx.secrets, core)));
+    let env = process_env(p, &ph, &ctx.tokens, extra.as_ref().map(|core| (&ctx.secrets, core)));
     Ok(SpawnSpec {
         command,
         args: p.args.iter().map(|a| substitute(a, &ph)).collect(),
@@ -183,6 +193,7 @@ fn server_facts<'a>(cfg: &'a DesktopConfig, ctx: &'a Context) -> ServerFacts<'a>
         db_file: &cfg.db_file,
         schema: cfg.schema.as_deref(),
         parent_pid: std::process::id(),
+        ui_boot_anchor: &ctx.ui_boot_anchor,
     }
 }
 
@@ -282,7 +293,7 @@ fn optional_names(cfg: &DesktopConfig) -> HashSet<String> {
     all_processes(cfg).into_iter().filter(|p| p.optional).map(|p| p.name().to_string()).collect()
 }
 
-fn window_url(app: &AppHandle) -> Option<String> {
+fn current_window_url(app: &AppHandle) -> Option<String> {
     app.get_webview_window("main").and_then(|w| w.url().ok()).map(|u| u.to_string())
 }
 
@@ -325,27 +336,43 @@ fn watch(app: &AppHandle, cfg: &DesktopConfig, ctx: &Context, splash_url: Option
     }
 }
 
-/// The sidecars a page may talk to (`messages` in the config): their port, the shared token the shell adds, the allowed requests.
+/// The sidecars a page may talk to (`messages` in the config): their port, the token the shell adds (`LaunchTokens::relay_token`), the
+/// allowed requests.
 fn publish_endpoints(app: &AppHandle, cfg: &DesktopConfig, ctx: &Context) {
     let endpoints = app.state::<SidecarEndpoints>();
     let mut table = endpoints.0.lock().unwrap();
     for p in all_processes(cfg).into_iter().filter(|p| !p.messages.is_empty()) {
         let Some(port) = ctx.ports.get(p.name()) else { continue };
-        let token = p.shared_token.is_some().then(|| ctx.token.clone());
+        let token = ctx.tokens.relay_token(p);
         table.insert(p.name().to_string(), Endpoint { port: *port, token, allowed: p.messages.clone() });
     }
 }
 
+/// `sidecar_message` for the page of THIS launch's back only (its exact loopback origins), never another loopback port: an agent's dev
+/// server shown in the window, or a frame of it, is refused. Added at run time because the port is chosen at each launch.
+fn allow_back_origin(app: &AppHandle, port: u16) -> Result<(), BootError> {
+    let capability = tauri::ipc::CapabilityBuilder::new("sidecar-message-local")
+        .window("main")
+        .remote(format!("http://127.0.0.1:{port}/*"))
+        .remote(format!("http://localhost:{port}/*"))
+        .permission("allow-sidecar-message");
+    app.add_capability(capability).map_err(|e| BootError::new("spawnFailed", vec![param("name", "shell"), param("detail", e)]))
+}
+
 fn run(app: &AppHandle, cfg: &DesktopConfig) -> Result<(), BootError> {
-    let ctx = prepare(app, cfg)?;
+    let mut ctx = prepare(app, cfg)?;
+    allow_back_origin(app, ctx.ports[SERVER_NAME])?;
     publish_endpoints(app, cfg, &ctx);
     shell_log(&ctx.logs_dir, &format!("resources: {}", ctx.resources.display()));
     if !start_all(app, cfg, &ctx)? {
         return Ok(());
     }
-    let splash_url = window_url(app);
-    let url = format!("http://127.0.0.1:{}/", ctx.ports[SERVER_NAME]);
-    eval(app, format!("window.location.replace({})", crate::splash::js_str(&url)));
+    let splash_url = current_window_url(app);
+    // The boot code travels in the fragment of this one navigation (never logged, never sent to the back by the browser); the page exchanges
+    // it for its interface session and removes it from the address. The shell keeps no copy.
+    let code = std::mem::take(&mut ctx.ui_boot_code);
+    eval(app, format!("window.location.replace({})", crate::splash::js_str(&window_url(ctx.ports[SERVER_NAME], &code))));
+    drop(code);
     watch(app, cfg, &ctx, splash_url);
     Ok(())
 }

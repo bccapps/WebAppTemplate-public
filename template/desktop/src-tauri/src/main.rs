@@ -112,8 +112,8 @@ fn build_window(app: &tauri::App, cfg: &DesktopConfig) -> tauri::Result<()> {
     Ok(())
 }
 
-/// `sidecar_message` is a Tauri permission granted to the local back's pages (`capabilities/sidecar-message.json`); the remote origins the config names
-/// (a hub shown in the window in client mode) get it here, at start-up, from the same permission.
+/// `sidecar_message` is a Tauri permission granted at run time to the page of this launch's back only (`boot.rs` `allow_back_origin`: its exact
+/// port); the remote origins the config names (a hub shown in the window in client mode) get it here, at start-up, from the same permission.
 fn allow_message_origins(app: &tauri::App, cfg: &DesktopConfig) -> tauri::Result<()> {
     if cfg.messaging.origins.is_empty() {
         return Ok(());

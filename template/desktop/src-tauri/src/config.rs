@@ -58,10 +58,15 @@ pub struct ProcessConfig {
     pub health_path: Option<String>,
     #[serde(default = "default_ready_timeout")]
     pub ready_timeout_sec: u64,
-    /// Name(s) of the env var(s) that receive the per-launch shared token (same value for every process asking). A list lets
-    /// two processes that name the variable differently share one token (e.g. `LOCAL_RUNNER_TOKEN` on the back, `RUNNER_TOKEN` on a runner).
+    /// Legacy: name(s) of the env var(s) that receive the ONE per-launch token shared by every process that declares `sharedToken`.
+    /// Prefer `linkTokens` (one token per link): with `sharedToken`, a process holding the token of one link holds every other's.
     #[serde(default)]
     pub shared_token: Option<TokenVars>,
+    /// Per-link tokens, `{ "ENV_VAR": "<link>" }`: every link gets its own random token at each launch, the same for every process that
+    /// names it (the back's `LOCAL_RUNNER_TOKEN` and a runner's `RUNNER_TOKEN` both naming `runner`). The link named after a sidecar is also
+    /// the token the shell adds when it relays a `sidecar_message` to that sidecar.
+    #[serde(default)]
+    pub link_tokens: BTreeMap<String, String>,
     /// Sidecars only: a failure of this process (cannot start, exits, never becomes ready, dies later) is logged in `shell.log`
     /// and ignored: the app starts without it. For auxiliary processes whose prerequisites may be missing on a machine.
     #[serde(default)]
@@ -309,6 +314,17 @@ fn validate_process(p: &ProcessConfig) -> Result<(), String> {
             return Err(format!("{name}: sharedToken names must not be empty"));
         }
     }
+    for (var, link) in &p.link_tokens {
+        if var.trim().is_empty() || var.contains('=') {
+            return Err(format!("{name}: linkTokens variable names must not be empty nor contain '='"));
+        }
+        if !valid_link_name(link) {
+            return Err(format!("{name}: linkTokens link \"{link}\" must be lowercase letters, digits and '-'"));
+        }
+        if p.shared_token.as_ref().is_some_and(|vars| vars.names().contains(&var.as_str())) {
+            return Err(format!("{name}: {var} is both in sharedToken and in linkTokens"));
+        }
+    }
     if p.command.candidates().iter().all(|c| c.trim().is_empty()) {
         return Err(format!("{name}: command must not be empty"));
     }
@@ -332,6 +348,27 @@ fn validate_process(p: &ProcessConfig) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// A `linkTokens` link name: `[a-z0-9-]+`.
+fn valid_link_name(link: &str) -> bool {
+    !link.is_empty() && link.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+impl DesktopConfig {
+    /// Every link named in a `linkTokens` of the processes that run on `os`, once each.
+    pub fn link_names(&self, os: &str) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .sidecars
+            .iter()
+            .filter(|p| p.runs_on(os))
+            .chain(std::iter::once(&self.server))
+            .flat_map(|p| p.link_tokens.values().cloned())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
 }
 
 /// `https://host[:port]`, nothing after it (the loopback `http` origins are the local back's, already allowed).
@@ -400,6 +437,24 @@ mod tests {
         assert!(parse_config(&with(r#"{"name":"r","command":"p","os":["beos"]}"#)).unwrap_err().contains("unknown os"));
         assert!(parse_config(&with(r#"{"name":"r","command":"p","sharedToken":[" "]}"#)).unwrap_err().contains("must not be empty"));
         assert!(parse_config(r#"{"productName":"A","identifier":"x","server":{"command":"n","optional":true}}"#).unwrap_err().contains("server cannot"));
+    }
+
+    #[test]
+    fn link_tokens_are_validated_and_listed_per_os() {
+        let with = |s: &str, server: &str| format!(r#"{{"productName":"A","identifier":"x","server":{{"command":"n"{server}}},"sidecars":[{s}]}}"#);
+        let ok = parse_config(&with(
+            r#"{"name":"r","command":"p","os":["macos"],"linkTokens":{"RUNNER_TOKEN":"runner"}},{"name":"e","command":"p","linkTokens":{"ENGINE_TOKEN":"engine"}}"#,
+            r#","linkTokens":{"LOCAL_RUNNER_TOKEN":"runner","ENGINE_TOKEN":"engine"}"#,
+        ))
+        .unwrap();
+        assert_eq!(ok.server.link_tokens["LOCAL_RUNNER_TOKEN"], "runner");
+        assert_eq!(ok.link_names("macos"), vec!["engine", "runner"]);
+        assert_eq!(ok.link_names("windows"), vec!["engine", "runner"], "the server names both links on every OS");
+        for bad in [r#"{"":"runner"}"#, r#"{"A=B":"runner"}"#, r#"{"T":""}"#, r#"{"T":"Runner"}"#, r#"{"T":"a b"}"#] {
+            assert!(parse_config(&with(&format!(r#"{{"name":"r","command":"p","linkTokens":{bad}}}"#), "")).is_err(), "{bad}");
+        }
+        let both = with(r#"{"name":"r","command":"p","sharedToken":"T","linkTokens":{"T":"runner"}}"#, "");
+        assert!(parse_config(&both).unwrap_err().contains("both in sharedToken and in linkTokens"));
     }
 
     #[test]

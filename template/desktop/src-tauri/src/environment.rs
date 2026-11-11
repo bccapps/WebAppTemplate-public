@@ -67,9 +67,37 @@ pub fn random_key_b64() -> String {
     base64_encode(&random_bytes())
 }
 
-/// Per-launch token shared by the processes that ask for it.
+/// A per-launch token (the legacy shared token, each link's token): 32 random bytes in hex.
 pub fn random_token_hex() -> String {
     hex_encode(&random_bytes())
+}
+
+/// One fresh token per link name (`linkTokens`), all different.
+pub fn link_tokens(names: &[String], generate: &dyn Fn() -> String) -> BTreeMap<String, String> {
+    names.iter().map(|name| (name.clone(), generate())).collect()
+}
+
+/// SHA-256 of `text` (its UTF-8 bytes), lowercase hex.
+pub fn sha256_hex(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex_encode(&Sha256::digest(text.as_bytes()))
+}
+
+/// The interface boot code of this launch (32 random bytes, hex) and its anchor (`sha256_hex(code)`). The anchor goes to the back
+/// (`LOCAL_UI_BOOT_ANCHOR`, not a secret: it only lets the back recognise the code); the code goes ONLY into the fragment of the URL the
+/// window opens (`window_url`), never into a process environment, a file or a log.
+pub fn ui_boot_code() -> (String, String) {
+    let code = random_token_hex();
+    let anchor = sha256_hex(&code);
+    (code, anchor)
+}
+
+/// Fragment key of the interface boot code (`react/common` `core/http/localUiSession.ts` reads and removes it).
+pub const UI_BOOT_FRAGMENT_KEY: &str = "vx-local-ui";
+
+/// The first URL of the window: the back's root, the boot code in the fragment (a fragment is never sent to a server nor logged by it).
+pub fn window_url(port: u16, code: &str) -> String {
+    format!("http://127.0.0.1:{port}/#{UI_BOOT_FRAGMENT_KEY}={code}")
 }
 
 fn random_bytes() -> [u8; 32] {
@@ -126,6 +154,8 @@ pub struct ServerFacts<'a> {
     /// `desktop.config.json` `schema`: forced as `DB_SCHEMA_MODE`. `None` = legacy, `DB_MIGRATIONS_RUN=true` is forced instead.
     pub schema: Option<&'a str>,
     pub parent_pid: u32,
+    /// `sha256_hex` of this launch's interface boot code (`ui_boot_code`), forced as `LOCAL_UI_BOOT_ANCHOR`.
+    pub ui_boot_anchor: &'a str,
 }
 
 /// Variables injected into the back at every launch. They always win over the config's own `env`.
@@ -137,6 +167,9 @@ pub fn server_core_env(f: &ServerFacts) -> BTreeMap<String, String> {
         ("NODE_PORT", f.port.to_string()),
         ("CLIENT_ORIGINS", format!("{origin},http://localhost:{}", f.port)),
         ("LOCAL_TRUST", "true".into()),
+        // Local trust also needs the interface session the window opens with (`nest/common/README.md`, « Session d'interface locale »):
+        // a local process without it (an agent, a script) is not the administrator.
+        ("LOCAL_UI_BOOT_ANCHOR", f.ui_boot_anchor.to_string()),
         // Forced, so no inherited `DB_ENGINE=postgres` (a developer's shell) can switch the packaged app to another database.
         ("DB_ENGINE", "sqlite".into()),
         ("DB_PATH", p(&f.data_dir.join(f.db_file))),
@@ -157,18 +190,40 @@ pub fn server_core_env(f: &ServerFacts) -> BTreeMap<String, String> {
     vars.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
 }
 
-/// Final environment of one process: config `env` (placeholders resolved), the shared token, and for the
+/// The tokens of one launch: the legacy shared token (`sharedToken`) and one per link (`linkTokens`).
+pub struct LaunchTokens {
+    pub shared: String,
+    pub links: BTreeMap<String, String>,
+}
+
+impl LaunchTokens {
+    /// The token the shell adds when it relays a `sidecar_message` to `p`: its link named after it, else the legacy shared token.
+    pub fn relay_token(&self, p: &ProcessConfig) -> Option<String> {
+        if p.link_tokens.values().any(|link| link == p.name()) {
+            return self.links.get(p.name()).cloned();
+        }
+        p.shared_token.is_some().then(|| self.shared.clone())
+    }
+}
+
+/// Final environment of one process: config `env` (placeholders resolved), the shared token, the tokens of its links, and for the
 /// server the secrets then the injected variables.
 pub fn process_env(
     cfg: &ProcessConfig,
     ph: &Placeholders,
-    token: &str,
+    tokens: &LaunchTokens,
     server_extra: Option<(&BTreeMap<String, String>, &BTreeMap<String, String>)>,
 ) -> BTreeMap<String, String> {
     let mut env: BTreeMap<String, String> = cfg.env.iter().map(|(k, v)| (k.clone(), substitute(v, ph))).collect();
     if let Some(vars) = &cfg.shared_token {
         for var in vars.names() {
-            env.insert(var.to_string(), token.to_string());
+            env.insert(var.to_string(), tokens.shared.clone());
+        }
+    }
+    for (var, link) in &cfg.link_tokens {
+        // Every link named by a process of this launch has a token (`link_tokens` over `DesktopConfig::link_names`).
+        if let Some(token) = tokens.links.get(link) {
+            env.insert(var.clone(), token.clone());
         }
     }
     if let Some((secrets, core)) = server_extra {
@@ -251,6 +306,32 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    fn tokens(shared: &str, links: &[(&str, &str)]) -> LaunchTokens {
+        LaunchTokens { shared: shared.into(), links: links.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect() }
+    }
+
+    #[test]
+    fn sha256_matches_known_vectors_and_the_boot_code_hashes_to_its_anchor() {
+        assert_eq!(sha256_hex(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assert_eq!(sha256_hex("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        let (code, anchor) = ui_boot_code();
+        let (other, _) = ui_boot_code();
+        assert_eq!(code.len(), 64);
+        assert!(code.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(code, other);
+        assert_eq!(anchor, sha256_hex(&code));
+        assert_ne!(anchor, code);
+        assert_eq!(window_url(4321, "c0de"), "http://127.0.0.1:4321/#vx-local-ui=c0de");
+    }
+
+    #[test]
+    fn every_link_gets_its_own_token() {
+        let links = link_tokens(&["runner".to_string(), "voice-engine".to_string()], &random_token_hex);
+        assert_eq!(links.len(), 2);
+        assert_ne!(links["runner"], links["voice-engine"]);
+        assert_eq!(links["runner"].len(), 64);
+    }
+
     #[test]
     fn core_env_has_the_injected_variables() {
         let facts = ServerFacts {
@@ -261,12 +342,14 @@ mod tests {
             db_file: "app.db",
             schema: None,
             parent_pid: 77,
+            ui_boot_anchor: "a1",
         };
         let env = server_core_env(&facts);
         assert_eq!(env["HOST"], "127.0.0.1");
         assert_eq!(env["NODE_PORT"], "4321");
         assert_eq!(env["CLIENT_ORIGINS"], "http://127.0.0.1:4321,http://localhost:4321");
         assert_eq!(env["LOCAL_TRUST"], "true");
+        assert_eq!(env["LOCAL_UI_BOOT_ANCHOR"], "a1");
         assert_eq!(env["DB_ENGINE"], "sqlite");
         assert_eq!(env["DB_PATH"], "/d/app.db");
         assert_eq!(env["DB_MIGRATIONS_RUN"], "true", "legacy: without `schema` the shell forces DB_MIGRATIONS_RUN=true");
@@ -292,6 +375,7 @@ mod tests {
                 db_file: "app.db",
                 schema: Some(mode),
                 parent_pid: 77,
+                ui_boot_anchor: "a1",
             };
             let env = server_core_env(&facts);
             assert_eq!(env["DB_SCHEMA_MODE"], mode);
@@ -308,14 +392,40 @@ mod tests {
         .unwrap();
         let core = BTreeMap::from([("LOCAL_TRUST".to_string(), "true".to_string())]);
         let secrets = BTreeMap::from([("CRYPT_DB_MASTER_KEY".to_string(), "s".to_string())]);
-        let server = process_env(&cfg.server, &ph(), "tok", Some((&secrets, &core)));
+        let server = process_env(&cfg.server, &ph(), &tokens("tok", &[]), Some((&secrets, &core)));
         assert_eq!(server["LOCAL_TRUST"], "true");
         assert_eq!(server["K"], "/data");
         assert_eq!(server["ENGINE_TOKEN"], "tok");
         assert_eq!(server["CRYPT_DB_MASTER_KEY"], "s");
-        let side = process_env(&cfg.sidecars[0], &ph(), "tok", None);
+        let side = process_env(&cfg.sidecars[0], &ph(), &tokens("tok", &[]), None);
         assert_eq!(side["PORT"], "5000");
         assert_eq!(side["TOKEN"], "tok");
         assert!(!side.contains_key("CRYPT_DB_MASTER_KEY"));
+    }
+
+    #[test]
+    fn link_tokens_reach_both_ends_of_their_link_only() {
+        let cfg = parse_config(
+            r#"{"productName":"A","identifier":"x","server":{"command":"n","linkTokens":{"LOCAL_RUNNER_TOKEN":"runner","ENGINE_TOKEN":"engine"}},
+                "sidecars":[{"name":"engine","command":"p","port":true,"linkTokens":{"ENGINE_TOKEN":"engine"}},
+                            {"name":"runner","command":"p","linkTokens":{"RUNNER_TOKEN":"runner"}},
+                            {"name":"legacy","command":"p","sharedToken":"OLD_TOKEN"}]}"#,
+        )
+        .unwrap();
+        let launch = tokens("shared", &[("runner", "tr"), ("engine", "te")]);
+        let server = process_env(&cfg.server, &ph(), &launch, None);
+        assert_eq!((server["LOCAL_RUNNER_TOKEN"].as_str(), server["ENGINE_TOKEN"].as_str()), ("tr", "te"));
+        let engine = process_env(&cfg.sidecars[0], &ph(), &launch, None);
+        assert_eq!(engine["ENGINE_TOKEN"], "te");
+        assert!(!engine.values().any(|v| v == "tr" || v == "shared"), "the engine never holds the runner's token");
+        let runner = process_env(&cfg.sidecars[1], &ph(), &launch, None);
+        assert_eq!(runner["RUNNER_TOKEN"], "tr");
+        assert!(!runner.values().any(|v| v == "te" || v == "shared"), "the runner never holds the engine's token");
+        assert_eq!(process_env(&cfg.sidecars[2], &ph(), &launch, None)["OLD_TOKEN"], "shared");
+        // The relay token of a sidecar (used only for one with `messages`): its own link, else the legacy shared token, else none.
+        assert_eq!(launch.relay_token(&cfg.sidecars[0]).as_deref(), Some("te"));
+        assert_eq!(launch.relay_token(&cfg.sidecars[2]).as_deref(), Some("shared"));
+        let other = parse_config(r#"{"productName":"A","identifier":"x","server":{"command":"n"},"sidecars":[{"name":"x","command":"p","linkTokens":{"T":"engine"}}]}"#).unwrap();
+        assert_eq!(launch.relay_token(&other.sidecars[0]), None, "a link not named after the sidecar is not its relay token");
     }
 }

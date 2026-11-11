@@ -40,7 +40,7 @@ desktop/
 | `resources.frontDir` | Built front relative to the resources folder, exported as `SERVE_FRONT_DIR` (default `front/dist`). |
 | `dbFile` | SQLite file name inside the data folder (default `app.db`), exported as `DB_PATH`. |
 | `schema` | How the database schema is managed at boot: `sync` (synchronize, no migrations), `migrations` (the app's own SQLite migrations run at start) or `manual`. The shell forces it as `DB_SCHEMA_MODE`. Absent = legacy: the shell forces `DB_MIGRATIONS_RUN=true` (apps with hand-written SQLite migrations keep working unchanged). An app whose migrations are PostgreSQL SQL (a desktop *variant* of a web app) declares `"schema": "sync"`. Details: `nest/database/README.md`, "Schema management". |
-| `server` | The back. `command` (string or candidate list), `args`, `cwd`, `env`, `healthPath` (default `/api/v1/health`), `readyTimeoutSec` (default 120), `sharedToken`. |
+| `server` | The back. `command` (string or candidate list), `args`, `cwd`, `env`, `healthPath` (default `/api/v1/health`), `readyTimeoutSec` (default 120), `linkTokens` (`sharedToken`, legacy). |
 | `sidecars[]` | Same shape as `server`, plus `name` (required, unique, not `server`), `label`, `port`, `optional`, `os` and `messages`. Started in order **before** the server (those whose `os` list does not contain this OS are skipped). |
 | `messaging` | `origins`: remote `https://host[:port]` origins whose pages may call the `sidecar_message` command (see « Talking to a sidecar from a page »). The page of the local back always may. |
 | `packaging` | `nodeVersion` (default: pinned) and `extraResources`, read by the packaging scripts only (see Packaging). |
@@ -56,10 +56,14 @@ Process fields:
   port) and `{port:<name>}` (another process's port, e.g. `{port:engine}`). Other brace text is left untouched.
 - `port` (sidecars; always on for the server): allocate a free loopback port. `healthPath` needs it; a sidecar with a
   `healthPath` is waited for (up to `readyTimeoutSec`) before the next process starts, one without is not waited for.
-- `sharedToken`: name of an env var (or a list of names, all receiving the same value) that receives a token generated at
-  **each launch** (32 random bytes in hex), the same value for every process that asks. The name may differ per process:
-  `"sharedToken": "LOCAL_RUNNER_TOKEN"` on the server and `"sharedToken": "RUNNER_TOKEN"` on a runner sidecar let the back
-  authenticate the runner that connects to it, with no token written anywhere.
+- `linkTokens`: `{ "ENV_VAR": "<link>" }`. Each **link** (a name, `[a-z0-9-]+`) gets its own token at **each launch** (32 random
+  bytes in hex), put in the named variable of every process that names the link, and in no other process. The variable may differ
+  per end: `"linkTokens": { "LOCAL_RUNNER_TOKEN": "runner" }` on the server and `"linkTokens": { "RUNNER_TOKEN": "runner" }` on a runner
+  sidecar let the back authenticate the runner that connects to it, with no token written anywhere; the runner never holds the token
+  of another link (an engine's). The link named after a sidecar is also the token the shell adds when it relays a `sidecar_message` to it.
+- `sharedToken` (legacy): name of an env var (or a list of names, all receiving the same value) that receives the ONE per-launch token
+  shared by every process declaring `sharedToken`: whoever holds it for one link holds it for all. Kept for existing configs; prefer
+  `linkTokens` (a variable cannot be in both).
 - `optional` (sidecars only, default `false`): the process is auxiliary. If it cannot start, exits at start-up, never becomes
   ready or dies later, the failure is written to `shell.log` (and its own `<name>.log`) and **the app goes on without it**; the
   waiting page does not show it. Use it for a process whose prerequisites may be missing on a machine (a runner needing `tmux`).
@@ -74,10 +78,10 @@ Example with a sidecar:
 {
   "productName": "Studio", "identifier": "app.example.studio",
   "server": { "command": ["{resources}/runtime/node/node", "node"], "args": ["dist/main.js"], "cwd": "{resources}/back",
-              "env": { "ENGINE_URL": "http://127.0.0.1:{port:engine}" }, "sharedToken": "ENGINE_TOKEN" },
+              "env": { "ENGINE_URL": "http://127.0.0.1:{port:engine}" }, "linkTokens": { "ENGINE_TOKEN": "engine" } },
   "sidecars": [
     { "name": "engine", "label": "engine", "command": "{resources}/engine/run", "args": ["--port", "{port}"],
-      "port": true, "healthPath": "/health", "readyTimeoutSec": 240, "sharedToken": "ENGINE_TOKEN" }
+      "port": true, "healthPath": "/health", "readyTimeoutSec": 240, "linkTokens": { "ENGINE_TOKEN": "engine" } }
   ]
 }
 ```
@@ -94,10 +98,14 @@ Example with a sidecar:
    (32 random bytes, base64, same rule as `backEnvValues` in `scripts/create-project.mjs`), generated on first launch only.
 4. **Environment of the back**: the config `env`, then the secrets, then these variables, which always win:
    `HOST=127.0.0.1`, `NODE_PORT`, `CLIENT_ORIGINS` (`http://127.0.0.1:<port>`, `http://localhost:<port>`),
-   `LOCAL_TRUST=true`, `DB_ENGINE=sqlite` (forced, so an inherited `DB_ENGINE=postgres` of a developer's shell cannot win), `DB_PATH=<data>/<dbFile>`, `DB_SCHEMA_MODE=<schema>` when the config declares `schema` (otherwise the legacy `DB_MIGRATIONS_RUN=true`, never both),
+   `LOCAL_TRUST=true`, `LOCAL_UI_BOOT_ANCHOR` (the SHA-256 of this launch's interface boot code, step 5), `DB_ENGINE=sqlite` (forced, so an inherited `DB_ENGINE=postgres` of a developer's shell cannot win), `DB_PATH=<data>/<dbFile>`, `DB_SCHEMA_MODE=<schema>` when the config declares `schema` (otherwise the legacy `DB_MIGRATIONS_RUN=true`, never both),
    `APP_DATA_DIR=<data>`, `LOG_DIR=<data>/logs`, `SHARED_DIRECTORY=<data>/shared`, `DISABLE_TRANSPORT_CRYPTO=true`,
    `APP_ENV=desktop`, `SERVE_FRONT_DIR`, `DESKTOP_PARENT_PID` (the shell pid; the back exits when it disappears, see
-   `nest/common/README.md`). Sidecars receive only their config `env` plus the shared token.
+   `nest/common/README.md`). **Every process (the back and each sidecar) also inherits the shell's own environment** (`HOME`, `PATH`,
+   `USER`, `TMPDIR` and whatever the OS gives a graphical app, e.g. `SSH_AUTH_SOCK` on macOS): the shell adds to it, it never clears it
+   (`process.rs`, no `env_clear`). A sidecar gets its config `env` and the tokens of its own links (`linkTokens`; the legacy `sharedToken`),
+   never the secrets file, never `LOCAL_UI_BOOT_ANCHOR`, never another link's token. A sidecar that starts processes of its own (a runner
+   and its agents) keeps its control variables away from them itself.
    **Precedence.** Forced by the shell > secrets file > config `env` > the environment the shell was started with (inherited).
    The packaged back does not read any `.env*` file: the resources never contain one (`build-desktop.mjs` copies `back/dist`,
    `package.json`, the locales and the production `node_modules` only; a desktop variant build excludes every `.env*` of the
@@ -105,7 +113,11 @@ Example with a sidecar:
    engine, the trust mode and the paths are the shell's whatever `back/.env*` says. Variables the shell does not force
    (an app's own directories…) go in the server's `env` of `desktop.config.json`.
 5. Sidecars, then the server, are started in their own process group; the shell waits for each health path; the window
-   then goes to the front. If a process exits during start-up, or the health wait times out, the waiting page shows the
+   then goes to the front, at `http://127.0.0.1:<port>/#vx-local-ui=<code>`: `<code>` is the **interface boot code** of this launch
+   (32 random bytes, hex), drawn by the shell, given to the back only as its SHA-256 (`LOCAL_UI_BOOT_ANCHOR`), and put nowhere else (no
+   file, no process environment, no log; a URL fragment is never sent to the server). The page removes it from its address and exchanges
+   it once for its interface session: under `LOCAL_TRUST`, a local process without that session (an agent, a script) is not the
+   administrator (`nest/common/README.md`, « Session d'interface locale »; `react/common/README.md`, same title). The shell keeps no copy. If a process exits during start-up, or the health wait times out, the waiting page shows the
    error and the last 40 log lines. If one dies later, the window returns to the waiting page with the same details.
 6. **Shutdown** (window closed, SIGTERM/SIGINT/SIGHUP): the groups get `SIGTERM`, then `SIGKILL` after 6 s (Windows:
    `taskkill /T /F`). Safety nets if the shell itself is killed: a detached sentinel process on Unix, a Job Object with
@@ -133,8 +145,8 @@ Prerequisites the sidecar's own tools need are the project's to document; the sh
 `engine` for macOS and Linux) therefore declares ONE sidecar (no `os` list) whose `command` is a candidate list, most specific first:
 `["{resources}/engine/engine-bg.exe", "{resources}/engine/engine"]`. The first candidate that exists wins; a path that does not exist on this
 OS (`…-bg.exe` on macOS or Linux) is skipped, and on Windows `.exe` is tried after a path without it. The process is started with the shell's
-own environment plus the config `env` and the shared token (a sidecar inherits `LOCALAPPDATA`, `HOME`, `PATH`...), so an engine that offers an
-env-file option for a context without an environment (a logon task) does not need it here, and the shared token never has to be written to disk.
+own environment plus the config `env` and the tokens of its links (a sidecar inherits `LOCALAPPDATA`, `HOME`, `PATH`...), so an engine that offers an
+env-file option for a context without an environment (a logon task) does not need it here, and its token never has to be written to disk.
 
 ### Windows: sidecars inside WSL2
 
@@ -147,7 +159,7 @@ The application, its back (SQLite, local trust) and its interface are native Win
            "-Name", "runner", "-Payload", "{resources}/runner/runner-linux.tgz", "-Entry", "dist/main.js",
            "-Requires", "tmux,git", "-HealthUrl", "http://127.0.0.1:{port:server}/api/v1/health",
            "-ForwardEnv", "HUB_URL,RUNNER_TOKEN"],
-  "env": { "HUB_URL": "ws://127.0.0.1:{port:server}/api/v1/agenthub/ws/runner" }, "sharedToken": "RUNNER_TOKEN" }
+  "env": { "HUB_URL": "ws://127.0.0.1:{port:server}/api/v1/agenthub/ws/runner" }, "linkTokens": { "RUNNER_TOKEN": "runner" } }
 ```
 
 At each launch the script: (1) checks `wsl.exe --status` and that a distribution exists (`VX_WSL_DISTRO` picks one, default
@@ -218,17 +230,20 @@ that stack without any declaration.
 
 A page served by a **remote** origin (an https hub the window shows) cannot `fetch("http://127.0.0.1:<port>")`: the browser blocks it (mixed content /
 local network access) and the sidecar's port is random per launch. The shell has one generic Tauri command for that, `sidecar_message`; it knows the
-port and the shared token and relays. Nothing is open by default:
+port and the sidecar's token and relays. Nothing is open by default:
 
 - a sidecar is reachable only through the **exact** `"METHOD /path"` entries of its `messages` list (methods `GET`, `POST`, `PUT`, `DELETE`; no query,
   no `..`, no space); anything else is refused before any connection; the target is always `127.0.0.1:<the sidecar's port>`;
-- the shell adds `Authorization: Bearer <the sidecar's shared token>` when the sidecar declares `sharedToken`: the page never sees the token;
-- the command is a Tauri permission (`allow-sidecar-message`, an app command listed in `build.rs`): `capabilities/sidecar-message.json` grants it to the page of the
-  local back (`http://127.0.0.1:*`, `http://localhost:*`), and `messaging.origins` adds remote origins at start-up (`https://hub.example.com`, no path, no wildcard);
+- the shell adds `Authorization: Bearer <token>`: the token of the sidecar's link named after it (`linkTokens`), else the legacy shared token when it
+  declares `sharedToken`; the page never sees the token;
+- the command is a Tauri permission (`allow-sidecar-message`, an app command listed in `build.rs`) granted, at run time once the port is chosen
+  (`boot.rs` `allow_back_origin`), to the page of **this launch's back only** (`http://127.0.0.1:<port>`, `http://localhost:<port>`: never another loopback
+  port, such as an agent's dev server shown in the window or one of its frames — the ACL origin of a frame's IPC message is the frame's URL); `messaging.origins`
+  adds remote origins at start-up (`https://hub.example.com`, no path, no wildcard);
 - bodies are JSON, 64 KiB at most; answers 1 MiB at most; 2 s to connect, 30 s to answer.
 
 ```json
-{ "sidecars": [{ "name": "voice-engine", "port": true, "sharedToken": "VOICE_ENGINE_TOKEN", "messages": ["POST /v1/pair", "GET /v1/status"] }],
+{ "sidecars": [{ "name": "voice-engine", "port": true, "linkTokens": { "VOICE_ENGINE_TOKEN": "voice-engine" }, "messages": ["POST /v1/pair", "GET /v1/status"] }],
   "messaging": { "origins": ["https://hub.example.com"] } }
 ```
 
