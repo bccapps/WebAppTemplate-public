@@ -69,7 +69,9 @@ mod tests {
         assert_eq!(judge_proof(reply(200, &shell_proof("key", "replayed")), "key", "nonce"), BackProof::Refused);
         assert_eq!(judge_proof(reply(200, ""), "key", "nonce"), BackProof::Refused);
         assert_eq!(judge_proof(reply(401, &good), "key", "nonce"), BackProof::Refused);
-        assert_eq!(judge_proof(reply(404, ""), "key", "nonce"), BackProof::Legacy);
+        // A back without the challenge: accepted only in development; a release build refuses it (C2 review M4).
+        assert_eq!(judge_proof_with(reply(404, ""), "key", "nonce", true), BackProof::Legacy);
+        assert_eq!(judge_proof_with(reply(404, ""), "key", "nonce", false), BackProof::Refused);
         assert_eq!(judge_proof(Err("closed".into()), "key", "nonce"), BackProof::Refused);
     }
 
@@ -392,16 +394,22 @@ fn allow_back_origin(app: &AppHandle, port: u16) -> Result<(), BootError> {
 pub enum BackProof {
     /// It holds `LOCAL_UI_SHELL_KEY`: it is the back the shell started.
     Proven,
-    /// `404`: a back built before the challenge existed. The window goes there WITHOUT the boot code nor `sidecar_message`.
+    /// `404`: a back built before the challenge existed — accepted in a DEBUG build only (development against an older back). The window goes
+    /// there WITHOUT the boot code nor `sidecar_message`. A release build treats a `404` as `Refused` (any local process answers `404`).
     Legacy,
     /// Anything else (wrong proof, no answer, garbage): the window never goes there.
     Refused,
 }
 
-/// Judges a reply to `GET /api/v1/local-ui/shell-proof?nonce=<nonce>`.
+/// Judges a reply to `GET /api/v1/local-ui/shell-proof?nonce=<nonce>` (a `404` is `Legacy` in a debug build only).
 pub fn judge_proof(reply: Result<crate::sidecar_message::SidecarReply, String>, shell_key: &str, nonce: &str) -> BackProof {
+    judge_proof_with(reply, shell_key, nonce, cfg!(debug_assertions))
+}
+
+/// `judge_proof` with the legacy fallback explicit (`legacy_allowed`: a debug build).
+pub fn judge_proof_with(reply: Result<crate::sidecar_message::SidecarReply, String>, shell_key: &str, nonce: &str, legacy_allowed: bool) -> BackProof {
     match reply {
-        Ok(r) if r.status == 404 => BackProof::Legacy,
+        Ok(r) if r.status == 404 && legacy_allowed => BackProof::Legacy,
         Ok(r) if r.status == 200 && r.body["proof"].as_str().is_some_and(|p| constant_time_eq(p, &shell_proof(shell_key, nonce))) => BackProof::Proven,
         _ => BackProof::Refused,
     }

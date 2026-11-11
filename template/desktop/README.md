@@ -117,8 +117,9 @@ Example with a sidecar:
    then released before the back binds it, and a health answer proves nothing: before the window goes there, the shell checks that the
    back IT started answers on it — the process is alive, and answers `GET /api/v1/local-ui/shell-proof?nonce=<random>` with the HMAC-SHA256
    of the nonce under `LOCAL_UI_SHELL_KEY` (`boot.rs` `prove_back`, checked again after the answer). Anything else: the waiting page shows
-   `notProven` and the window never goes to that port. A back built before the challenge answers `404`: the window opens there WITHOUT the
-   boot code nor `sidecar_message` (logged in `shell.log`). Once proven, `sidecar_message` is granted to the back's page and the window
+   `notProven` and the window never goes to that port. A back built before the challenge answers `404`: in a DEBUG build only, the window
+   opens there WITHOUT the boot code nor `sidecar_message` (logged in `shell.log`); a release build refuses it like any other answer (any local
+   process answers `404`) — rebuild the back. Once proven, `sidecar_message` is granted to the back's page and the window
    goes to the front, at `http://127.0.0.1:<port>/#vx-local-ui=<code>`: `<code>` is the **interface boot code** of this launch
    (32 random bytes, hex), drawn by the shell, given to the back only as its SHA-256 (`LOCAL_UI_BOOT_ANCHOR`), and put nowhere else (no
    file, no process environment, no log; a URL fragment is never sent to the server). The page removes it from its address and exchanges
@@ -130,9 +131,12 @@ Example with a sidecar:
    kill-on-close on Windows.
 7. Also: single instance (a second launch focuses the window), window built in code (downloads, no drag-and-drop
    interception), Linux DMA-BUF workaround, and a navigation guard (`navigation.rs`): the window (and its frames, WKWebView asks for each)
-   shows the waiting page, `blob:`/`data:`/`about:` content and the back of this launch only; any other loopback address (another port,
-   `localhost`, `[::1]`) is refused, another http(s) site opens in the system browser. A project that embeds an iframe of a remote site in its
-   front would see it opened outside instead.
+   shows the waiting page, `tauri:` / `blob:` / `about:blank` content and the back of this launch only; any other scheme (`data:`,
+   `javascript:`, `file:`…) and any other loopback address (another port, `localhost`, `[::1]`) is refused. A navigation never opens anything
+   outside (it may be a frame's, and no user gesture is known): another http(s) site is refused silently there — a project that embeds an
+   iframe of a remote site sees it blank. An external link opens in the system browser only through a new-window request (`target="_blank"`,
+   `window.open`, given on a user gesture: `on_new_window`); the app never opens a second window of its own (it would not hold the interface
+   session).
 
 ## Launchers and sidecars on each OS
 
