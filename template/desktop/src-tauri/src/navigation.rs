@@ -69,6 +69,29 @@ pub fn on_navigation(url: &Url) -> bool {
     decide(url, BACK_ORIGIN.get().map(String::as_str)) == Decision::Allow
 }
 
+/// Where a new-window request goes.
+#[derive(Debug, PartialEq, Eq)]
+pub enum NewWindowTarget {
+    /// A page of this launch's back (an « open in a tab / window » button of the app): shown in the main window (`main.rs`).
+    MainWindow,
+    /// Anything else: `on_new_window` (an external site opens outside, the rest is refused).
+    Elsewhere,
+}
+
+/// Pure decision for a new-window request: `back` is the back's origin when known.
+pub fn new_window_target_with(url: &Url, back: Option<&str>) -> NewWindowTarget {
+    if matches!(url.scheme(), "http" | "https") && back.is_some_and(|b| url.origin().ascii_serialization() == b) {
+        NewWindowTarget::MainWindow
+    } else {
+        NewWindowTarget::Elsewhere
+    }
+}
+
+/// `new_window_target_with` for this launch's back.
+pub fn new_window_target(url: &Url) -> NewWindowTarget {
+    new_window_target_with(url, BACK_ORIGIN.get().map(String::as_str))
+}
+
 /// The window's new-window handler (`main.rs`): never a second window of the app (it would not hold the interface session); an external
 /// http(s) site asked by a user gesture opens in the system browser.
 pub fn on_new_window(url: &Url) -> bool {
@@ -123,6 +146,16 @@ mod tests {
         for other in ["data:text/html,<script>1</script>", "javascript:alert(1)", "file:///etc/passwd", "about:srcdoc", "ftp://example.com/x", "vscode://x"] {
             assert_eq!(d(other, None), Decision::Refuse, "{other}");
         }
+    }
+
+    #[test]
+    fn a_page_of_the_back_asked_in_a_new_window_opens_in_the_main_window() {
+        let back = Some("http://127.0.0.1:4321");
+        let url = |u: &str| Url::parse(u).unwrap();
+        assert_eq!(new_window_target_with(&url("http://127.0.0.1:4321/agents/s1"), back), NewWindowTarget::MainWindow);
+        assert_eq!(new_window_target_with(&url("http://127.0.0.1:5173/agents/s1"), back), NewWindowTarget::Elsewhere);
+        assert_eq!(new_window_target_with(&url("https://docs.example.com/"), back), NewWindowTarget::Elsewhere);
+        assert_eq!(new_window_target_with(&url("http://127.0.0.1:4321/agents/s1"), None), NewWindowTarget::Elsewhere);
     }
 
     #[test]

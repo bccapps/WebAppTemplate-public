@@ -110,8 +110,21 @@ fn build_window(app: &tauri::App, cfg: &DesktopConfig) -> tauri::Result<()> {
         .disable_drag_drop_handler()
         // Only the waiting page and THIS launch's back are shown; other loopback pages and schemes are refused (`navigation.rs`).
         .on_navigation(navigation::on_navigation)
-        // `window.open` / `target="_blank"`: never a second app window; an external site asked by a gesture opens in the system browser.
-        .on_new_window(|url, _features| if navigation::on_new_window(&url) { tauri::webview::NewWindowResponse::Allow } else { tauri::webview::NewWindowResponse::Deny })
+        // `window.open` / `target="_blank"`: never a second app window — a page of the back opens in THIS window (it keeps the interface
+        // session), an external site asked by a gesture opens in the system browser.
+        .on_new_window({
+            let handle = app.handle().clone();
+            move |url, _features| {
+                if navigation::new_window_target(&url) == navigation::NewWindowTarget::MainWindow {
+                    if let Some(window) = handle.get_webview_window("main") {
+                        let _ = window.navigate(url);
+                    }
+                } else {
+                    navigation::on_new_window(&url);
+                }
+                tauri::webview::NewWindowResponse::Deny
+            }
+        })
         .on_download(download_handler(logs_dir, texts, cfg.splash.brand.clone()))
         .build()?;
     Ok(())

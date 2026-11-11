@@ -136,7 +136,7 @@ Example with a sidecar:
    outside (it may be a frame's, and no user gesture is known): another http(s) site is refused silently there — a project that embeds an
    iframe of a remote site sees it blank. An external link opens in the system browser only through a new-window request (`target="_blank"`,
    `window.open`, given on a user gesture: `on_new_window`); the app never opens a second window of its own (it would not hold the interface
-   session).
+   session): a page of the back asked in a new window or tab (« open in a window » buttons) opens in the main window instead.
 
 ## Launchers and sidecars on each OS
 
