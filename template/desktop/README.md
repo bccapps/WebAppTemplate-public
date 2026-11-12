@@ -35,7 +35,7 @@ desktop/
 | Key | Meaning |
 |---|---|
 | `productName`, `identifier` | App name and reverse-DNS id. Also written into `tauri.conf.json` by `npm run sync` (run by `dev`/`build`). The id decides the OS data folder. |
-| `window` | `title` (default: `productName`), `width`, `height`, `minWidth`, `minHeight`, `theme` (`dark`, `light`, `system`); `sameWindowPaths` and `browserPaths`: the pages of the back a new-window request may reach (see 7 below; patterns of `/`-separated segments: literal, `*` = one id or word, `**` = the rest, last and in `browserPaths` only; never `/api/…`). |
+| `window` | `title` (default: `productName`), `width`, `height`, `minWidth`, `minHeight`, `theme` (`dark`, `light`, `system`); `sameWindowPaths` and `browserPaths`: the pages of the back a new-window request may reach (see 7 below; patterns of `/`-separated segments: literal, `*` = one id or word, `**` = the rest, last and in `browserPaths` only; never `/api/…` in `sameWindowPaths`; in `browserPaths`, a pattern under `/api` names four literal segments before any wildcard, e.g. `/api/v1/<module>/previews/*/*/**`). |
 | `resources.marker` | File, relative to the resources folder, that identifies it (default `back/dist/main.js`). |
 | `resources.frontDir` | Built front relative to the resources folder, exported as `SERVE_FRONT_DIR` (default `front/dist`). |
 | `dbFile` | SQLite file name inside the data folder (default `app.db`), exported as `DB_PATH`. |
@@ -132,7 +132,9 @@ Example with a sidecar:
 7. Also: single instance (a second launch focuses the window), window built in code (downloads, no drag-and-drop
    interception), Linux DMA-BUF workaround, and a navigation guard (`navigation.rs`): the window (and its frames, WKWebView asks for each)
    shows the waiting page, `tauri:` / `blob:` / `about:blank` content and the back of this launch only; any other scheme (`data:`,
-   `javascript:`, `file:`…) and any other loopback address (another port, `localhost`, `[::1]`) is refused. A navigation never opens anything
+   `javascript:`, `file:`…) and any other address of this machine (another port, `localhost` with or without its trailing dot and its
+   subdomains, `[::1]`, `0.0.0.0`, `[::]`, `[::ffff:127.0.0.1]`, `127.1`…) is refused; `http(s)://tauri.localhost` (the shell's own pages on
+   Windows and Linux) only without a port or a user. A navigation never opens anything
    outside (it may be a frame's, and no user gesture is known): another http(s) site is refused silently there — a project that embeds an
    iframe of a remote site sees it blank. An external link opens in the system browser only through a new-window request (`target="_blank"`,
    `window.open`, given on a user gesture: `on_new_window`); the app never opens a second window of its own (it would not hold the interface

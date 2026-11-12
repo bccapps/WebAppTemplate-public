@@ -40,9 +40,25 @@ pub enum Decision {
     OpenOutside,
 }
 
-fn is_loopback_host(host: &str) -> bool {
-    let h = host.trim_start_matches('[').trim_end_matches(']').to_ascii_lowercase();
-    h == "localhost" || h.ends_with(".localhost") || h == "::1" || h.parse::<std::net::Ipv4Addr>().is_ok_and(|ip| ip.is_loopback())
+/// Whether `url` names this machine: `localhost` (a trailing dot included) and its subdomains, any loopback or unspecified address
+/// (`127.x`, `0.0.0.0`, `[::1]`, `[::]`, an IPv4-mapped `[::ffff:127.0.0.1]`; the parser already reads `2130706433` or `0x7f.1` as `127.0.0.1`).
+fn is_loopback(url: &Url) -> bool {
+    let host = url.host_str().unwrap_or("");
+    if let Some(v6) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        return v6.parse::<std::net::Ipv6Addr>().is_ok_and(|ip| {
+            ip.is_loopback() || ip.is_unspecified() || ip.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback() || v4.is_unspecified())
+        });
+    }
+    if let Ok(v4) = host.parse::<std::net::Ipv4Addr>() {
+        return v4.is_loopback() || v4.is_unspecified();
+    }
+    let h = host.trim_end_matches('.').to_ascii_lowercase();
+    h == "localhost" || h.ends_with(".localhost")
+}
+
+/// The shell's own pages on Windows and Linux: `http(s)://tauri.localhost` exactly — no port, no user.
+fn is_shell_page(url: &Url) -> bool {
+    url.host_str() == Some("tauri.localhost") && url.port().is_none() && url.username().is_empty() && url.password().is_none()
 }
 
 /// Pure decision: `back` is the back's origin when known.
@@ -53,15 +69,13 @@ pub fn decide(url: &Url, back: Option<&str>) -> Decision {
         "about" if url.as_str() == "about:blank" => return Decision::Allow,
         _ => return Decision::Refuse,
     }
-    let host = url.host_str().unwrap_or("");
-    // The shell's own pages (the waiting page) on Windows and Linux.
-    if host == "tauri.localhost" {
+    if is_shell_page(url) {
         return Decision::Allow;
     }
     if back.is_some_and(|b| url.origin().ascii_serialization() == b) {
         return Decision::Allow;
     }
-    if is_loopback_host(host) {
+    if is_loopback(url) {
         return Decision::Refuse;
     }
     Decision::OpenOutside
@@ -178,6 +192,31 @@ mod tests {
     }
 
     #[test]
+    fn every_form_of_this_machine_is_refused_and_the_shell_page_only_without_port() {
+        let back = Some("http://127.0.0.1:4321");
+        for other in [
+            "http://0.0.0.0:4321/",
+            "http://[::]:4321/",
+            "http://[::ffff:127.0.0.1]:4321/",
+            "http://[::ffff:0.0.0.0]:4321/",
+            "http://localhost.:4321/",
+            "http://LOCALHOST:4321/",
+            "http://app.localhost.:4321/",
+            // Written otherwise, 127.0.0.1 on another port (on the back's own port it IS the back: the parser normalises it).
+            "http://2130706433:5173/",
+            "http://0x7f.1:5173/",
+            "http://127.1:5173/",
+            "http://tauri.localhost:8080/",
+            "https://tauri.localhost:1/",
+            "http://user@tauri.localhost/",
+        ] {
+            assert_eq!(d(other, back), Decision::Refuse, "{other}");
+        }
+        assert_eq!(d("https://tauri.localhost/index.html", None), Decision::Allow);
+        assert_eq!(d("http://2130706433:4321/x", back), Decision::Allow);
+    }
+
+    #[test]
     fn shell_pages_and_listed_schemes_pass_external_sites_go_outside() {
         assert_eq!(d("tauri://localhost/index.html", None), Decision::Allow);
         assert_eq!(d("http://tauri.localhost/index.html", None), Decision::Allow);
@@ -196,7 +235,7 @@ mod tests {
     fn rules() -> NewWindowRules {
         NewWindowRules {
             same_window: vec!["/agents/*".into(), "/display/*".into(), "/settings/access".into()],
-            browser: vec!["/previews/**".into()],
+            browser: vec!["/api/v1/agenthub/previews/*/*/**".into()],
         }
     }
 
@@ -219,9 +258,21 @@ mod tests {
     #[test]
     fn content_the_back_serves_for_an_agent_never_takes_the_main_window() {
         let back = Some("http://127.0.0.1:4321");
-        // An agent's preview: the system browser (its ticket rides in the URL), never the window holding the session.
-        assert_eq!(target("http://127.0.0.1:4321/previews/s1/3000/?ticket=t", back), NewWindowTarget::Browser);
-        assert_eq!(target("http://127.0.0.1:4321/agents/%2e%2e/previews/s1/3000/", back), NewWindowTarget::Browser);
+        // An agent's preview (`PREVIEW_PATH_PREFIX` of the back: under its API): the system browser (its ticket rides in the URL), never the
+        // window holding the session.
+        let preview = "http://127.0.0.1:4321/api/v1/agenthub/previews/0b5e9c1a-41f2-4c4e-9d1a-2f3b4c5d6e7f/3000/?ticket=t";
+        assert_eq!(target(preview, back), NewWindowTarget::Browser);
+        assert_eq!(target("http://127.0.0.1:4321/agents/%2e%2e/api/v1/agenthub/previews/s1/3000/", back), NewWindowTarget::Browser);
+        // Another page of the API, or the preview path with a part encoded or in another case: refused.
+        for other in [
+            "http://127.0.0.1:4321/api/v1/agenthub/previews/s1",
+            "http://127.0.0.1:4321/api/v1/agenthub/previews%2fs1/3000/",
+            "http://127.0.0.1:4321/api/v1/agenthub/PREVIEWS/s1/3000/",
+            "http://127.0.0.1:4321/api/v1/agenthub/sessions/s1/3000/",
+            "http://127.0.0.1:4321/previews/s1/3000/",
+        ] {
+            assert_eq!(target(other, back), NewWindowTarget::Refuse, "{other}");
+        }
         for other in [
             "http://127.0.0.1:4321/api/v1/agenthub/sessions/s1/attachments/a",
             "http://127.0.0.1:4321/",
@@ -252,9 +303,10 @@ mod tests {
         assert!(path_matches("/agents/*", "/agents/s1"));
         assert!(!path_matches("/agents/*", "/agents/"));
         assert!(!path_matches("/agents/*", "/agents/a.b"));
-        assert!(path_matches("/previews/**", "/previews/s1/3000/assets/%20x.js"));
-        assert!(path_matches("/previews/**", "/previews"));
-        assert!(!path_matches("/previews/**", "/preview/s1"));
+        assert!(path_matches("/api/v1/agenthub/previews/*/*/**", "/api/v1/agenthub/previews/s1/3000/assets/%20x.js"));
+        assert!(path_matches("/api/v1/agenthub/previews/*/*/**", "/api/v1/agenthub/previews/s1/3000"));
+        assert!(!path_matches("/api/v1/agenthub/previews/*/*/**", "/api/v1/agenthub/previews/s1"));
+        assert!(!path_matches("/api/v1/agenthub/previews/*/*/**", "/api/v1/agenthub/preview/s1/3000/"));
         assert!(!path_matches("/a/**/b", "/a/x/b"));
         assert!(!path_matches("agents/*", "/agents/s1"));
     }
