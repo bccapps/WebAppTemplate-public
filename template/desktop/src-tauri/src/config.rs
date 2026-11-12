@@ -398,16 +398,20 @@ fn valid_origin(origin: &str) -> Result<(), String> {
 /// A path pattern of `window` (`navigation.rs` `path_matches`): `/`-separated literal or `*` segments, `**` only last and only where `rest`
 /// allows it (never for the main window). It starts with a literal segment other than `api` — the back's API never opens in the main window —,
 /// except in `browserPaths` (`rest`), where a page the back serves under its API for someone else (an agent's preview,
-/// `/api/v1/<module>/previews/*/*/**`) may go to the system browser: such a pattern names at least four literal segments before any wildcard.
+/// `/api/v1/<module>/previews/*/*/**`) may go to the system browser: such a pattern names at least four literal segments, then a `*` (in any
+/// case of `api`: the back's routes ignore it).
 fn valid_path_pattern(field: &str, pattern: &str, rest: bool) -> Result<(), String> {
-    let invalid = || format!("{field}: \"{pattern}\" must be /literal[/literal|*]{}", if rest { "[/**] (under /api: four literal segments first)" } else { " (never /api)" });
+    let invalid = || format!("{field}: \"{pattern}\" must be /literal[/literal|*]{}", if rest { "[/**] (under /api: four literal segments, then *)" } else { " (never /api)" });
     let segments: Vec<&str> = pattern.strip_prefix('/').ok_or_else(invalid)?.split('/').collect();
     if !crate::navigation::is_plain_segment(segments[0]) {
         return Err(invalid());
     }
-    if segments[0] == "api" {
+    // Any case: the back's routes are matched case-insensitively (`/API/…` is its API too).
+    if segments[0].eq_ignore_ascii_case("api") {
+        // Under /api (browserPaths only): four literal segments, then a `*` — a page with an id of its own (a preview), never a whole route
+        // (`/api/v1/auth/logout/**`).
         let literal = segments.iter().take_while(|segment| crate::navigation::is_plain_segment(segment)).count();
-        if !rest || literal < 4 {
+        if !rest || literal < 4 || segments.get(literal) != Some(&"*") {
             return Err(invalid());
         }
     }
@@ -520,11 +524,11 @@ mod tests {
         assert_eq!(ok.window.same_window_paths, vec!["/agents/*", "/settings/access"]);
         assert_eq!(ok.window.browser_paths, vec!["/api/v1/agenthub/previews/*/*/**"]);
         assert!(parse_config(&with("")).unwrap().window.same_window_paths.is_empty());
-        for bad in ["/agents/**", "agents/*", "/*/x", "/api/v1/x", "/api/v1/agenthub/previews/*", "/agents/", "/agents/../api", "/agents/%2e", "/", "/a//b"] {
+        for bad in ["/agents/**", "agents/*", "/*/x", "/api/v1/x", "/API/v1/x", "/Api/v1/x", "/api/v1/agenthub/previews/*", "/agents/", "/agents/../api", "/agents/%2e", "/", "/a//b"] {
             assert!(parse_config(&with(&format!(r#""sameWindowPaths":["{bad}"]"#))).is_err(), "{bad}");
         }
         // Under /api, only a precise page of the back goes to the browser: four literal segments before any wildcard.
-        for bad in ["/previews/**/x", "/api/**", "/api/v1/**", "/api/v1/*/previews/**", "/api/v1/agenthub/**", "/**", "previews/**"] {
+        for bad in ["/previews/**/x", "/api/**", "/API/**", "/Api/v1/x/**", "/api/v1/**", "/api/v1/*/previews/**", "/api/v1/agenthub/**", "/api/v1/auth/logout/**", "/API/v1/auth/logout/**", "/api/v1/agenthub/previews/**", "/**", "previews/**"] {
             assert!(parse_config(&with(&format!(r#""browserPaths":["{bad}"]"#))).is_err(), "{bad}");
         }
     }

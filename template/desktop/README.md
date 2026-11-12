@@ -35,7 +35,7 @@ desktop/
 | Key | Meaning |
 |---|---|
 | `productName`, `identifier` | App name and reverse-DNS id. Also written into `tauri.conf.json` by `npm run sync` (run by `dev`/`build`). The id decides the OS data folder. |
-| `window` | `title` (default: `productName`), `width`, `height`, `minWidth`, `minHeight`, `theme` (`dark`, `light`, `system`); `sameWindowPaths` and `browserPaths`: the pages of the back a new-window request may reach (see 7 below; patterns of `/`-separated segments: literal, `*` = one id or word, `**` = the rest, last and in `browserPaths` only; never `/api/…` in `sameWindowPaths`; in `browserPaths`, a pattern under `/api` names four literal segments before any wildcard, e.g. `/api/v1/<module>/previews/*/*/**`). |
+| `window` | `title` (default: `productName`), `width`, `height`, `minWidth`, `minHeight`, `theme` (`dark`, `light`, `system`); `sameWindowPaths` and `browserPaths`: the pages of the back a new-window request may reach (see 7 below; patterns of `/`-separated segments: literal, `*` = one id or word, `**` = the rest, last and in `browserPaths` only; never `/api/…` in `sameWindowPaths`; in `browserPaths`, a pattern under `/api` — `api` in any case — names four literal segments, then a `*`, e.g. `/api/v1/<module>/previews/*/*/**`). |
 | `resources.marker` | File, relative to the resources folder, that identifies it (default `back/dist/main.js`). |
 | `resources.frontDir` | Built front relative to the resources folder, exported as `SERVE_FRONT_DIR` (default `front/dist`). |
 | `dbFile` | SQLite file name inside the data folder (default `app.db`), exported as `DB_PATH`. |
