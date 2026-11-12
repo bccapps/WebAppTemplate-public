@@ -7,8 +7,12 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import request from 'supertest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import http from 'node:http';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { HealthController, HEALTH_CONTRIBUTOR_TIMEOUT_MS } from './HealthController';
 import { HEALTH_CONTRIBUTORS, HealthContributor } from '../types/ExtensionPoints';
 
@@ -22,12 +26,52 @@ async function createApp(contributors?: HealthContributor | HealthContributor[])
   return app;
 }
 
+const socketDirs: string[] = [];
+let pipeCounter = 0;
+
+/**
+ * GET `/api/v1/health` over a private unix socket (named pipe on Windows), never over a TCP port.
+ * supertest's `request(server)` listens on the wildcard address, then connects to 127.0.0.1:<port>: on macOS a server of
+ * another process bound to 127.0.0.1 on that same port (the other specs listen on 127.0.0.1) takes the connection, and
+ * the spec reads ITS answer (a 401 "Authentication required", no `revision`). It showed up as an intermittent failure of
+ * the whole suite under load, never alone. A socket path belongs to this test only.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getHealth(app: INestApplication): Promise<{ status: number; body: any }> {
+  let socketPath: string;
+  if (process.platform === 'win32') {
+    socketPath = `\\\\.\\pipe\\vx-health-${process.pid}-${pipeCounter++}`;
+  } else {
+    const dir = mkdtempSync(path.join(tmpdir(), 'vxh-'));
+    socketDirs.push(dir);
+    socketPath = path.join(dir, 's');
+  }
+  const server = app.getHttpServer() as http.Server;
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(socketPath, resolve);
+  });
+  return new Promise((resolve, reject) => {
+    http.get({ socketPath, path: '/api/v1/health', agent: false }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk: string) => { text += chunk; });
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode ?? 0, body: JSON.parse(text) }); } catch (err) { reject(err); }
+      });
+    }).on('error', reject);
+  });
+}
+
 describe('HealthController', () => {
-  afterEach(() => jest.useRealTimers());
+  afterEach(() => {
+    jest.useRealTimers();
+    for (const dir of socketDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
 
   it('answers 200 with liveness fields and no contributor', async () => {
     const app = await createApp();
-    const res = await request(app.getHttpServer()).get('/api/v1/health');
+    const res = await getHealth(app);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ status: 'ok', checks: {} });
     expect(typeof res.body.uptime).toBe('number');
@@ -42,13 +86,15 @@ describe('HealthController', () => {
     try {
       process.env.DEPLOY_REVISION = 'abc1234-dirty';
       let app = await createApp();
-      let res = await request(app.getHttpServer()).get('/api/v1/health');
+      let res = await getHealth(app);
+      expect(res.status).toBe(200);
       expect(res.body.revision).toBe('abc1234-dirty');
       await app.close();
 
       delete process.env.DEPLOY_REVISION;
       app = await createApp();
-      res = await request(app.getHttpServer()).get('/api/v1/health');
+      res = await getHealth(app);
+      expect(res.status).toBe(200);
       expect(res.body.revision).toBeNull();
       await app.close();
     } finally {
@@ -59,7 +105,7 @@ describe('HealthController', () => {
 
   it('aggregates a single contributor under its key', async () => {
     const app = await createApp({ key: 'infra', check: () => ({ status: 'ok', timestamp: 'now' }) });
-    const res = await request(app.getHttpServer()).get('/api/v1/health');
+    const res = await getHealth(app);
     expect(res.status).toBe(200);
     expect(res.body.checks).toEqual({ infra: { status: 'ok', timestamp: 'now' } });
     await app.close();
@@ -70,7 +116,7 @@ describe('HealthController', () => {
       { key: 'a', check: () => ({ status: 'ok' }) },
       { key: 'b', check: async () => ({ status: 'degraded', detail: 'slow' }) },
     ]);
-    const res = await request(app.getHttpServer()).get('/api/v1/health');
+    const res = await getHealth(app);
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('degraded');
     await app.close();
@@ -81,7 +127,7 @@ describe('HealthController', () => {
       { key: 'a', check: () => ({ status: 'down' }) },
       { key: 'b', check: () => { throw new Error('boom'); } },
     ]);
-    const res = await request(app.getHttpServer()).get('/api/v1/health');
+    const res = await getHealth(app);
     expect(res.status).toBe(503);
     expect(res.body.status).toBe('down');
     expect(res.body.checks.b).toEqual({ status: 'down', error: 'boom' });
