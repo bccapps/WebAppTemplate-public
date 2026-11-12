@@ -41,6 +41,10 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# vx_commit_paths: commits only the paths git tracks (or may adopt), never fails on an ignored/absent one.
+# shellcheck source=lib/git-paths.sh
+source "${SCRIPT_DIR}/lib/git-paths.sh"
+
 info()  { printf "${CYAN}==> %s${NC}\n" "$*"; }
 ok()    { printf "${GREEN}==> %s${NC}\n" "$*"; }
 warn()  { printf "${YELLOW}==> %s${NC}\n" "$*"; }
@@ -198,10 +202,9 @@ if [[ ! -e "${link}" && ! -L "${link}" ]]; then
   if git ls-files --error-unmatch "${link}" >/dev/null 2>&1; then tracked_links="${tracked_links} ${link}"; fi
 fi
 if [[ -n "${tracked_links}" ]]; then
+  # Never forced: a link that is untracked AND git-ignored is left alone. Only the links go in the commit.
   # shellcheck disable=SC2086
-  git add -f ${tracked_links} 2>/dev/null || true
-  if ! git diff --cached --quiet; then
-    git commit -q -m "chore: fix apptemplate symlinks"
+  if vx_commit_paths --adopt "chore: fix apptemplate symlinks" ${tracked_links}; then
     ok "apptemplate symlinks committed"
   fi
 fi
@@ -209,9 +212,9 @@ fi
 # Root CLAUDE.md = real file of @imports (+ project notes); AGENTS.md = generated, git-ignored.
 if [[ -f back/.libs/apptemplate/scripts/project-docs.mjs ]]; then
   node back/.libs/apptemplate/scripts/project-docs.mjs ensure "${PROJECT_ROOT}"
-  git add CLAUDE.md .gitignore 2>/dev/null || true
-  if ! git diff --cached --quiet -- CLAUDE.md .gitignore; then
-    git commit -q -m "chore: refresh CLAUDE.md imports" -- CLAUDE.md .gitignore
+  # A project may ignore its root CLAUDE.md on purpose (`/CLAUDE.md` in .gitignore): then only .gitignore, if it
+  # changed, is committed; nothing is forced and nothing to commit is not an error.
+  if vx_commit_paths --adopt "chore: refresh CLAUDE.md imports" CLAUDE.md .gitignore; then
     ok "CLAUDE.md imports refreshed"
   fi
 fi
@@ -221,9 +224,8 @@ fi
 SYNC_LOCALES_SCRIPT="${PROJECT_ROOT}/back/.libs/apptemplate/scripts/sync-common-locales.mjs"
 if [[ -f "${SYNC_LOCALES_SCRIPT}" && -f "${PROJECT_ROOT}/back/src/locales/common.en.json" ]]; then
   node "${SYNC_LOCALES_SCRIPT}" --root "${PROJECT_ROOT}"
-  if ! git diff --quiet -- back/src/locales/common.en.json back/src/locales/common.fr.json 2>/dev/null; then
-    git add back/src/locales/common.en.json back/src/locales/common.fr.json
-    git commit -q -m "chore(deps): sync common locales from the template"
+  # Tracked files only (an untracked or ignored locale file is never added).
+  if vx_commit_paths "chore(deps): sync common locales from the template" back/src/locales/common.en.json back/src/locales/common.fr.json; then
     ok "common locales: synced from the template"
   fi
 fi
@@ -264,9 +266,8 @@ regenerate_and_install() {
   fi
   ok "${stack}: package.json regenerated + installed"
 
-  if ! git diff --quiet -- "${stack}/package.json" "${stack}/package-lock.json" 2>/dev/null; then
-    git add "${stack}/package.json" "${stack}/package-lock.json"
-    git commit -q -m "chore(deps): regenerate ${stack}/package.json from the template"
+  # Tracked files only: a project that ignores or does not have its package-lock.json commits package.json alone.
+  if vx_commit_paths "chore(deps): regenerate ${stack}/package.json from the template" "${stack}/package.json" "${stack}/package-lock.json"; then
     ok "${stack}: package.json/package-lock.json committed"
   fi
 }

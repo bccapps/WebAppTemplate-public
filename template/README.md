@@ -370,6 +370,8 @@ invalid identifier. The identifier names the OS data folder of the app: change t
   (`@front/.libs/apptemplate/CLAUDE.md`, plus `@front/.libs/vx-private/CLAUDE.private.md` when vx-private is mounted), the marker
   `<!-- project-specific notes below -->` and the project notes (kept across refreshes). `AGENTS.md` (for agents that ignore
   `@import`) is generated from the same files and git-ignored.
+  A project may keep its `CLAUDE.md` out of git (`/CLAUDE.md` in its `.gitignore`): `update_common.sh` then commits only what is tracked
+  (`.gitignore` when it changed), never forces an ignored file in, and an empty commit is skipped, not an error (`scripts/lib/git-paths.sh`).
 
 ### Shared config files
 
