@@ -15,6 +15,19 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
+      # The gitleaks GitHub Action needs a paid license for organizations; the open-source CLI does not. Pinned and
+      # checksum-verified, installed before the tooling tests: the secret-scanning tests (generated rules, git hooks,
+      # update_common.sh) run with the real binary.
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP/bin" gitleaks
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Tooling tests
         run: node --test template/scripts/*.test.mjs template/tools/*.test.mjs
       - name: Module boundaries
@@ -23,13 +36,10 @@ jobs:
         run: node tools/check-boundaries.mjs --root . --stack-dirs nest,react --check-manifests --visibility public
       - name: License headers
         run: node tools/license-headers.mjs --root . --license mit --check
-      # The gitleaks GitHub Action needs a paid license for organizations; the open-source CLI does not.
+      # .gitleaks.toml is generated from nest/common/validation/secret-formats.json (+ .gitleaks.local.toml); a tooling
+      # test fails when it is stale.
       - name: Secret scan
-        env:
-          GITLEAKS_VERSION: 8.30.1
-        run: |
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C "$RUNNER_TEMP" gitleaks
-          "$RUNNER_TEMP/gitleaks" dir . --redact --exit-code 1
+        run: gitleaks dir . --redact --exit-code 1
 
   sandbox:
     runs-on: ubuntu-latest
