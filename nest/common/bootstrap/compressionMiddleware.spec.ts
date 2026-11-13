@@ -39,7 +39,9 @@ function startServer(contentType: string): Promise<Server> {
     }, 100);
   });
   return new Promise((resolve) => {
-    const server = app.listen(0, () => resolve(server));
+    // A SPECIFIC bind on 127.0.0.1: a wildcard listen(0) plus a connection to 127.0.0.1:<port> can be answered by another process's server
+    // bound to 127.0.0.1 on the same port (macOS under load); a specific bind is never duplicated (EADDRINUSE instead of a hijack).
+    const server = app.listen(0, '127.0.0.1', () => resolve(server));
   });
 }
 
@@ -47,7 +49,7 @@ function post(server: Server): Promise<Capture> {
   const start = Date.now();
   return new Promise((resolve, reject) => {
     const req = request(
-      { port: (server.address() as AddressInfo).port, path: '/stream', method: 'POST', headers: { 'Accept-Encoding': 'gzip, deflate, br' } },
+      { host: '127.0.0.1', port: (server.address() as AddressInfo).port, path: '/stream', method: 'POST', headers: { 'Accept-Encoding': 'gzip, deflate, br' } },
       (res) => {
         const arrivals: number[] = [];
         const chunks: Buffer[] = [];
