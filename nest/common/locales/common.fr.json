@@ -191,6 +191,7 @@
   "common.cookieConsent.banner.acceptAll": "Tout accepter",
   "common.cookieConsent.banner.rejectAll": "Continuer sans accepter",
   "common.cookieConsent.banner.customize": "Personnaliser",
+  "common.cookieConsent.banner.policy": "En savoir plus",
   "common.cookieConsent.modal.title": "Paramètres des cookies",
   "common.cookieConsent.modal.necessary.label": "Cookies nécessaires",
   "common.cookieConsent.modal.necessary.description": "Indispensables au fonctionnement du site (session, préférences). Toujours actifs, ils ne nécessitent pas votre consentement.",

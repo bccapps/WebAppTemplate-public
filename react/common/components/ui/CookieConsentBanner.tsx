@@ -7,13 +7,14 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { useState } from "react";
-import { Box, Button, IconButton, Paper, Stack, Typography } from "@mui/material";
+import { useEffect, useState } from "react";
+import { Link as RouterLink, useInRouterContext } from "react-router-dom";
+import { Box, Button, IconButton, Link, Paper, Stack, Typography } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import { I18nLabel } from "./label/I18nLabel";
 import { i18n } from "../../core/i18n/I18n";
 import { CookieConsentSettingsModal } from "./CookieConsentSettingsModal";
-import { getCookieConsent, setCookieConsent } from "../../utils/cookieConsent";
+import { COOKIE_CONSENT_CHANGED_EVENT, getCookieConsent, setCookieConsent } from "../../utils/cookieConsent";
 
 const outlinedButtonSx = { borderColor: "var(--accent-strong)", color: "var(--accent-strong)" };
 const containedButtonSx = { backgroundColor: "var(--accent-strong)", color: "var(--hero-button-text)" };
@@ -24,9 +25,22 @@ const containedButtonSx = { backgroundColor: "var(--accent-strong)", color: "var
  * equal prominence between accept/reject); "Personnaliser" opens the granular, save-to-close
  * CookieConsentSettingsModal instead.
  */
-export const CookieConsentBanner = () => {
+export type CookieConsentBannerProps = {
+  /** Route of the app's cookie policy: adds a « Learn more » link after the text. Omitted = no link. */
+  policyHref?: string;
+};
+
+export const CookieConsentBanner = ({ policyHref }: CookieConsentBannerProps = {}) => {
   const [dismissed, setDismissed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const inRouter = useInRouterContext();
+
+  // A choice made elsewhere (e.g. the « Manage my cookies » link of a footer) hides the banner at once.
+  useEffect(() => {
+    const onChange = () => setDismissed(true);
+    window.addEventListener(COOKIE_CONSENT_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(COOKIE_CONSENT_CHANGED_EVENT, onChange);
+  }, []);
 
   if (dismissed || getCookieConsent() !== null) return null;
 
@@ -74,6 +88,18 @@ export const CookieConsentBanner = () => {
           <Box sx={{ flex: 1 }}>
             <Typography variant="body2">
               <I18nLabel id="common.cookieConsent.banner.text" />
+              {policyHref && (
+                <>
+                  {" "}
+                  <Link
+                    {...(inRouter ? { component: RouterLink, to: policyHref } : { href: policyHref })}
+                    color="inherit"
+                    underline="always"
+                  >
+                    <I18nLabel id="common.cookieConsent.banner.policy" />
+                  </Link>
+                </>
+              )}
             </Typography>
           </Box>
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
