@@ -43,14 +43,22 @@ function quantifier(format) {
 }
 
 /**
- * Rule of one format. No left boundary (a key glued to `\n` in an escaped JSON string, or after `MY_`, is still found);
- * an exact length ends on a non-alphabet character, which keeps a key and the longer OAuth tokens of the same prefix
- * apart. Percent-encoded forms (`tk%5F…`, `Bearer%20tk_…`) are decoded by gitleaks itself (8.30: `--max-decode-depth`).
+ * Before the prefix: nothing by default (a key glued to `\n` in an escaped JSON string, or after `MY_`, is still found;
+ * the entropy floor keeps identifiers out); with `leftBoundary` (a prefix that also occurs inside identifiers), the start,
+ * a character that cannot be part of an identifier, or an escaped `\n` / `\r` / `\t` (RE2 has no look-behind).
+ */
+export const LEFT_BOUNDARY = '(?:^|[^A-Za-z0-9_]|\\\\[nrt])';
+
+/**
+ * Rule of one format. An exact length ends on a non-alphabet character, which keeps a key and the longer OAuth tokens of
+ * the same prefix apart. Percent-encoded forms (`tk%5F…`, `Bearer%20tk_…`) are decoded by gitleaks itself (8.30:
+ * `--max-decode-depth`).
  */
 export function ruleOf(format, registry) {
   const cls = registry.charsets[format.charset];
   const body = `${escapeRegExp(format.prefix)}[${cls}]${quantifier(format)}`;
-  const regex = format.length !== undefined ? `(${body})(?:[^${cls}]|$)` : `(${body})`;
+  const before = format.leftBoundary ? LEFT_BOUNDARY : '';
+  const regex = format.length !== undefined ? `${before}(${body})(?:[^${cls}]|$)` : `${before}(${body})`;
   return { id: `${RULE_ID_PREFIX}${format.id}`, description: `${format.description} — ${format.source}`, regex, entropy: format.minEntropy, keywords: [format.prefix] };
 }
 
@@ -62,7 +70,7 @@ export function oauthRuleOf(format, registry) {
   return {
     id: `${RULE_ID_PREFIX}${format.id}-oauth`,
     description: `${format.app}: ${description} — ${source}`,
-    regex: `(${escapeRegExp(format.prefix)}(?:${alternatives})[${cls}]{${length}})(?:[^${cls}]|$)`,
+    regex: `${format.leftBoundary ? LEFT_BOUNDARY : ''}(${escapeRegExp(format.prefix)}(?:${alternatives})[${cls}]{${length}})(?:[^${cls}]|$)`,
     entropy: minEntropy,
     keywords: markers.map((marker) => `${format.prefix}${marker}`),
   };

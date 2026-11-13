@@ -106,10 +106,19 @@ keywords = ["pwk_at_", "pwk_rt_", "pwk_cs_"]
 
 [[rules]]
 id = "vx-agenthub-api-key"
-description = "AgentHub API key (minted: 32 base62; any BOOTSTRAP_API_KEY value of 8 characters or more is accepted, hence no entropy filter). Its mcp-access OAuth tokens (this prefix, then at_, rt_ or cs_, then 43 characters) are matched by this same rule — AgentHub back/src/modules/agenthub/services/ApiKeyService.ts (KEY_PREFIX, KEY_BODY_LENGTH); back/src/modules/agenthub/mcpaccess/agenthubMcpAccessOptions.ts (AGENTHUB_KEY_FORMAT)"
-regex = '''(ac_live_[A-Za-z0-9_+/=.~-]{8,248})'''
+description = "AgentHub API key (the only form AgentHub mints; also its mcp-access key prefix, hence OAuth tokens). A hand-chosen BOOTSTRAP_API_KEY value (any 8+ printable characters, still accepted by AGENTHUB_KEY_FORMAT, minted by no code) is caught by the assignment rule of AgentHub's .gitleaks.local.toml — AgentHub back/src/modules/agenthub/services/ApiKeyService.ts (KEY_PREFIX, KEY_BODY_LENGTH, randomBase62)"
+regex = '''(?:^|[^A-Za-z0-9_]|\\[nrt])(ac_live_[A-Za-z0-9]{32})(?:[^A-Za-z0-9]|$)'''
 secretGroup = 1
+entropy = 3.0
 keywords = ["ac_live_"]
+
+[[rules]]
+id = "vx-agenthub-api-key-oauth"
+description = "AgentHub: mcp-access OAuth access token (at_), refresh token (rt_) and client secret (cs_, also the secret of a companion or a confidential DCR client), after the app key prefix — vx-private nest/mcp-access/oauth/tokenFormats.ts (generateOAuthSecret)"
+regex = '''(?:^|[^A-Za-z0-9_]|\\[nrt])(ac_live_(?:at_|rt_|cs_)[A-Za-z0-9_-]{43})(?:[^A-Za-z0-9_-]|$)'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["ac_live_at_", "ac_live_rt_", "ac_live_cs_"]
 
 [[rules]]
 id = "vx-agenthub-terminal-share"

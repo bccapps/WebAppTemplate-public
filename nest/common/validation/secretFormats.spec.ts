@@ -39,11 +39,19 @@ describe('secret-formats.json', () => {
     expect([...SECRET_FORMAT_PREFIXES].sort()).toEqual(
       ['ac_live_', 'acs_', 'ahe_', 'ahf_', 'ahi_', 'ahr_', 'ctd_', 'ffg_', 'llmpt_', 'mst_', 'pwk_', 'smx_', 'sup_', 'tk_', 'tkp_', 'whsec_'].sort(),
     );
-    expect(SECRET_FORMATS.filter((f) => f.oauth).map((f) => f.prefix).sort()).toEqual(['ctd_', 'ffg_', 'mst_', 'pwk_', 'tk_'].sort());
+    expect(SECRET_FORMATS.filter((f) => f.oauth).map((f) => f.prefix).sort()).toEqual(['ac_live_', 'ctd_', 'ffg_', 'mst_', 'pwk_', 'tk_'].sort());
+    // AgentHub mints 32 base62 only (ApiKeyService.randomBase62): no legacy wide format in the registry.
+    expect(SECRET_FORMATS.find((f) => f.prefix === 'ac_live_')).toMatchObject({ charset: 'base62', length: 32, leftBoundary: true });
   });
 
   it.each(secretFormatFixtures().map((f) => [`${f.format.id} (${f.kind})`, f] as const))('recognizes a random %s', (_label, fixture) => {
     expect(secretFormatOf(fixture.value)).toEqual({ format: fixture.format, kind: fixture.kind });
+  });
+
+  it('compiles each pattern once (secretFormatOf runs on hot paths)', () => {
+    const format = SECRET_FORMATS[0];
+    expect(secretFormatPattern(format)).toBe(secretFormatPattern(format));
+    expect(secretFormatPattern(format, 'oauth')).toBe(secretFormatPattern(format, 'oauth'));
   });
 
   it('keeps a key and an OAuth token of the same prefix disjoint by length', () => {
@@ -72,7 +80,7 @@ describe('secret-formats.json', () => {
   });
 
   it('refuses a malformed registry at load', () => {
-    const base = { charsets: { base64url: 'A-Za-z0-9_-', base62: 'A-Za-z0-9', hex: '0-9a-f', keyText: 'A-Z' }, fakeMarkers: [], oauth: { markers: [], charset: 'base64url', length: 43, minEntropy: 0 }, identifiers: [] } as const;
+    const base = { charsets: { base64url: 'A-Za-z0-9_-', base62: 'A-Za-z0-9', hex: '0-9a-f' }, fakeMarkers: [], oauth: { markers: [], charset: 'base64url', length: 43, minEntropy: 0 }, identifiers: [] } as const;
     const ok = { id: 'a', app: 'x', prefix: 'ab_', charset: 'hex', length: 4, minEntropy: 0, oauth: false, inUrl: false, description: '', source: '' } as const;
     expect(() => validateSecretFormatRegistry({ ...base, formats: [ok] })).not.toThrow();
     expect(() => validateSecretFormatRegistry({ ...base, formats: [ok, ok] })).toThrow(/duplicate id/);

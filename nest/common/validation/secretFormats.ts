@@ -15,7 +15,7 @@ import registry from './secret-formats.json';
  * mcp-access read their app prefixes from here; the template generates every project's gitleaks rules from the same
  * file (`scripts/gitleaks-config.mjs`). Add a format to the JSON file, never a prefix to a consumer.
  */
-export type SecretCharset = 'base64url' | 'base62' | 'hex' | 'keyText';
+export type SecretCharset = 'base64url' | 'base62' | 'hex';
 
 export interface SecretFormat {
   id: string;
@@ -33,6 +33,8 @@ export interface SecretFormat {
   oauth: boolean;
   /** Travels in URLs (path segment): redacted by `redactPath`. */
   inUrl: boolean;
+  /** The scanner rule requires a boundary before the prefix (a prefix that also occurs inside identifiers). */
+  leftBoundary?: boolean;
   description: string;
   source: string;
 }
@@ -105,8 +107,20 @@ function bodyQuantifier(format: Pick<SecretFormat, 'length' | 'minLength' | 'max
   return format.length !== undefined ? `{${format.length}}` : `{${format.minLength},${format.maxLength}}`;
 }
 
-/** `^<prefix>[charset]{length}$` for a key, or `^<prefix>(?:at_|rt_|cs_)[A-Za-z0-9_-]{43}$` for its OAuth tokens. */
+const patternCache = new Map<string, RegExp>();
+
+/** `^<prefix>[charset]{length}$` for a key, or `^<prefix>(?:at_|rt_|cs_)[A-Za-z0-9_-]{43}$` for its OAuth tokens (compiled once). */
 export function secretFormatPattern(format: SecretFormat, kind: 'key' | 'oauth' = 'key'): RegExp {
+  const key = `${kind}|${format.prefix}|${format.charset}|${bodyQuantifier(format)}`;
+  let pattern = patternCache.get(key);
+  if (!pattern) {
+    pattern = buildPattern(format, kind);
+    patternCache.set(key, pattern);
+  }
+  return pattern;
+}
+
+function buildPattern(format: SecretFormat, kind: 'key' | 'oauth'): RegExp {
   if (kind === 'oauth') {
     const markers = SECRET_OAUTH_FAMILY.markers.map(escapeRegExp).join('|');
     return new RegExp(`^${escapeRegExp(format.prefix)}(?:${markers})[${secretCharsetClass(SECRET_OAUTH_FAMILY.charset)}]{${SECRET_OAUTH_FAMILY.length}}$`);
@@ -118,6 +132,7 @@ export function secretFormatPattern(format: SecretFormat, kind: 'key' | 'oauth' 
 export function secretFormatOf(value: string): { format: SecretFormat; kind: 'key' | 'oauth' } | null {
   if (typeof value !== 'string' || value.length > 512) return null;
   for (const format of SECRET_FORMATS) {
+    if (!value.startsWith(format.prefix)) continue;
     if (secretFormatPattern(format).test(value)) return { format, kind: 'key' };
     if (format.oauth && secretFormatPattern(format, 'oauth').test(value)) return { format, kind: 'oauth' };
   }

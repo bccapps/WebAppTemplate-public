@@ -144,6 +144,14 @@ test('gitleaks: encoded and glued forms are caught (percent-encoded, JSON-escape
   lines.forEach((_, i) => assert.ok((found.get(i + 1) ?? []).includes('vx-tradekong-mcp-token'), lines[i].slice(0, 6)));
 });
 
+test('gitleaks: an AgentHub key inside an identifier is ignored; after a quote, a space or an escaped newline it is caught', { skip: NO_GITLEAKS }, () => {
+  const key = () => `ac_live_${randomBody(registry, 'base62', 32)}`;
+  const lines = [`id my_${key()}x`, `id x${key()}`, `k '${key()}'`, `json "a\\n${key()}"`, `env TOKEN=${key()}`];
+  const found = scanLines(lines);
+  const hit = (i) => (found.get(i + 1) ?? []).includes('vx-agenthub-api-key');
+  assert.deepEqual(lines.map((_, i) => hit(i)), [false, false, true, true, true]);
+});
+
 test('gitleaks: fake-marked values and placeholders pass, by value', { skip: NO_GITLEAKS }, () => {
   const lines = [];
   for (const format of registry.formats) {
@@ -156,14 +164,14 @@ test('gitleaks: fake-marked values and placeholders pass, by value', { skip: NO_
 });
 
 test('gitleaks: a project fragment loads with the generated part and can target a generated rule', { skip: NO_GITLEAKS }, () => {
-  const dummy = `ac_live_notakey${randomBody(registry, 'base62', 12)}`;
+  const dummy = `tk_notakey${randomBody(registry, 'base64url', 36)}`;
   const local = [
     '[[allowlists]]',
     'description = "Dummy key values of the specs"',
-    'targetRules = ["vx-agenthub-api-key"]',
-    "regexes = ['''ac_live_(?i:notakey|example)''']",
+    'targetRules = ["vx-tradekong-mcp-token"]',
+    "regexes = ['''^tk_notakey''']",
   ].join('\n');
-  assert.equal((scanLines([`k ${dummy}`]).get(1) ?? []).includes('vx-agenthub-api-key'), true);
+  assert.equal((scanLines([`k ${dummy}`]).get(1) ?? []).includes('vx-tradekong-mcp-token'), true);
   assert.equal(scanLines([`k ${dummy}`], local).size, 0);
 });
 
