@@ -430,7 +430,7 @@ test('workflow Scan step: push range, new branch, pull request, manual run', { s
     git(sb.base, sb.env, 'clone', '-q', '--no-local', upstream, checkout);
     for (const b of ['feature', 'leaky']) git(checkout, sb.env, 'fetch', '-q', 'origin', b);
 
-    const scan = (vars) => spawnSync('bash', ['-c', script], { cwd: checkout, env: { ...sb.env, RUNNER_TEMP: runner, BRANCH: 'main', BEFORE: '', AFTER: '', BASE: '', HEAD: '', ...vars }, encoding: 'utf8' });
+    const scan = (vars) => spawnSync('bash', ['-e', '-c', script], { cwd: checkout, env: { ...sb.env, RUNNER_TEMP: runner, BRANCH: 'main', BEFORE: '', AFTER: '', BASE: '', HEAD: '', BASE_REF: 'main', PUSHED: '', ...vars }, encoding: 'utf8' });
     const zeros = '0'.repeat(40);
     assert.equal(scan({ EVENT: 'push', BEFORE: oldLeak, AFTER: cleanTip }).status, 0, 'pushed range is clean');
     assert.equal(scan({ EVENT: 'push', BEFORE: cleanTip, AFTER: leakyTip, BRANCH: 'leaky' }).status, 1, 'pushed range leaks');
@@ -441,5 +441,74 @@ test('workflow Scan step: push range, new branch, pull request, manual run', { s
     const manual = scan({ EVENT: 'workflow_dispatch' });
     assert.equal(manual.status, 1, 'a manual run scans the whole history');
     for (const secret of secrets) assert.ok(!`${manual.stdout}${manual.stderr}`.includes(secret.slice(3, 20)), 'values are redacted');
+  } finally { sb.cleanup(); }
+});
+
+test('workflow Scan step: the base configuration applies, a pull request changing it fails; gitleaks:allow, evil merge, force-push', { skip: NO_SCAN }, () => {
+  const sb = sandbox();
+  try {
+    const runner = path.join(sb.base, 'runner');
+    mkdirSync(runner);
+    symlinkSync(realpathSync(spawnSync('sh', ['-c', 'command -v gitleaks'], { encoding: 'utf8' }).stdout.trim()), path.join(runner, 'gitleaks'));
+    const script = scanStepScript();
+    const up = project(sb, 'upstream');
+    const tip = () => git(up, sb.env, 'rev-parse', 'HEAD');
+    assert.equal(commit(sb, up, 'old.txt', `k ${tkValue()}\n`, 'old leak').status, 0);
+    assert.equal(commit(sb, up, 'a.txt', 'a\n').status, 0);
+    const main = tip();
+    const branch = (name) => git(up, sb.env, 'checkout', '-q', '-b', name, main);
+    // A secret, then its fingerprint in .gitleaksignore: the base branch has no such entry.
+    branch('ignore-pr');
+    assert.equal(commit(sb, up, 'leak.txt', `k ${tkValue()}\n`).status, 0);
+    const leakCommit = tip();
+    assert.equal(commit(sb, up, '.gitleaksignore', `${leakCommit}:leak.txt:vx-tradekong-mcp-token:1\n`).status, 0);
+    const ignorePr = tip();
+    branch('config-only');
+    assert.equal(commit(sb, up, '.gitleaksignore', 'x.txt:generic-api-key:1\n').status, 0);
+    const configOnly = tip();
+    branch('allow');
+    assert.equal(commit(sb, up, 'allow.py', `T = "${tkValue()}"  # gitleaks:allow\n`).status, 0);
+    const allow = tip();
+    branch('evil');
+    git(up, sb.env, 'checkout', '-q', '-b', 'side', main);
+    assert.equal(commit(sb, up, 'side.txt', 'side\n').status, 0);
+    git(up, sb.env, 'checkout', '-q', 'evil');
+    assert.equal(commit(sb, up, 'e.txt', 'e\n').status, 0);
+    git(up, sb.env, 'merge', '-q', '--no-commit', 'side');
+    put(up, 'evil.txt', `k ${tkValue()}\n`);
+    git(up, sb.env, 'add', 'evil.txt');
+    git(up, sb.env, 'commit', '-q', '-m', 'merge');
+    const evil = tip();
+    branch('forced');
+    assert.equal(commit(sb, up, 'f.txt', 'f\n').status, 0);
+    const forcedClean = tip();
+    const checkout = path.join(sb.base, 'checkout');
+    git(sb.base, sb.env, 'clone', '-q', '--no-local', up, checkout);
+    // The checkout of a pull request has the head's files: the ignore entry is in the work tree.
+    git(checkout, sb.env, 'checkout', '-q', ignorePr);
+
+    const scan = (vars) => spawnSync('bash', ['-e', '-c', script], { cwd: checkout, env: { ...sb.env, RUNNER_TEMP: runner, BRANCH: 'main', BEFORE: '', AFTER: '', BASE: '', HEAD: '', BASE_REF: 'main', PUSHED: '', ...vars }, encoding: 'utf8' });
+    const out = (r) => `${r.stdout}${r.stderr}`;
+    const pr = scan({ EVENT: 'pull_request', BASE: main, HEAD: ignorePr });
+    assert.equal(pr.status, 1);
+    assert.match(out(pr), /a secret was found/);
+    const cfg = scan({ EVENT: 'pull_request', BASE: main, HEAD: configOnly });
+    assert.equal(cfg.status, 1);
+    assert.match(out(cfg), /changes the secret-scan configuration \(\.gitleaksignore\).*human must review/);
+    const pushCfg = scan({ EVENT: 'push', BEFORE: main, AFTER: configOnly });
+    assert.equal(pushCfg.status, 0, out(pushCfg));
+    assert.match(out(pushCfg), /::warning::this push changes the secret-scan configuration/);
+    assert.equal(scan({ EVENT: 'push', BEFORE: main, AFTER: allow }).status, 1, 'gitleaks:allow ignored');
+    assert.equal(scan({ EVENT: 'push', BEFORE: main, AFTER: evil }).status, 1, 'evil merge');
+    const gone = 'a'.repeat(40);
+    assert.equal(scan({ EVENT: 'push', BEFORE: gone, AFTER: forcedClean, PUSHED: forcedClean, BRANCH: 'forced' }).status, 0, 'force-push: the pushed commits only, not the old leak');
+    assert.equal(scan({ EVENT: 'push', BEFORE: gone, AFTER: ignorePr, PUSHED: `${leakCommit} ${ignorePr}`, BRANCH: 'ignore-pr' }).status, 1, 'force-push: scanned with the configuration the branch started from');
+    assert.equal(scan({ EVENT: 'push', BEFORE: '0'.repeat(40), AFTER: ignorePr, BRANCH: 'ignore-pr' }).status, 1, 'new branch: same');
+    const broken = path.join(sb.base, 'broken');
+    git(sb.base, sb.env, 'clone', '-q', '--no-local', up, broken);
+    put(broken, '.gitleaks.toml', 'garbage = [\n');
+    const failed = spawnSync('bash', ['-e', '-c', script], { cwd: broken, env: { ...sb.env, RUNNER_TEMP: runner, EVENT: 'workflow_dispatch', BRANCH: 'main', BEFORE: '', AFTER: '', BASE: '', HEAD: '', BASE_REF: '', PUSHED: '' }, encoding: 'utf8' });
+    assert.equal(failed.status, 1);
+    assert.match(out(failed), /gitleaks failed \(exit 1/);
   } finally { sb.cleanup(); }
 });
