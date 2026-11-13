@@ -441,7 +441,7 @@ No secret in a repository: gitleaks runs before each commit and push and in CI, 
   `scripts/git-hooks/vx-secret-scan.sh`, shared by linked worktrees, values redacted, silent when clean. `update_common.sh`
   installs them only when gitleaks 8.30 or later is on the PATH (`brew install gitleaks`; otherwise a warning), refreshes
   them, keeps a project hook already there as `<hook>.local` (run after a clean scan) and leaves `core.hooksPath` setups
-  alone (call the script from those hooks: it dispatches on its file name). An installed hook without gitleaks refuses the
+  alone (call it from those hooks: `vx-secret-scan.sh pre-commit`, `vx-secret-scan.sh pre-push "$@"`). An installed hook without gitleaks refuses the
   commit or push with the way to install it. A finding: remove the secret from what you commit or push, and revoke or
   rotate it if it was ever pushed or shared (removing it from git is not enough); never bypass the hook.
 - **CI**: `.github/workflows/secret-scan.yml`, copied from `template/.github/workflows/` and refreshed while it keeps its

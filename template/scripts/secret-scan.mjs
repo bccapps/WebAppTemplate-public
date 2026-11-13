@@ -125,7 +125,7 @@ const HOOK_SKIP_MESSAGES = {
   'gitleaks-too-old': (r) => `secret-scan hooks NOT installed: gitleaks ${r.version} is older than ${MIN_GITLEAKS_VERSION}; upgrade it, then re-run scripts/update_common.sh`,
   'hooks-path': (r) =>
     `secret-scan hooks NOT installed: core.hooksPath is set (${r.hooksPath}); call the template's scripts/git-hooks/vx-secret-scan.sh ` +
-    'from your pre-commit and pre-push hooks (it dispatches on its file name)',
+    'from your hooks: vx-secret-scan.sh pre-commit, vx-secret-scan.sh pre-push "$@" (stdin passed through)',
 };
 
 function report(kind, result) {

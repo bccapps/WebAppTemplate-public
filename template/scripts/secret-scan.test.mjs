@@ -227,6 +227,21 @@ test('pre-push: scans the commits the remote lacks (a leak pushed earlier is not
   } finally { sb.cleanup(); }
 });
 
+test('called by name from another hook manager (core.hooksPath): vx-secret-scan.sh pre-commit', { skip: NO_SCAN }, () => {
+  const sb = sandbox();
+  try {
+    const root = project(sb);
+    put(root, '.husky/pre-commit', `#!/bin/sh\nexec sh "${HOOK_SOURCE}" pre-commit "$@"\n`);
+    chmodSync(path.join(root, '.husky/pre-commit'), 0o755);
+    git(root, sb.env, 'config', 'core.hooksPath', '.husky');
+    const refused = commit(sb, root, 'leak.txt', `k ${tkValue()}\n`);
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.out, /secret scan \(pre-commit\): commit refused/);
+    git(root, sb.env, 'reset', '-q', '--', 'leak.txt');
+    assert.equal(commit(sb, root, 'ok.txt', 'ok\n').status, 0);
+  } finally { sb.cleanup(); }
+});
+
 test('a linked worktree shares the hooks: a secret committed there is refused too', { skip: NO_SCAN }, () => {
   const sb = sandbox();
   try {

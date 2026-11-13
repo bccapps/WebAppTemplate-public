@@ -20,6 +20,11 @@
 MIN_GITLEAKS=8.30.0
 hook=$(basename "$0")
 hooks_dir=$(cd "$(dirname "$0")" && pwd)
+# Called by name from another hook manager (core.hooksPath): `vx-secret-scan.sh pre-commit|pre-push [hook arguments]`.
+case "$hook" in
+  pre-commit | pre-push) ;;
+  *) if [ $# -gt 0 ]; then hook=$1; shift; fi ;;
+esac
 
 say() { printf 'secret scan (%s): %s\n' "$hook" "$*" >&2; }
 refuse() { say "$@"; exit 1; }
