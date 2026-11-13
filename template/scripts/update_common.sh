@@ -173,8 +173,12 @@ bump_repo() {              # <name>
     git diff --quiet -- "${mount}" 2>/dev/null || paths+=("${mount}")
   done
   if (( ${#paths[@]} > 0 )); then
-    git add "${paths[@]}"
-    git commit -q -m "chore: bump ${name}"
+    git add -- "${paths[@]}"
+    # Not a bare `git commit` under set -e: a pre-commit hook (the secret scan) may refuse it; the other steps still run.
+    if ! git commit -q -m "chore: bump ${name}" -- "${paths[@]}"; then
+      err "${name}: refs bump refused (see the message above, a pre-commit hook?); the mounts stay staged"
+      return 1
+    fi
     ok "${name}: refs bumped in the parent repo"
   fi
 }
@@ -187,7 +191,7 @@ for repo in "${REPOS[@]}"; do
     continue
   fi
   if ! sync_repo "${repo}"; then any_error=1; continue; fi
-  if [[ ${PULL_ONLY} -eq 0 ]]; then bump_repo "${repo}"; fi
+  if [[ ${PULL_ONLY} -eq 0 ]] && ! bump_repo "${repo}"; then any_error=1; fi
 done
 
 # ============================================================

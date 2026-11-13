@@ -34,7 +34,7 @@ const NO_TOOLS = ['bash', 'git'].some((t) => spawnSync(t, ['--version']).error) 
 const NO_GITLEAKS = NO_TOOLS || (gitleaksStatus().ok ? false : 'gitleaks >= 8.30 not installed');
 
 /** Fake vx-public (bare origin + work clone) holding the real scripts, and a project mounting it twice. */
-function project(sb, { claude = 'tracked', files = {} } = {}) {
+function project(sb, { claude = 'tracked', files = {}, gitlinks = false } = {}) {
   const lib = path.join(sb.base, 'lib-work');
   for (const rel of LIB_FILES) {
     mkdirSync(path.dirname(path.join(lib, rel)), { recursive: true });
@@ -58,7 +58,8 @@ function project(sb, { claude = 'tracked', files = {} } = {}) {
     symlinkSync('vx-public/template', path.join(root, stack, '.libs/apptemplate'));
   }
   symlinkSync('front/.libs/apptemplate/scripts', path.join(root, 'scripts'));
-  writeFileSync(path.join(root, '.git/info/exclude'), 'back/.libs/vx-public/\nfront/.libs/vx-public/\n');
+  // Plain clones kept out of the index, or recorded as gitlinks like real submodules (what the refs bump commits).
+  if (!gitlinks) writeFileSync(path.join(root, '.git/info/exclude'), 'back/.libs/vx-public/\nfront/.libs/vx-public/\n');
   put(root, '.gitignore', claude === 'ignored' ? '/CLAUDE.md\n' : 'node_modules/\n');
   if (claude === 'tracked') put(root, 'CLAUDE.md', 'my project notes\n');
   for (const [rel, content] of Object.entries(files)) put(root, rel, content);
@@ -67,7 +68,8 @@ function project(sb, { claude = 'tracked', files = {} } = {}) {
   return { root, lib };
 }
 
-const updateCommon = (root, env) => spawnSync('bash', [path.join(root, 'scripts/update_common.sh'), '--pull-only'], { cwd: root, env, encoding: 'utf8' });
+/** `mode`: '--pull-only' (default), or 'push' for the normal sync (commit, rebase, push, refs bump). */
+const updateCommon = (root, env, mode = '--pull-only') => spawnSync('bash', [path.join(root, 'scripts/update_common.sh'), ...(mode === 'push' ? [] : [mode])], { cwd: root, env, encoding: 'utf8' });
 const head = (sb, root) => git(root, sb.env, 'rev-parse', 'HEAD');
 const subjects = (sb, root) => git(root, sb.env, 'log', '--format=%s').split('\n');
 const filesOf = (sb, root, rev = 'HEAD') => git(root, sb.env, 'show', '--name-only', '--format=', rev).split('\n').filter(Boolean).sort();
@@ -172,5 +174,25 @@ test('update_common.sh: a commit of its own refused by the hook (gitleaks gone) 
     assert.doesNotMatch(r.stdout + r.stderr, /no-verify/);
     assert.equal(head(sb, root), before);
     assert.deepEqual(git(root, sb.env, 'diff', '--cached', '--name-only').split('\n'), ['.gitleaks.toml'], 'the regenerated file stays staged');
+  } finally { sb.cleanup(); }
+});
+
+test('update_common.sh (push mode): a refs bump refused by the hook is an error, the other steps still run', { skip: NO_GITLEAKS }, () => {
+  const sb = sandbox('uc-secret-');
+  try {
+    const { root } = project(sb, { gitlinks: true });
+    assert.equal(git(root, sb.env, 'ls-files', '-s', 'back/.libs/vx-public').split(' ')[0], '160000', 'the mount is a gitlink');
+    const first = updateCommon(root, sb.env);
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    put(root, 'back/.libs/vx-public/LOCAL.txt', 'local\n');
+    const before = head(sb, root);
+    const r = updateCommon(root, envWithoutGitleaks(sb), 'push');
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stderr, /gitleaks is not installed/);
+    assert.match(r.stderr, /vx-public: refs bump refused/);
+    assert.match(r.stdout + r.stderr, /secret-scan hooks NOT installed|CLAUDE\.md|Sync completed with errors/, 'the later steps ran');
+    assert.match(r.stdout + r.stderr, /Sync completed with errors/);
+    assert.equal(head(sb, root), before, 'nothing committed');
+    assert.ok(git(root, sb.env, 'diff', '--cached', '--name-only').split('\n').includes('back/.libs/vx-public'), 'the bump stays staged');
   } finally { sb.cleanup(); }
 });
