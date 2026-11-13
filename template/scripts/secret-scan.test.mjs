@@ -152,6 +152,109 @@ test('pre-commit: a staged secret is refused (value never printed), a fake-marke
   } finally { sb.cleanup(); }
 });
 
+/** Stages several files and commits them; returns `{ status, out }`. */
+function commitFiles(sb, root, files, message = 'change') {
+  for (const [file, content] of Object.entries(files)) {
+    put(root, file, content);
+    git(root, sb.env, 'add', file);
+  }
+  return gitTry(root, sb.env, 'commit', '-q', '-m', message);
+}
+
+test('pre-commit: a "gitleaks:allow" comment does not let a secret through', { skip: NO_SCAN }, () => {
+  const sb = sandbox();
+  try {
+    const root = project(sb);
+    installHooks(root, { env: sb.env });
+    const r = commit(sb, root, 'leak.py', `TOKEN = "${tkValue()}"  # gitleaks:allow\n`);
+    assert.notEqual(r.status, 0);
+    assert.match(r.out, /commit refused: a secret was found/);
+  } finally { sb.cleanup(); }
+});
+
+test('pre-commit: the configuration being committed never applies to its own commit (ignore file, allowlist), with a warning', { skip: NO_SCAN }, () => {
+  const sb = sandbox();
+  try {
+    const root = project(sb);
+    installHooks(root, { env: sb.env });
+    const secret = tkValue();
+    // The fingerprint of the finding to come, added in the same commit as the secret.
+    const ignored = commitFiles(sb, root, { '.gitleaksignore': 'leak.txt:vx-tradekong-mcp-token:1\n', 'leak.txt': `k ${secret}\n` });
+    assert.notEqual(ignored.status, 0);
+    assert.match(ignored.out, /WARNING: this commit changes the secret-scan configuration \(\.gitleaksignore \)/);
+    assert.match(ignored.out, /commit refused: a secret was found/);
+    git(root, sb.env, 'reset', '-q', '--', 'leak.txt', '.gitleaksignore');
+    // An allowlist that would accept any tk_ value, in the same commit as the secret.
+    const own = readFileSync(path.join(root, '.gitleaks.toml'), 'utf8');
+    const allowed = commitFiles(sb, root, { '.gitleaks.toml': `${own}\n[[allowlists]]\nregexes = ['''^tk_''']\n`, 'leak.txt': `k ${secret}\n` });
+    assert.notEqual(allowed.status, 0);
+    assert.match(allowed.out, /WARNING: this commit changes the secret-scan configuration \(\.gitleaks\.toml \)/);
+    git(root, sb.env, 'reset', '-q', '--', 'leak.txt', '.gitleaks.toml');
+    // Reviewed and committed on its own, the ignore entry then applies (it is HEAD's).
+    assert.equal(commitFiles(sb, root, { '.gitleaksignore': 'leak.txt:vx-tradekong-mcp-token:1\n' }, 'ignore a known vector').status, 0);
+    assert.equal(commitFiles(sb, root, { 'leak.txt': `k ${secret}\n` }).status, 0);
+  } finally { sb.cleanup(); }
+});
+
+test('pre-commit: a gitleaks failure (unreadable configuration) is told apart from a leak; GITLEAKS_CONFIG is ignored', { skip: NO_SCAN }, () => {
+  const sb = sandbox();
+  try {
+    const root = project(sb);
+    installHooks(root, { env: sb.env });
+    const permissive = path.join(sb.base, 'permissive.toml');
+    writeFileSync(permissive, 'title = "nothing"\n');
+    const viaEnv = { ...sb.env, GITLEAKS_CONFIG: permissive, GITLEAKS_CONFIG_TOML: 'title = "nothing"\n' };
+    put(root, 'leak.txt', `k ${tkValue()}\n`);
+    git(root, viaEnv, 'add', 'leak.txt');
+    const r = gitTry(root, viaEnv, 'commit', '-q', '-m', 'x');
+    assert.notEqual(r.status, 0);
+    assert.match(r.out, /a secret was found/);
+    git(root, sb.env, 'reset', '-q', '--', 'leak.txt');
+    assert.equal(commitFiles(sb, root, { '.gitleaks.toml': 'garbage = [\n' }, 'broken config').status, 0, 'scanned with the previous one');
+    const broken = commit(sb, root, 'ok.txt', 'fine\n');
+    assert.notEqual(broken.status, 0);
+    assert.match(broken.out, /gitleaks failed \(exit 1/);
+    assert.doesNotMatch(broken.out, /a secret was found/);
+  } finally { sb.cleanup(); }
+});
+
+test('pre-commit in a repository without history: the work-tree configuration, the secret refused', { skip: NO_SCAN }, () => {
+  const sb = sandbox();
+  try {
+    const root = path.join(sb.base, 'fresh');
+    mkdirSync(root);
+    git(root, sb.env, 'init', '-q');
+    put(root, '.gitleaks.toml', renderGitleaksConfig(registry));
+    installHooks(root, { env: sb.env });
+    const r = commitFiles(sb, root, { '.gitleaks.toml': renderGitleaksConfig(registry), 'leak.txt': `k ${tkValue()}\n` });
+    assert.notEqual(r.status, 0);
+    assert.match(r.out, /a secret was found/);
+  } finally { sb.cleanup(); }
+});
+
+test('pre-push: a merge commit that brings a secret of its own is refused', { skip: NO_SCAN }, () => {
+  const sb = sandbox();
+  try {
+    const root = project(sb);
+    const bare = path.join(sb.base, 'origin.git');
+    git(sb.base, sb.env, 'init', '-q', '--bare', bare);
+    git(root, sb.env, 'remote', 'add', 'origin', bare);
+    git(root, sb.env, 'push', '-q', 'origin', 'main');
+    git(root, sb.env, 'checkout', '-q', '-b', 'side');
+    assert.equal(commit(sb, root, 'side.txt', 'side\n').status, 0);
+    git(root, sb.env, 'checkout', '-q', 'main');
+    assert.equal(commit(sb, root, 'main.txt', 'main\n').status, 0);
+    git(root, sb.env, 'merge', '-q', '--no-commit', 'side');
+    put(root, 'evil.txt', `k ${tkValue()}\n`);
+    git(root, sb.env, 'add', 'evil.txt');
+    git(root, sb.env, 'commit', '-q', '-m', 'merge');
+    installHooks(root, { env: sb.env });
+    const r = gitTry(root, sb.env, 'push', '-q', 'origin', 'main');
+    assert.notEqual(r.status, 0);
+    assert.match(r.out, /push refused: a secret was found/);
+  } finally { sb.cleanup(); }
+});
+
 test('pre-commit: the chained project hook runs after a clean scan, never after a refused one', { skip: NO_SCAN }, () => {
   const sb = sandbox();
   try {
