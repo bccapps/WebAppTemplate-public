@@ -22,7 +22,7 @@ set -euo pipefail
 #   3. both mounts end fast-forwarded on origin/main (same SHA, else error)
 #   4. bump the refs in the parent repo (commit "chore: bump R")
 # Then: .libs/apptemplate symlinks, root `scripts` symlink, CLAUDE.md/AGENTS.md,
-# package.json regeneration (+ npm install).
+# package.json regeneration (+ npm install), secret scanning (.gitleaks.toml, CI workflow, git hooks).
 #
 # Usage:
 #   ./scripts/update_common.sh              Normal sync (commit, pull/rebase, push, bump parent refs)
@@ -49,6 +49,18 @@ info()  { printf "${CYAN}==> %s${NC}\n" "$*"; }
 ok()    { printf "${GREEN}==> %s${NC}\n" "$*"; }
 warn()  { printf "${YELLOW}==> %s${NC}\n" "$*"; }
 err()   { printf "${RED}==> %s${NC}\n" "$*" >&2; }
+
+# commit_paths <ok message> [--adopt] <commit message> <path>...: vx_commit_paths, reporting a refused commit (a pre-commit
+# hook, e.g. the secret scan, printed why above) as an error instead of ignoring it.
+commit_paths() {
+  local ok_message="$1" rc=0; shift
+  vx_commit_paths "$@" || rc=$?
+  case "${rc}" in
+    0) ok "${ok_message}" ;;
+    10) ;;
+    *) err "commit refused: see the message above (a pre-commit hook?); the files stay staged"; any_error=1 ;;
+  esac
+}
 
 # ---------- Args ----------
 PUSH_ONLY=0
@@ -204,9 +216,7 @@ fi
 if [[ -n "${tracked_links}" ]]; then
   # Never forced: a link that is untracked AND git-ignored is left alone. Only the links go in the commit.
   # shellcheck disable=SC2086
-  if vx_commit_paths --adopt "chore: fix apptemplate symlinks" ${tracked_links}; then
-    ok "apptemplate symlinks committed"
-  fi
+  commit_paths "apptemplate symlinks committed" --adopt "chore: fix apptemplate symlinks" ${tracked_links}
 fi
 
 # Root CLAUDE.md = real file of @imports (+ project notes); AGENTS.md = generated, git-ignored.
@@ -214,9 +224,7 @@ if [[ -f back/.libs/apptemplate/scripts/project-docs.mjs ]]; then
   node back/.libs/apptemplate/scripts/project-docs.mjs ensure "${PROJECT_ROOT}"
   # A project may ignore its root CLAUDE.md on purpose (`/CLAUDE.md` in .gitignore): then only .gitignore, if it
   # changed, is committed; nothing is forced and nothing to commit is not an error.
-  if vx_commit_paths --adopt "chore: refresh CLAUDE.md imports" CLAUDE.md .gitignore; then
-    ok "CLAUDE.md imports refreshed"
-  fi
+  commit_paths "CLAUDE.md imports refreshed" --adopt "chore: refresh CLAUDE.md imports" CLAUDE.md .gitignore
 fi
 
 # Pull new canonical common.* locale keys from the template into the app's own
@@ -225,9 +233,7 @@ SYNC_LOCALES_SCRIPT="${PROJECT_ROOT}/back/.libs/apptemplate/scripts/sync-common-
 if [[ -f "${SYNC_LOCALES_SCRIPT}" && -f "${PROJECT_ROOT}/back/src/locales/common.en.json" ]]; then
   node "${SYNC_LOCALES_SCRIPT}" --root "${PROJECT_ROOT}"
   # Tracked files only (an untracked or ignored locale file is never added).
-  if vx_commit_paths "chore(deps): sync common locales from the template" back/src/locales/common.en.json back/src/locales/common.fr.json; then
-    ok "common locales: synced from the template"
-  fi
+  commit_paths "common locales: synced from the template" "chore(deps): sync common locales from the template" back/src/locales/common.en.json back/src/locales/common.fr.json
 fi
 
 # ============================================================
@@ -267,13 +273,28 @@ regenerate_and_install() {
   ok "${stack}: package.json regenerated + installed"
 
   # Tracked files only: a project that ignores or does not have its package-lock.json commits package.json alone.
-  if vx_commit_paths "chore(deps): regenerate ${stack}/package.json from the template" "${stack}/package.json" "${stack}/package-lock.json"; then
-    ok "${stack}: package.json/package-lock.json committed"
-  fi
+  commit_paths "${stack}: package.json/package-lock.json committed" "chore(deps): regenerate ${stack}/package.json from the template" "${stack}/package.json" "${stack}/package-lock.json"
 }
 
 regenerate_and_install back
 regenerate_and_install front
+
+# ============================================================
+# 4. Secret scanning (template README, « Secret scanning »): .gitleaks.toml generated from the secret-format registry
+# (a hand-written one is kept, with a warning), .github/workflows/secret-scan.yml, then the pre-commit / pre-push hooks
+# (only with gitleaks on the PATH; a project hook is chained, never overwritten). Last: on the first run the hooks
+# arrive after this script's own commits.
+# ============================================================
+SECRET_SCAN_SCRIPT="${PROJECT_ROOT}/back/.libs/apptemplate/scripts/secret-scan.mjs"
+if [[ -f "${SECRET_SCAN_SCRIPT}" ]]; then
+  if node "${SECRET_SCAN_SCRIPT}" config "${PROJECT_ROOT}" && node "${SECRET_SCAN_SCRIPT}" workflow "${PROJECT_ROOT}"; then
+    commit_paths "secret scanning: .gitleaks.toml / workflow committed" --adopt "chore: secret scanning config from the template" \
+      .gitleaks.toml .github/workflows/secret-scan.yml
+  else
+    err "secret scanning: configuration not generated (see above)"; any_error=1
+  fi
+  node "${SECRET_SCAN_SCRIPT}" hooks "${PROJECT_ROOT}" || any_error=1
+fi
 
 # ---------- Summary ----------
 echo ""
