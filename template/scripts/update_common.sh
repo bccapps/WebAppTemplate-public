@@ -21,6 +21,7 @@ set -euo pipefail
 #      then the same for the FRONT mount (it rebases on what back just pushed)
 #   3. both mounts end fast-forwarded on origin/main (same SHA, else error)
 #   4. bump the refs in the parent repo (commit "chore: bump R")
+# Then, for an app carrying voice-live: the shared conversation core is re-vendored from vx-voice-engine's main (step 1b).
 # Then: .libs/apptemplate symlinks, root `scripts` symlink, CLAUDE.md/AGENTS.md,
 # package.json regeneration (+ npm install), secret scanning (.gitleaks.toml, CI workflow, git hooks).
 #
@@ -193,6 +194,51 @@ for repo in "${REPOS[@]}"; do
   if ! sync_repo "${repo}"; then any_error=1; continue; fi
   if [[ ${PULL_ONLY} -eq 0 ]] && ! bump_repo "${repo}"; then any_error=1; fi
 done
+
+# ============================================================
+# 1b. Shared conversation core (apps whose vx-private carries voice-live only; any other app skips this step)
+# Vendors the WASM core of the vx-voice-engine checkout's `main` into voice-live (vendor-core.mjs: nest + react
+# copies, generated types), then syncs vx-private again so the result is committed and pushed like any library change.
+#   VX_VOICE_ENGINE_DIR   the vx-voice-engine checkout (default: ../vx-voice-engine next to the project)
+#   VX_GUARD              optional memory guard (path of guarded_run.sh) that wraps the cargo/WASM build
+#   VX_GUARD_RSS_MB       its RSS ceiling for that build (default 4000)
+# Skipped with --push-only. Never forces anything; a failure leaves the vendored core as it was.
+# ============================================================
+sync_voice_core() {
+  local nest="back/.libs/vx-private/nest/voice-live"
+  [[ -f "${nest}/scripts/vendor-core.mjs" ]] || return 0
+  local engine="${VX_VOICE_ENGINE_DIR:-${PROJECT_ROOT}/../vx-voice-engine}"
+  if [[ ! -f "${engine}/core/release/package.sh" ]]; then
+    info "voice core: no vx-voice-engine checkout at ${engine} — keeping the vendored core"; return 0
+  fi
+  if [[ "$(git -C "${engine}" branch --show-current 2>/dev/null)" == "main" \
+        && -z "$(git -C "${engine}" status --porcelain -- core Cargo.toml Cargo.lock)" ]]; then
+    git -C "${engine}" fetch -q origin 2>/dev/null && git -C "${engine}" merge -q --ff-only origin/main 2>/dev/null \
+      || warn "voice core: could not fast-forward ${engine} on origin/main — using it as it is"
+  else
+    warn "voice core: ${engine} is not on main or has uncommitted core changes — using it as it is"
+  fi
+  local stamp have tmp v
+  stamp="$("${engine}/core/release/package.sh" --stamp)" || { err "voice core: cannot read the core stamp"; any_error=1; return 0; }
+  have="$(cat "${nest}/core/VERSION" 2>/dev/null || true)"
+  if [[ "${stamp}" == "${have}" ]]; then ok "voice core: up to date (${stamp})"; return 0; fi
+  info "voice core: vendored '${have:-none}' -> '${stamp}' (building the WASM package)"
+  v="${stamp%%+*}"; tmp="$(mktemp -d)"
+  local guard=()
+  [[ -n "${VX_GUARD:-}" ]] && guard=("${VX_GUARD}" --max-rss-mb "${VX_GUARD_RSS_MB:-4000}" --)
+  if ! env VX_CORE_DIST="${tmp}" ${guard[@]+"${guard[@]}"} "${engine}/core/release/package.sh" --wasm-only >/dev/null \
+     || ! node "${nest}/scripts/vendor-core.mjs" "${stamp}" --from "${tmp}/vx-voice-core-${v}-wasm.tgz" \
+     || ! node "${nest}/scripts/sync-protocol.mjs"; then
+    err "voice core: vendoring ${stamp} failed — check the output above"; rm -rf "${tmp}"; any_error=1; return 0
+  fi
+  rm -rf "${tmp}"
+  if [[ ${PULL_ONLY} -eq 0 ]]; then
+    sync_repo vx-private || { any_error=1; return 0; }
+    bump_repo vx-private
+  fi
+  ok "voice core: vendored ${stamp}"
+}
+if [[ ${PUSH_ONLY} -eq 0 ]]; then sync_voice_core; fi
 
 # ============================================================
 # 2. Symlinks: <stack>/.libs/apptemplate -> vx-public/template, root scripts
