@@ -20,6 +20,7 @@ import { createReadStream, lstatSync, readdirSync, readFileSync, writeFileSync }
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { ARCHIVE_PATTERN, extractValidationFiles } from './validation-archive.mjs';
+import { escapeRegExp, secretPrefixes } from './secret-formats.mjs';
 
 export const VALIDATION_FILE = /^validation-\d{4}-\d{2}-\d{2}\.jsonl$/;
 const MAX_DEPTH = 3;
@@ -137,6 +138,15 @@ export async function readTraceLines(files, { since = null, env } = {}) {
   return { lines, stats };
 }
 
+/** Third-party token prefixes, next to every prefix of the VX registry (`nest/common/validation/secret-formats.json`). */
+const THIRD_PARTY_TOKEN_PREFIXES = [
+  'ac_test_', 'sk_live_', 'sk_test_', 'rk_live_', 'pk_live_', 'whsec_', 'ghp_', 'gho_', 'ghs_', 'ghu_', 'github_pat_', 'npm_',
+  'sk-', 'glpat-', 'xoxb-', 'xoxp-', 'xoxa-', 'xoxs-', 'xapp-', 'xkeysib-', 'AIza',
+];
+export const TOKEN_PREFIXES = [...new Set([...secretPrefixes(), ...THIRD_PARTY_TOKEN_PREFIXES])];
+/** Longest first: an alternation stops at its first match. */
+const TOKEN_PREFIX_ALTERNATION = [...TOKEN_PREFIXES].sort((a, b) => b.length - a.length).map(escapeRegExp).join('|');
+
 /**
  * Leak detectors. `high` fails the report; the shapes that also occur in harmless application logs (hashes, e-mails)
  * are `high` only in validation files, where the sanitizer must have removed them. Each pattern starts at a run
@@ -148,7 +158,7 @@ export const LEAK_PATTERNS = [
   { type: 'bearer', regex: /(?<![A-Za-z0-9])bearer\s{1,16}([A-Za-z0-9._~+/=-]{16,})/gi, group: 1, severity: () => 'high' },
   {
     type: 'prefixed-token',
-    regex: /(?<![A-Za-z0-9_-])(?:(?:tk|ctd|mst|ac_live|ac_test|sup|acs|ahe|ahf|ahi|ahr|sk_live|sk_test|rk_live|pk_live|whsec|ghp|gho|ghs|ghu|github_pat|npm)_|sk-|glpat-|xox[bpas]-|xapp-|xkeysib-|AIza)([A-Za-z0-9_-]{12,})/g,
+    regex: new RegExp(`(?<![A-Za-z0-9_-])(?:${TOKEN_PREFIX_ALTERNATION})([A-Za-z0-9_-]{12,})`, 'g'),
     accept: (match) => /[0-9A-Z]/.test(match[1]),
     severity: () => 'high',
   },

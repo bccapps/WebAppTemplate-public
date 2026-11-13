@@ -8,6 +8,7 @@
  */
 
 import { randomBytes } from 'crypto';
+import { SECRET_FORMATS, SECRET_OAUTH_FAMILY, secretCharsetClass, type SecretCharset, type SecretFormat } from './secretFormats';
 
 /**
  * Secret-shaped fixtures for the specs of the validation traces, built at run time from random bytes: nothing
@@ -90,6 +91,45 @@ export function mustStayHiddenCases(): [string, string][] {
     ['hex32', hex(16)], ['hex12', withOne('0123456789abcdef', 'abcdef', 11).concat('7')], ['JWT-like', `${b64url(20)}.${b64url(40)}.${b64url(32)}`],
     ['connect.sid', `connect.sid=s%3A${b64url(24)}.${b64url(32)}`], ['base64 24', randomBytes(18).toString('base64')],
   ];
+}
+
+/** The characters of a registry charset (`A-Za-z0-9_-` → `AB…Zab…z01…9_-`). */
+export function charsetAlphabet(charset: SecretCharset): string {
+  return secretCharsetClass(charset).replace(/(.)-(.)/g, (_, from: string, to: string) =>
+    Array.from({ length: to.charCodeAt(0) - from.charCodeAt(0) + 1 }, (__, i) => String.fromCharCode(from.charCodeAt(0) + i)).join(''),
+  );
+}
+
+/** A random body of `length` characters of `charset` (rejection sampling: unbiased, like the minting code). */
+export function randomSecretBody(charset: SecretCharset, length: number): string {
+  const alphabet = charsetAlphabet(charset);
+  const limit = 256 - (256 % alphabet.length);
+  let out = '';
+  while (out.length < length) {
+    for (const byte of randomBytes(length)) if (byte < limit && out.length < length) out += alphabet[byte % alphabet.length];
+  }
+  return out;
+}
+
+export interface SecretFormatFixture {
+  format: SecretFormat;
+  kind: 'key' | 'oauth';
+  /** A random value of that format, built at run time (never written in a source file). */
+  value: string;
+}
+
+/** One random value per registered format, plus one per OAuth marker of the formats that have OAuth tokens. */
+export function secretFormatFixtures(): SecretFormatFixture[] {
+  const fixtures: SecretFormatFixture[] = [];
+  for (const format of SECRET_FORMATS) {
+    const length = format.length ?? Math.min(format.maxLength ?? 32, 32);
+    fixtures.push({ format, kind: 'key', value: `${format.prefix}${randomSecretBody(format.charset, length)}` });
+    if (!format.oauth) continue;
+    for (const marker of SECRET_OAUTH_FAMILY.markers) {
+      fixtures.push({ format, kind: 'oauth', value: `${format.prefix}${marker}${randomSecretBody(SECRET_OAUTH_FAMILY.charset, SECRET_OAUTH_FAMILY.length)}` });
+    }
+  }
+  return fixtures;
 }
 
 /** Whether `text` contains any `window`-character slice of `secret` (a partial leak counts as a leak). */

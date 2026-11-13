@@ -19,6 +19,18 @@ export {
 export type { LazyTraceFields, RecordContext, ValidationOutcome, ValidationSource, ValidationTraceOptions } from './validationTrace';
 export { REDACTED, TRACE_LIMITS, fingerprint, isPersonalKey, isSensitiveKey, looksSecret, sanitizeTraceFields, sanitizeTraceString } from './traceSanitizer';
 export type { TraceFieldRules, TraceFieldType, TraceFields, TraceScalar, TraceValue } from './traceSanitizer';
+export {
+  FAKE_SECRET_MARKERS,
+  PREFIXED_IDENTIFIERS,
+  SECRET_FORMATS,
+  SECRET_FORMAT_PREFIXES,
+  SECRET_OAUTH_FAMILY,
+  URL_SECRET_PREFIXES,
+  secretCharsetClass,
+  secretFormatOf,
+  secretFormatPattern,
+} from './secretFormats';
+export type { PrefixedIdentifier, SecretCharset, SecretFormat, SecretOAuthFamily } from './secretFormats';
 export { CHECK_NAME_PATTERN, isValidCheckName } from './traceLine';
 export type { TraceLine } from './traceLine';
 export { TRACE_CLASS_SHARE, VALIDATION_FILE_PATTERN, resolveValidationLogDir } from './traceFileSink';

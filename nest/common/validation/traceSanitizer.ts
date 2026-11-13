@@ -10,6 +10,7 @@
 import { createHmac, hkdfSync, randomBytes } from 'crypto';
 import { maskEmailAddresses } from '../services/EmailService';
 import { SECRET_SEGMENT_PREFIXES } from '../utils/redactPath';
+import { SECRET_FORMAT_PREFIXES } from './secretFormats';
 
 /** A value a validation trace may carry once sanitized: scalars, or a short list of scalars (`"*"` fields only). */
 export type TraceScalar = string | number | boolean | null;
@@ -122,9 +123,9 @@ export function isPersonalKey(key: string): boolean {
 // WHOLE string by its fingerprint. Every pattern is anchored or bounded: the work is linear in the (≤ 1 KiB) input.
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** Token prefixes of the apps and of common providers (in addition to `redactPath`'s list). */
+/** Token prefixes of the apps (every format of `secret-formats.json`) and of common providers (in addition to `redactPath`'s list). */
 const TOKEN_PREFIXES: readonly string[] = [
-  ...SECRET_SEGMENT_PREFIXES, 'tk_', 'ctd_', 'mst_', 'ac_live_', 'ac_test_', 'sup_', 'sk-', 'pk_live_', 'pk_test_', 'rk_live_', 'rk_test_',
+  ...SECRET_SEGMENT_PREFIXES, ...SECRET_FORMAT_PREFIXES, 'ac_test_', 'sk-', 'pk_live_', 'pk_test_', 'rk_live_', 'rk_test_',
   'AIza', 'xapp-', 'xoxa-', 'xoxs-', 'xoxr-', 'npm_', 'SG.', 'AKIA', 'ASIA', 'hf_', 'gsk_', 'shpat_', 'pat-', 'dop_v1_', 'sq0',
 ];
 const STRUCTURAL_SECRET_PATTERNS: readonly RegExp[] = [

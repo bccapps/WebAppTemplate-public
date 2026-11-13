@@ -16,7 +16,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { regularMembers } from './lib/validation-archive.mjs';
-import { findLeaks, openLogSource, parseSince, scrubForDisplay } from './lib/validation-logs.mjs';
+import { TOKEN_PREFIXES, findLeaks, openLogSource, parseSince, scrubForDisplay } from './lib/validation-logs.mjs';
+import { secretPrefixes } from './lib/secret-formats.mjs';
 import { checkFilesUnder, loadRegistry, readSchema, validateSchema } from './lib/validation-registry.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -303,6 +304,14 @@ test('detectors: aligned with the back sanitizer, short values not fingerprinted
   assert.ok(!scrubForDisplay(`id ${token}`).includes(token.slice(3, 20)));
   assert.equal(parseSince('2d', Date.parse('2026-11-11T00:00:00Z')), Date.parse('2026-11-09T00:00:00Z'));
   assert.equal(parseSince('soon'), null);
+});
+
+test('detectors: every prefix of the secret-format registry is a prefixed token (short body, no other detector)', () => {
+  for (const prefix of secretPrefixes()) {
+    const value = `${prefix}${randomBytes(9).toString('base64url')}A1`;
+    assert.ok(TOKEN_PREFIXES.includes(prefix));
+    assert.deepEqual(findLeaks(`seen ${value} there`, false).map((l) => l.type), ['prefixed-token'], prefix);
+  }
 });
 
 test('no ReDoS: hostile 100 KB lines are scanned and scrubbed in under 100 ms', () => {

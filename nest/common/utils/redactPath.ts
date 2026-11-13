@@ -7,6 +7,8 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import { URL_SECRET_PREFIXES } from '../validation/secretFormats';
+
 /** What replaces a secret-looking path segment in a log line. */
 export const REDACTED_SEGMENT = '[redacted]';
 
@@ -14,12 +16,12 @@ export const REDACTED_SEGMENT = '[redacted]';
 export const MAX_LOGGED_PATH_LENGTH = 200;
 
 /**
- * Prefixes of the tokens known to travel in URLs (AgentHub: terminal share `acs_`, runner enrollment `ahe_`, federation
- * `ahf_`, issue intake `ahi_`, runner `ahr_`) and of common third-party secrets: a segment starting with one of them,
- * followed by at least 8 characters, is redacted whatever its length.
+ * Prefixes of the tokens known to travel in URLs (the `inUrl` formats of `validation/secret-formats.json`: AgentHub terminal
+ * share `acs_`, runner enrollment `ahe_`, federation `ahf_`, issue intake `ahi_`, runner `ahr_`) and of common third-party
+ * secrets: a segment starting with one of them, followed by at least 8 characters, is redacted whatever its length.
  */
 export const SECRET_SEGMENT_PREFIXES: readonly string[] = [
-  'acs_', 'ahe_', 'ahf_', 'ahi_', 'ahr_',
+  ...URL_SECRET_PREFIXES,
   'sk_', 'rk_', 'whsec_', 'ghp_', 'gho_', 'ghs_', 'ghu_', 'github_pat_', 'glpat-', 'xoxb-', 'xoxp-', 'xkeysib-',
 ];
 
