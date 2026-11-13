@@ -48,12 +48,12 @@ root=$(git rev-parse --show-toplevel) || refuse "not inside a git work tree"
 
 LEAK_HELP="Remove the secret from what you commit or push (gitleaks printed where, with the value redacted). If it was ever pushed or shared, revoke or rotate it: removing it from git is not enough. A deliberately fake value written in clear carries FAKE or EXAMPLE right after its prefix (tk_FAKE…); a project-specific exception goes in .gitleaks.local.toml (template README, « Secret scanning »)."
 
-# gitleaks git <args>, with the project's configuration and ignore file, values redacted.
+# gitleaks git <args>, with the project's configuration and ignore file, values redacted; silent when clean.
 scan() {
   if [ -f "$root/.gitleaks.toml" ]; then
-    gitleaks git "$@" --config "$root/.gitleaks.toml" --gitleaks-ignore-path "$root" --redact --verbose --no-banner --exit-code 1 "$root"
+    gitleaks git "$@" --config "$root/.gitleaks.toml" --gitleaks-ignore-path "$root" --redact --verbose --no-banner --log-level warn --exit-code 1 "$root"
   else
-    gitleaks git "$@" --gitleaks-ignore-path "$root" --redact --verbose --no-banner --exit-code 1 "$root"
+    gitleaks git "$@" --gitleaks-ignore-path "$root" --redact --verbose --no-banner --log-level warn --exit-code 1 "$root"
   fi
 }
 
