@@ -437,18 +437,27 @@ No secret in a repository: gitleaks runs before each commit and push and in CI, 
 - **Fake secrets**: in a spec, build them at run time (`secretFormatFixtures()` of `nest/common/validation/secretFixtures.testkit.ts`);
   written in clear (doc, fixture), they carry `FAKE` or `EXAMPLE` right after the prefix (`tk_FAKE…`). Other exceptions go
   in `.gitleaks.local.toml` by value, never by path; a deliberate vector already committed: its fingerprint in `.gitleaksignore`.
-- **Git hooks**: `.git/hooks/pre-commit` (the staged changes) and `pre-push` (the commits no remote-tracking branch has) =
+  `gitleaks:allow` comments are ignored everywhere (hooks, CI).
+- **A configuration change applies from the next change, never to itself**: the hooks scan with the `.gitleaks.toml` and
+  `.gitleaksignore` of HEAD (pre-commit) or of what the remote already has (pre-push), the workflow with those of the base
+  branch (pull request) or of the previous tip (push). A change of `.gitleaks.toml`, `.gitleaks.local.toml` or
+  `.gitleaksignore` is allowed and reported; a pull request that makes one fails until a human has reviewed it: commit
+  such a change on its own. `GITLEAKS_CONFIG*` from the environment is ignored.
+- **Git hooks**: `.git/hooks/pre-commit` (the staged changes) and `pre-push` (the commits no remote-tracking branch has,
+  merge commits included) =
   `scripts/git-hooks/vx-secret-scan.sh`, shared by linked worktrees, values redacted, silent when clean. `update_common.sh`
   installs them only when gitleaks 8.30 or later is on the PATH (`brew install gitleaks`; otherwise a warning), refreshes
   them, keeps a project hook already there as `<hook>.local` (run after a clean scan) and leaves `core.hooksPath` setups
   alone (call it from those hooks: `vx-secret-scan.sh pre-commit`, `vx-secret-scan.sh pre-push "$@"`). An installed hook without gitleaks refuses the
-  commit or push with the way to install it. A finding: remove the secret from what you commit or push, and revoke or
+  commit or push with the way to install it; a gitleaks failure (an unreadable configuration) is reported as such, not as
+  a finding. A finding: remove the secret from what you commit or push, and revoke or
   rotate it if it was ever pushed or shared (removing it from git is not enough); never bypass the hook.
 - **CI**: `.github/workflows/secret-scan.yml`, copied from `template/.github/workflows/` and refreshed while it keeps its
   `vx-template: secret-scan workflow` line (remove the line to own the file): the gitleaks CLI pinned and checksum-verified, no
-  secret, read-only token; a push to `main` or `dev` scans the pushed commits (a new branch: those no other branch has),
-  a pull request its commits, a manual run (`workflow_dispatch`) the whole history. It uses GitHub Actions minutes on a
-  private repository. vx-public runs the same scan in its own CI.
+  secret, read-only token, actions pinned by commit SHA; a push to `main` or `dev` scans the pushed commits (a new branch:
+  those no other branch has; a force-push whose previous tip is gone: the commits GitHub lists for the push), a pull
+  request its commits, a manual run (`workflow_dispatch`) the whole history, merge commits included. A newer push never
+  cancels the scan of an older one (a pull request's is). It uses GitHub Actions minutes on a private repository. vx-public runs the same scan in its own CI.
 - `node scripts/secret-scan.mjs status` tells what is installed. Not covered: a secret without a recognizable shape (a short
   password) and GitHub's own secret scanning / push protection (paid on private repositories, not used).
 
