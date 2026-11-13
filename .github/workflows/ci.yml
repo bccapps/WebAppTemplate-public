@@ -9,10 +9,10 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
       # The gitleaks GitHub Action needs a paid license for organizations; the open-source CLI does not. Pinned and
@@ -39,7 +39,7 @@ jobs:
       # .gitleaks.toml is generated from nest/common/validation/secret-formats.json (+ .gitleaks.local.toml); a tooling
       # test fails when it is stale.
       - name: Secret scan
-        run: gitleaks dir . --redact --exit-code 1
+        run: gitleaks dir . --ignore-gitleaks-allow --redact --exit-code 1
 
   sandbox:
     runs-on: ubuntu-latest
@@ -49,8 +49,8 @@ jobs:
       matrix:
         mode: [anonymous, anonymous-sqlite, anonymous-sqlite-desktop, users-only, multi-users]
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
       - name: Git flow (create-project, update_common, deploy staging) against local origins
