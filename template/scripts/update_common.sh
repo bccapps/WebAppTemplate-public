@@ -199,7 +199,7 @@ done
 # 1b. Shared conversation core (apps whose vx-private carries voice-live only; any other app skips this step)
 # Vendors the WASM core of the vx-voice-engine checkout's `main` into voice-live (vendor-core.mjs: nest + react
 # copies, generated types), then syncs vx-private again so the result is committed and pushed like any library change.
-#   VX_VOICE_ENGINE_DIR   the vx-voice-engine checkout (default: ../vx-voice-engine next to the project)
+#   VX_VOICE_ENGINE_DIR   the vx-voice-engine checkout (default: the first of ../vx-voice-engine and ../../vx-voice-engine that exists)
 #   VX_GUARD              optional memory guard (path of guarded_run.sh) that wraps the cargo/WASM build
 #   VX_GUARD_RSS_MB       its RSS ceiling for that build (default 4000)
 # Skipped with --push-only. Never forces anything; a failure leaves the vendored core as it was.
@@ -207,9 +207,15 @@ done
 sync_voice_core() {
   local nest="back/.libs/vx-private/nest/voice-live"
   [[ -f "${nest}/scripts/vendor-core.mjs" ]] || return 0
-  local engine="${VX_VOICE_ENGINE_DIR:-${PROJECT_ROOT}/../vx-voice-engine}"
-  if [[ ! -f "${engine}/core/release/package.sh" ]]; then
-    info "voice core: no vx-voice-engine checkout at ${engine} — keeping the vendored core"; return 0
+  local engine="${VX_VOICE_ENGINE_DIR:-}" candidate
+  if [[ -z "${engine}" ]]; then
+    # A project sits next to the engine (Apps/<project>) or one level deeper (Apps/<group>/<project>).
+    for candidate in "${PROJECT_ROOT}/../vx-voice-engine" "${PROJECT_ROOT}/../../vx-voice-engine"; do
+      if [[ -f "${candidate}/core/release/package.sh" ]]; then engine="$(cd "${candidate}" && pwd)"; break; fi
+    done
+  fi
+  if [[ -z "${engine}" || ! -f "${engine}/core/release/package.sh" ]]; then
+    info "voice core: no vx-voice-engine checkout found (set VX_VOICE_ENGINE_DIR) — keeping the vendored core"; return 0
   fi
   if [[ "$(git -C "${engine}" branch --show-current 2>/dev/null)" == "main" \
         && -z "$(git -C "${engine}" status --porcelain -- core Cargo.toml Cargo.lock)" ]]; then
