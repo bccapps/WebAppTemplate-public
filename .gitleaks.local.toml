@@ -1,0 +1,7 @@
+# vx-public's own gitleaks additions, appended to the generated .gitleaks.toml (node template/scripts/gitleaks-config.mjs .).
+# Test files use obviously fake credentials (e.g. 'ahi_0123456789abcdefSECRET'); the generic rule
+# matches their shape. Other rules (AWS, GitHub tokens, private keys…) and every VX rule still apply to specs.
+[[allowlists]]
+description = "Fake credentials in unit tests"
+targetRules = ["generic-api-key"]
+paths = ['''\.spec\.ts$''']
