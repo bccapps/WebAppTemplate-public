@@ -13,7 +13,7 @@ import { Test } from '@nestjs/testing';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import request from 'supertest';
+import { privateSocketRequest as request } from '../testing/privateSocketRequest';
 import { RejectApiTokenInterceptor } from '../interceptors/RejectApiTokenInterceptor';
 import { findRouteMismatches, findUnclassifiedWriteRoutes } from '../testing/controllerInterceptors.testkit';
 import { leaksSecret, secretFixtures } from './secretFixtures.testkit';

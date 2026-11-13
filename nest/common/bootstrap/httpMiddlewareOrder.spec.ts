@@ -10,7 +10,7 @@ import { describe, expect, it } from '@jest/globals';
 import { Controller, Get, INestApplication, Module } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Test } from '@nestjs/testing';
-import request from 'supertest';
+import { privateSocketRequest as request } from '../testing/privateSocketRequest';
 import { lazyCompression } from './compressionMiddleware';
 
 @Controller()

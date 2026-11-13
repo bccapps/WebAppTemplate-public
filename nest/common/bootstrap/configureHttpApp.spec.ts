@@ -12,7 +12,7 @@ import { APP_FILTER } from '@nestjs/core';
 import { AppExceptionFilter } from '../exceptions/AppExceptionFilter';
 import { Test } from '@nestjs/testing';
 import { IsString } from 'class-validator';
-import request from 'supertest';
+import { loopbackRequest as request } from '../testing/privateSocketRequest';
 import {
   assertSafeOrigins,
   configureHttpApp,

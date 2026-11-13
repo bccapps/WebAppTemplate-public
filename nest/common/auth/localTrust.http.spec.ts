@@ -11,7 +11,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from '@jest/glo
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { createHash, randomBytes } from 'node:crypto';
-import request from 'supertest';
+import { loopbackRequest as request } from '../testing/privateSocketRequest';
 import { AuthCoreModule } from './AuthCoreModule';
 import { resetLocalUiSessionStoreForTests, shellProof } from './localUiSession';
 

@@ -12,7 +12,7 @@ import { Test } from '@nestjs/testing';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import request from 'supertest';
+import { privateSocketRequest as request } from '../testing/privateSocketRequest';
 import { isApiPath, isWellKnownPath, resolveFrontDir, serveFrontend } from './serveFrontend';
 
 @Controller()

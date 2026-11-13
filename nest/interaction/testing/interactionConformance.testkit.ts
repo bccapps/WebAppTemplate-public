@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { Inject, Injectable, type Type } from '@nestjs/common';
 import { createServer, type Server } from 'http';
 import type { AddressInfo } from 'net';
-import request from 'supertest';
+import { privateSocketRequest, type PrivateSocketRequester, type PrivateSocketTest } from '../../common/testing/privateSocketRequest';
 import { IsNull } from 'typeorm';
 import { CryptService } from '../../common/services/CryptService';
 import { CryptInteractionSecretStore } from '../adapters/CryptInteractionSecretStore';
@@ -231,8 +231,9 @@ export async function subscribeBrowser(h: Harness, userId: number, endpoint = EN
   await h.get(BrowserChannelProvider).subscribe(owner(userId), { endpoint, keys: { p256dh: 'BPk' + 'a'.repeat(80), auth: 'auth' + 'b'.repeat(18) }, userAgent: 'Test/1.0' });
 }
 
-export function http(h: Harness): request.Agent {
-  return request.agent(h.app.getHttpServer());
+/** HTTP client of the app over a private socket (never a TCP port another process could answer instead). */
+export function http(h: Harness): PrivateSocketRequester {
+  return privateSocketRequest(h.app.getHttpServer());
 }
 
 export async function idle(h: Harness): Promise<void> {
@@ -692,10 +693,10 @@ export function describeInteractionConformance(label: string, options: Conforman
         ['post', '/api/v1/interaction/me/channels/telegram/link-code'],
       ];
       for (const [method, path] of routes) {
-        const call = (agent as unknown as Record<string, (p: string) => request.Test>)[method](path);
+        const call = (agent as unknown as Record<string, (p: string) => PrivateSocketTest>)[method](path);
         expect((await call).status).toBe(401);
         for (const headers of [{ Authorization: 'Bearer admin-key' }, { Authorization: 'Bearer local' }, { 'X-API-Key': 'svc_key_123' }, { Authorization: 'Bearer nope' }]) {
-          expect((await (agent as unknown as Record<string, (p: string) => request.Test>)[method](path).set(headers)).status).toBe(401);
+          expect((await (agent as unknown as Record<string, (p: string) => PrivateSocketTest>)[method](path).set(headers)).status).toBe(401);
         }
       }
       expect((await agent.get('/api/v1/admin/interaction/channels').set('Authorization', 'Bearer user-1')).status).toBe(401);

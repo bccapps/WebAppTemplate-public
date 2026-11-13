@@ -10,7 +10,7 @@
 import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
 import { Body, Controller, Get, INestApplication, Injectable, Post, Query } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import request from 'supertest';
+import { privateSocketRequest as request } from '../testing/privateSocketRequest';
 import { Public } from '../decorators/Public';
 import { AuthCoreModule } from './AuthCoreModule';
 import type { AuthPort } from './AuthPort';
