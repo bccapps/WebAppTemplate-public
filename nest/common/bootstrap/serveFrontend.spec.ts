@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import request from 'supertest';
-import { isApiPath, resolveFrontDir, serveFrontend } from './serveFrontend';
+import { isApiPath, isWellKnownPath, resolveFrontDir, serveFrontend } from './serveFrontend';
 
 @Controller()
 class ApiController {
@@ -23,7 +23,15 @@ class ApiController {
   }
 }
 
-@Module({ controllers: [ApiController] })
+@Controller()
+class WellKnownController {
+  @Get('/.well-known/oauth-protected-resource')
+  document() {
+    return { resource: 'x' };
+  }
+}
+
+@Module({ controllers: [ApiController, WellKnownController] })
 class ApiModule {}
 
 describe('serveFrontend helpers', () => {
@@ -39,6 +47,15 @@ describe('serveFrontend helpers', () => {
     expect(isApiPath('/apiary')).toBe(false);
     expect(isApiPath('/app/x')).toBe(false);
   });
+
+  it('treats /.well-known and /.well-known/* as a technical path, in any case, and nothing else', () => {
+    expect(isWellKnownPath('/.well-known/oauth-protected-resource')).toBe(true);
+    expect(isWellKnownPath('/.well-known/')).toBe(true);
+    expect(isWellKnownPath('/.WELL-KNOWN/x')).toBe(true);
+    expect(isWellKnownPath('/.well-known')).toBe(true);
+    expect(isWellKnownPath('/.well-knownx/a')).toBe(false);
+    expect(isWellKnownPath('/app/.well-known/x')).toBe(false);
+  });
 });
 
 describe('serveFrontend', () => {
@@ -50,6 +67,8 @@ describe('serveFrontend', () => {
     mkdirSync(join(dir, 'assets'));
     writeFileSync(join(dir, 'index.html'), '<!doctype html><title>spa</title>');
     writeFileSync(join(dir, 'assets', 'a.js'), 'console.log(1)');
+    mkdirSync(join(dir, '.well-known'));
+    writeFileSync(join(dir, '.well-known', 'security.txt'), 'contact: x');
     const moduleRef = await Test.createTestingModule({ imports: [ApiModule] }).compile();
     app = moduleRef.createNestApplication();
     serveFrontend(app, dir);
@@ -83,6 +102,46 @@ describe('serveFrontend', () => {
     for (const path of ['/api', '/api/v1/nope']) {
       const res = await request(app.getHttpServer()).get(path).set('Accept', 'text/html');
       expect(res.text).not.toContain('<title>spa</title>');
+    }
+  });
+
+  it.each([
+    ['Accept: */*', '*/*'],
+    ['Accept: text/html', 'text/html'],
+    ['no Accept header', undefined],
+  ])('never answers /.well-known/* with the index (%s): a missing document is a 404, a Nest route still answers', async (_label, accept) => {
+    const get = (path: string) => {
+      const req = request(app.getHttpServer()).get(path);
+      if (accept) req.set('Accept', accept);
+      else req.unset('Accept');
+      return req;
+    };
+    for (const path of ['/.well-known/oauth-authorization-server', '/.well-known/', '/.WELL-KNOWN/x']) {
+      const res = await get(path);
+      expect(res.status).toBe(404);
+      expect(res.text).not.toContain('<title>spa</title>');
+    }
+    const found = await get('/.well-known/oauth-protected-resource');
+    expect(found.status).toBe(200);
+    expect(found.body).toEqual({ resource: 'x' });
+  });
+
+  it('does not answer /API/* (Express routes are case-insensitive) with the index', async () => {
+    const res = await request(app.getHttpServer()).get('/API/v1/health').set('Accept', '*/*');
+    expect(res.body).toEqual({ status: 'ok' });
+  });
+
+  it('serves no file of the front directory under /.well-known (static ignores hidden directories): a 404, not the index', async () => {
+    const res = await request(app.getHttpServer()).get('/.well-known/security.txt').set('Accept', '*/*');
+    expect(res.status).toBe(404);
+    expect(res.text).not.toContain('contact');
+  });
+
+  it('still serves the index on a path that only looks like /.well-known', async () => {
+    for (const path of ['/.well-knownx/a', '/app/.well-known/x']) {
+      const res = await request(app.getHttpServer()).get(path).set('Accept', '*/*');
+      expect(res.status).toBe(200);
+      expect(res.text).toContain('<title>spa</title>');
     }
   });
 

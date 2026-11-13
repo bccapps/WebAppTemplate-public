@@ -24,9 +24,23 @@ export function resolveFrontDir(env: HttpAppEnv = process.env): string | undefin
   return dir ? resolve(dir) : undefined;
 }
 
-/** True for `/api` (Swagger) and anything below `/api/` (the REST API lives on `/api/v1`). */
+/** `path` is `prefix` or below `prefix/`, in any case: Express routes are case-insensitive, so `/API/v1/x` reaches the same Nest route as `/api/v1/x`. */
+function isUnder(path: string, prefix: string): boolean {
+  const lower = path.toLowerCase();
+  return lower === prefix || lower.startsWith(`${prefix}/`);
+}
+
+/** True for `/api` (Swagger) and anything below `/api/` (the REST API lives on `/api/v1`), in any case. */
 export function isApiPath(path: string): boolean {
-  return path === '/api' || path.startsWith('/api/');
+  return isUnder(path, '/api');
+}
+
+/**
+ * True for `/.well-known` and anything below `/.well-known/`, in any case (RFC 8615: discovery documents such as
+ * `oauth-protected-resource` or `oauth-authorization-server`, served by Nest routes, never by the SPA).
+ */
+export function isWellKnownPath(path: string): boolean {
+  return isUnder(path, '/.well-known');
 }
 
 /** Cache headers of static files: `index.html` must always be revalidated, hashed `/assets/*` never change. */
@@ -43,11 +57,14 @@ function staticMiddleware(dir: string): RequestHandler {
   };
 }
 
-/** Client-side routing: any HTML `GET` that is not the API, Swagger or a missing asset gets `index.html`. */
+/**
+ * Client-side routing: any HTML `GET` that is not the API, Swagger, a `/.well-known/` document or a missing asset gets
+ * `index.html`. `req.accepts('html')` is also true for a wildcard `Accept` and for no `Accept` header, hence the explicit exclusions.
+ */
 function spaFallback(dir: string): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
     const path = req.path;
-    if (req.method !== 'GET' || isApiPath(path) || path.startsWith(ASSETS_PREFIX) || !req.accepts('html')) return next();
+    if (req.method !== 'GET' || isApiPath(path) || isWellKnownPath(path) || path.startsWith(ASSETS_PREFIX) || !req.accepts('html')) return next();
     res.sendFile('index.html', { root: dir, headers: { 'Cache-Control': NO_CACHE } }, (err) => (err ? next(err) : undefined));
   };
 }
@@ -57,12 +74,13 @@ function spaFallback(dir: string): RequestHandler {
  * same-origin deployment (relative API URLs, no CORS) such as the desktop shell or a one-container install.
  *
  * - static files from `dir`; `index.html` is sent with `Cache-Control: no-cache`, `/assets/*` as immutable;
- * - SPA fallback to `index.html` for every `GET` that accepts HTML and is neither `/api`, `/api/*` nor `/assets/*`;
+ * - SPA fallback to `index.html` for every `GET` that accepts HTML and is neither `/api`, `/api/*`, `/.well-known`,
+ *   `/.well-known/*` nor `/assets/*` (any case; a `/.well-known/` path is the back's, a 404 when it has no route);
  * - a missing `/assets/*` file is a plain 404, never the index.
  *
  * Call it BEFORE `app.init()`: Nest registers its 404 and exception handlers at the end of `app.init()`, so anything
- * registered afterwards is never reached. The SPA fallback ignores `/api` and `/api/*`, hence it never masks a Nest
- * route nor Nest's own 404. Throws if `dir/index.html`
+ * registered afterwards is never reached. The SPA fallback ignores `/api`, `/api/*`, `/.well-known` and `/.well-known/*`,
+ * hence it never masks a Nest route nor Nest's own 404. Throws if `dir/index.html`
  * is missing, so that a wrong `SERVE_FRONT_DIR` fails at startup.
  */
 export function serveFrontend(app: INestApplication, dir: string): void {
