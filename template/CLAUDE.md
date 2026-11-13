@@ -146,6 +146,7 @@ Feature access control (`hasFeature`, `@RequireFeature`, tiers) only exists with
 - HTTP hardening only through `configureHttpApp`: never disable `helmet`, widen CORS to `*` in production, wrap `enableCors` or parse webhook bodies by hand (webhooks read `req.rawBody`, `RAW_BODY_PATHS`); per-route CORS openings via `publicCorsPaths` / `corsOriginPolicy` (`nest/common/README.md`). Client IP = `req.ip` (`extractClientIp`), never `X-Forwarded-For` read by hand; behind proxies `TRUST_PROXY` is a list of trusted addresses, not a hop count.
 - `LOCAL_TRUST=true` (single-user local apps only): never on a server, never weaken its checks (loopback **socket** address, never `req.ip`/`X-Forwarded-For`); per-user app routes still use `RequireUserInterceptor`.
 - Remote command execution / terminal sessions are security-critical: least privilege, no unvalidated input in a command line, no credentials in logs.
+- **Secret scanning (MANDATORY)**: a new prefixed secret gets its entry in `nest/common/validation/secret-formats.json` in the same change; `.gitleaks.toml` is generated (project rules in `.gitleaks.local.toml`, allowlists by value, never by path); a fake secret in a spec is built at run time, or written with `FAKE`/`EXAMPLE` right after its prefix; never bypass the secret-scan hooks: remove the secret, and revoke it if it left the machine. Template `README.md`, « Secret scanning ».
 
 ## 11. Communication & Expected Behavior
 
@@ -155,4 +156,4 @@ Feature access control (`hasFeature`, `@RequireFeature`, tiers) only exists with
 - Plans extremely concise; once validated, don't interrupt yourself until everything is done; finish with a synthesis, then open questions or suggestions.
 
 ---
-**Updated:** 2026-11-11 — keep under ~6,000 tokens: rules here, detail in the READMEs/annexes (§7). Getting started: template `README.md`, « Needed Customizations ».
+**Updated:** 2026-11-13 — keep under ~6,000 tokens: rules here, detail in the READMEs/annexes (§7). Getting started: template `README.md`, « Needed Customizations ».

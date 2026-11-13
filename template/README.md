@@ -354,7 +354,9 @@ invalid identifier. The identifier names the OS data folder of the app: change t
 | `scripts/add-module.mjs <id>... [--remove]` | Add / remove shared modules in an existing project |
 | `scripts/add-desktop.mjs [--name <text>] [--identifier <id>] [--dry-run]` | Add the desktop shell (Tauri) to an existing project (see « Desktop application ») |
 | `scripts/add-pwa.mjs [--name <text>] [--source <image>] [--dry-run]` | Add the installable-app option (PWA) to an existing project (see « Front public files and PWA ») |
-| `scripts/update_common.sh [--push-only\|--pull-only]` | For each mounted library: switch to `main` (mounts default to a detached HEAD), commit local changes of the back mount, fetch, rebase on `origin/main`, push; then the same on the front mount (it rebases on what back just pushed); both end on the same SHA; the parent repo gets a `chore: bump <lib>` commit. Then symlinks, root `CLAUDE.md` imports / `AGENTS.md`, `package.json` regeneration (also with `--pull-only`), `npm install` and an auto-commit when something changed. `git push` the parent afterwards. Refuses a legacy app (run the migration first) |
+| `scripts/update_common.sh [--push-only\|--pull-only]` | For each mounted library: switch to `main` (mounts default to a detached HEAD), commit local changes of the back mount, fetch, rebase on `origin/main`, push; then the same on the front mount (it rebases on what back just pushed); both end on the same SHA; the parent repo gets a `chore: bump <lib>` commit. Then symlinks, root `CLAUDE.md` imports / `AGENTS.md`, `package.json` regeneration (also with `--pull-only`), `npm install`, secret scanning (« Secret scanning ») and an auto-commit when something changed (a commit refused by a hook is an error). `git push` the parent afterwards. Refuses a legacy app (run the migration first) |
+| `scripts/secret-scan.mjs setup\|config\|workflow\|hooks\|status [<root>]` | Secret scanning of the project (run by `update_common.sh`; `status` is read-only): see « Secret scanning » |
+| `scripts/gitleaks-config.mjs [--check] [<root>]` | Writes the generated `.gitleaks.toml` (`--check`: exit 1 when stale; exit 3: a hand-written file is kept) |
 | `scripts/migrate-to-webapptemplate.sh` | One-shot, idempotent migration of a legacy app (`nestcommon`/`reactcommon`/`apptemplate` submodules). Does not commit |
 | `scripts/loadtest/loadtest.mjs <command>` | Load test of a deployed environment (k6 + health monitoring of hosts, Postgres, Redis + automatic guards). Generic engine, per-project `loadtest.config.json`: see `scripts/loadtest/README.md` (French) |
 | `scripts/validation-report.mjs [--preprod] [--logs <dir\|archive>] [--since 24h] [--env dev\|preprod] [--only <module>] [--json] [--follow-up] [--show-values] [--check-registry]` | Validation by observation: compares the dev/preprod validation traces (`back/logs/validation-*.jsonl`) with the `<module>/validation/checks.json` registry, per source (`OBSERVED_OK` / `VIOLATION` / `NOT_YET_OBSERVED`; a critical/high check needs back traces) and scans every log file for leaked secrets (never printing them). Samples show field names only (`--show-values`, dev only, adds the scrubbed values). Exit 1 on a critical/high violation, a high-severity leak or a daily cap reached. Detail: `nest/common/README.md`, « Validation par observation » |
@@ -416,6 +418,39 @@ Node of the desktop app is pinned in `scripts/desktop/lib.mjs` (latest 24.x publ
 first; `## Index`: every other file, one line each (`--no-index` drops it). Tests, generated files, `vendor/`/`third_party/`,
 `*_build/` and symlinks leaving the repo are excluded; a language it does not extract is invisible (`--stats`), and `--check`
 then answers "up to date" whatever changes there. Use `python3`, not `python`.
+
+## Secret scanning
+
+No secret in a repository: gitleaks runs before each commit and push and in CI, with rules generated from one registry.
+
+- **Registry**: `nest/common/validation/secret-formats.json` (vx-public), the single list of the prefixed secrets the VX apps
+  and libraries mint (prefix, alphabet, length, entropy floor, mcp-access OAuth tokens `<prefix>at_|rt_|cs_`, where it is
+  minted). A new prefixed secret is added there in the same change as the code that mints it; the trace sanitizer, the path
+  redaction, the log leak scan of `validation-report.mjs` and every project's gitleaks rules read it (`nest/common/README.md`,
+  « Registre des formats de secrets »).
+- **`.gitleaks.toml` is generated** (`scripts/gitleaks-config.mjs`, by `update_common.sh`): gitleaks' default rules, one
+  exact rule per format (`vx-<id>`; percent-encoded forms are decoded by gitleaks itself), one per family of OAuth tokens, an
+  allowlist by value for fake secrets, then `.gitleaks.local.toml` copied verbatim: the project's own rules and allowlists
+  (no `title`, `[extend]`, `[allowlist]` or `vx-*` id). Never edit `.gitleaks.toml`. A hand-written one is kept, with a
+  warning, until it is migrated: move the project's own rules and allowlists to `.gitleaks.local.toml` (a key rule of an app
+  is now generated: drop it), delete `.gitleaks.toml`, re-run `update_common.sh`.
+- **Fake secrets**: in a spec, build them at run time (`secretFormatFixtures()` of `nest/common/validation/secretFixtures.testkit.ts`);
+  written in clear (doc, fixture), they carry `FAKE` or `EXAMPLE` right after the prefix (`tk_FAKE…`). Other exceptions go
+  in `.gitleaks.local.toml` by value, never by path; a deliberate vector already committed: its fingerprint in `.gitleaksignore`.
+- **Git hooks**: `.git/hooks/pre-commit` (the staged changes) and `pre-push` (the commits no remote-tracking branch has) =
+  `scripts/git-hooks/vx-secret-scan.sh`, shared by linked worktrees, values redacted, silent when clean. `update_common.sh`
+  installs them only when gitleaks 8.30 or later is on the PATH (`brew install gitleaks`; otherwise a warning), refreshes
+  them, keeps a project hook already there as `<hook>.local` (run after a clean scan) and leaves `core.hooksPath` setups
+  alone (call the script from those hooks: it dispatches on its file name). An installed hook without gitleaks refuses the
+  commit or push with the way to install it. A finding: remove the secret from what you commit or push, and revoke or
+  rotate it if it was ever pushed or shared (removing it from git is not enough); never bypass the hook.
+- **CI**: `.github/workflows/secret-scan.yml`, copied from `template/.github/workflows/` and refreshed while it keeps its
+  `vx-template: secret-scan workflow` line (remove the line to own the file): the gitleaks CLI pinned and checksum-verified, no
+  secret, read-only token; a push to `main` or `dev` scans the pushed commits (a new branch: those no other branch has),
+  a pull request its commits, a manual run (`workflow_dispatch`) the whole history. It uses GitHub Actions minutes on a
+  private repository. vx-public runs the same scan in its own CI.
+- `node scripts/secret-scan.mjs status` tells what is installed. Not covered: a secret without a recognizable shape (a short
+  password) and GitHub's own secret scanning / push protection (paid on private repositories, not used).
 
 ## DB SSL Connection
 
