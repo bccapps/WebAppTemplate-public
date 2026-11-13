@@ -130,6 +130,12 @@
           "type": "boolean",
           "description": "Front traces sent before sign-in (unauthenticated route); requires `front` in `sources`; refused for a critical/high check. A violation reported by the front only is VIOLATION_TO_CONFIRM (not blocking)."
         },
+        "optionalGroup": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "maxLength": 60,
+          "description": "Checks of an OPTIONAL feature (opt-in option of a shared module). When no check of the same module and group has ever been observed, they are reported OPTIONAL_INACTIVE (option not activated in this app) instead of NOT_YET_OBSERVED, and never count against the exit criteria; as soon as one of them is observed, the whole group behaves normally."
+        },
         "fields": {
           "anyOf": [
             {

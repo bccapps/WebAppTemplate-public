@@ -20,7 +20,7 @@ import { scrubForDisplay } from './validation-logs.mjs';
  * `VIOLATION_TO_CONFIRM`: violations reported by the FRONT only, on a pre-login check (anyone can send those, without a
  * session): shown, never blocking, to be reproduced with a back trace.
  */
-export const STATUS = Object.freeze({ VIOLATION: 'VIOLATION', TO_CONFIRM: 'VIOLATION_TO_CONFIRM', OK: 'OBSERVED_OK', NOT_YET: 'NOT_YET_OBSERVED' });
+export const STATUS = Object.freeze({ VIOLATION: 'VIOLATION', TO_CONFIRM: 'VIOLATION_TO_CONFIRM', OK: 'OBSERVED_OK', NOT_YET: 'NOT_YET_OBSERVED', INACTIVE: 'OPTIONAL_INACTIVE' });
 const BLOCKING = new Set(['critical', 'high']);
 const MAX_SAMPLES = 3;
 const MAX_SAMPLE_LENGTH = 400;
@@ -106,8 +106,24 @@ export function evaluateChecks(checks, lines, { showValues = false } = {}) {
     }
     result.status = statusOf(result, check);
     result.samples = result.samples.map((s) => s.text);
+    result.optionalGroup = check.optionalGroup ?? null;
     return result;
-  });
+  }).map(markInactiveGroups);
+}
+
+const seen = (r) => ['ok', 'info', 'violation', 'forbidden'].some((k) => total(r.counts[k]) > 0);
+
+/**
+ * Checks of an optional feature (`optionalGroup`): when NO check of the module's group has ever been observed (any trace,
+ * even a violation), the option is taken as not activated: OPTIONAL_INACTIVE, not NOT_YET_OBSERVED.
+ */
+function markInactiveGroups(result, _index, all) {
+  if (!result.optionalGroup || result.status !== STATUS.NOT_YET) return result;
+  const group = all.filter((r) => r.optionalGroup === result.optionalGroup && r.module === result.module);
+  if (group.some(seen)) return result;
+  result.status = STATUS.INACTIVE;
+  result.note = `optional feature "${result.optionalGroup}" not activated in this app (no trace of its group): not counted`;
+  return result;
 }
 
 /** Trace names seen in the logs that no check references (instrumentation without a registry entry). */

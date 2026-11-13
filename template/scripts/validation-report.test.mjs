@@ -334,3 +334,21 @@ test('every checks.json of this repository follows the schema (CI gate of vx-pub
   assert.deepEqual(validateSchema({ checks: [] }, schema), []);
   assert.ok(validateSchema({ checks: [{ id: 'X' }] }, schema).length > 0);
 });
+
+test('checks of an optional feature (optionalGroup): inactive when none of the group was ever observed, normal once one is', () => {
+  const checks = [
+    check('demo.opt.a', { severity: 'critical', optionalGroup: 'anomalies' }),
+    check('demo.opt.b', { severity: 'high', optionalGroup: 'anomalies' }),
+    check('demo.plain', { severity: 'high' }),
+  ];
+  const inactive = byId(json(project({ checks, traces: [] })));
+  assert.equal(inactive['demo.opt.a'].status, 'OPTIONAL_INACTIVE');
+  assert.equal(inactive['demo.opt.b'].status, 'OPTIONAL_INACTIVE');
+  assert.equal(inactive['demo.plain'].status, 'NOT_YET_OBSERVED', 'a check outside the group is unchanged');
+  assert.match(inactive['demo.opt.a'].note, /not activated/);
+  const active = byId(json(project({ checks, traces: [{ check: 'demo.opt.a', outcome: 'ok' }] })));
+  assert.equal(active['demo.opt.a'].status, 'OBSERVED_OK');
+  assert.equal(active['demo.opt.b'].status, 'NOT_YET_OBSERVED', 'the option is active: the rest of the group is expected');
+  const violated = byId(json(project({ checks, traces: [{ check: 'demo.opt.a', outcome: 'violation' }] })));
+  assert.equal(violated['demo.opt.a'].status, 'VIOLATION', 'a violation is never hidden by the group');
+});

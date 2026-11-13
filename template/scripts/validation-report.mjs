@@ -173,7 +173,7 @@ export async function analyse(options) {
   }
 }
 
-const STATUS_ORDER = [STATUS.VIOLATION, STATUS.TO_CONFIRM, STATUS.NOT_YET, STATUS.OK];
+const STATUS_ORDER = [STATUS.VIOLATION, STATUS.TO_CONFIRM, STATUS.NOT_YET, STATUS.OK, STATUS.INACTIVE];
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
 
 function formatCounts(c) {
