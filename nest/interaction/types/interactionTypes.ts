@@ -218,6 +218,24 @@ export interface OpenTicketRef {
   freshProof: boolean;
 }
 
+/**
+ * `reopen(source, correlationId)`: `reopened` (cancelled → open, recipients notified again), `already_open` (nothing done: idempotent),
+ * `not_found`, `answered` / `expired` (never reopened), `no_recipient` (nobody left, or no active recipient), `busy` (the cancellation is
+ * still being handed to the `onAnswer` handler: try again later).
+ */
+export type ReopenOutcome = 'reopened' | 'already_open' | 'not_found' | 'answered' | 'expired' | 'no_recipient' | 'busy';
+
+export interface ReopenOptions {
+  /** A new expiry, in (now, now + `interaction_askMaxTtlSeconds`]; required when the stored one has passed. Default: the stored one. */
+  expiresAt?: Date;
+}
+
+export interface ReopenResult {
+  outcome: ReopenOutcome;
+  /** The ticket as it stands (`reopened`: with the deliveries of the new notification), `null` when `not_found`. */
+  ticket: InteractionTicket | null;
+}
+
 /** What apps (and the `McpInteractionPort` adapter) see: `UserInteractionService` implements it. */
 export interface UserInteractionApi {
   notify(userId: number, notice: UserNotice): Promise<DeliveryReport>;
@@ -225,6 +243,8 @@ export interface UserInteractionApi {
   notifyAdmins(notice: UserNotice): Promise<DeliveryReport[]>;
   ask(recipients: number | number[], question: InteractionQuestion): Promise<InteractionTicket>;
   cancel(source: string, correlationId: string, reason: string): Promise<boolean>;
+  /** Optional in the contract (an app's own fake may omit it); `UserInteractionService` implements it. */
+  reopen?(source: string, correlationId: string, options?: ReopenOptions): Promise<ReopenResult>;
   getTicket(ticketId: string): Promise<InteractionTicket | null>;
   onAnswer(kind: string, handler: InteractionAnswerHandler, options?: InteractionAnswerOptions): () => void;
   reachableKinds(userId: number, category: InteractionCategory): Promise<ChannelKind[]>;

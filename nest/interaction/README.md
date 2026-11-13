@@ -29,7 +29,7 @@ transporte que le résumé fourni par l'app, caviardé (`maskKnownSecrets`) et t
 | `interactionEntities.ts` | Les 14 entités (`INTERACTION_ENTITIES`). |
 | `types/` | `interactionTypes.ts` (vocabulaire, notice, question, billet, issue, rapport), `providerTypes.ts` (point d'extension), `ports.ts` (ports et jetons d'injection). |
 | `errors/` | `InteractionError(code, details)`, table des statuts HTTP ; `InteractionHttpException` + `InteractionErrorInterceptor` (corps `{ code, message, details? }`, `Retry-After`). |
-| `services/UserInteractionService.ts` | Ce que l'app utilise : `notify`, `notifyMany`, `notifyAdmins`, `ask`, `cancel`, `getTicket`, `onAnswer(kind, handler, { source })`, `answerFromProvider`, `reachableKinds`, `forgetUser`. Le billet rendu par `ask` / `getTicket` (`InteractionTicket`, côté serveur seulement, jamais un DTO) nomme la question qu'il pose (`kind`, `source`, `correlationId`) : un canal `reply` de l'app y applique ses propres règles avant `answerFromProvider` (C2, AgentHub). |
+| `services/UserInteractionService.ts` | Ce que l'app utilise : `notify`, `notifyMany`, `notifyAdmins`, `ask`, `cancel`, `reopen`, `getTicket`, `onAnswer(kind, handler, { source })`, `answerFromProvider`, `reachableKinds`, `forgetUser`. Le billet rendu par `ask` / `getTicket` (`InteractionTicket`, côté serveur seulement, jamais un DTO) nomme la question qu'il pose (`kind`, `source`, `correlationId`) : un canal `reply` de l'app y applique ses propres règles avant `answerFromProvider` (C2, AgentHub). |
 | `services/InteractionDeliveryService.ts` | Algorithme de livraison (§7) : validation, inactif, `inapp`, plan, réservation, plafonds, envoi concurrent sous délai, rapport. `ping()` (envoi de test). |
 | `services/InteractionTicketService.ts` | Cycle de vie d'une question (§8) : création, réponse (UPDATE conditionnel), expiration, annulation, remise de l'issue (relances persistées), fermeture des autres surfaces. |
 | `services/InteractionChannelService.ts` | Canaux de l'utilisateur (configuration par le fournisseur, interrupteur, ordre, suppression, test) et vue / interrupteur administrateur. |
@@ -78,7 +78,13 @@ transporte que le résumé fourni par l'app, caviardé (`maskKnownSecrets`) et t
    `AppInteractionDirectory implements InteractionDirectory` (actif, admin, administrateurs, noms, e-mail vérifié, langue).
    Sans plugin : `InteractionModule.forRoot({ … })` **une fois** dans l'`AppModule`. Les consommateurs n'importent jamais le
    module : ils injectent `UserInteractionService`.
-3. Appeler `userInteraction.forgetUser(userId)` à la suppression d'un compte.
+3. Suppression d'un compte : avec le module `user`, **rien à câbler** (depuis le lot 5.15) — `InteractionAccountErasure`
+   (`services/InteractionAccountErasure.ts`, `@AccountErasureParticipant()` de `common/types/ExtensionPoints.ts`) est trouvé par
+   `user` à la fermeture du compte (`UserService.anonymizeUserRow`) et quand le balayage RGPD atteint un compte fermé plus tôt
+   (`eraseClosedAccountIdentifiers`) ; il appelle `forgetUser(userId)` (idempotent ; un échec est journalisé et tracé par `user`
+   sans bloquer la fermeture). Sans le module `user`, appeler `userInteraction.forgetUser(userId)` soi-même à la suppression d'un
+   compte. Un balayage de secours propre à l'app (TradeKong : `TkInteractionForgetSweep`) n'est plus utile que pour les comptes
+   fermés AVANT cette version, ou supprimés physiquement (voir le README de `user`).
 4. Schéma : `DB_SCHEMA_MODE=sync` crée les tables ; sinon migration propre depuis `ddl/`.
 5. Configuration (admin) : `interaction_enabledKinds`, `interaction_telegramMode` (+ jeton de l'exploitant si `operator`),
    `interaction_vapidSubject`.
@@ -170,8 +176,13 @@ Codes d'erreur (§12) : `INVALID_INPUT`, `INVALID_CONFIG { field, reason }`, `VE
 5. `approval` / `security` jamais muets : si le routage ne retient aucun canal prêt, tous les canaux prêts sont retenus.
 6. Heures calmes : `info` seulement (pas `critical` avec `critical_bypass`) ⇒ `skipped QUIET_HOURS`.
 7. Réservation (unique `(user_id, dedup_key, kind)`, avant l'envoi : un doublon ⇒ `duplicate`, rien n'est envoyé), puis
-   plafonds « enregistrer puis compter » (`interaction_maxPerUserHour`, `interaction_askMaxPerUserHour`,
-   `interaction_maxExternalPerHour`) ⇒ `skipped CAPPED`.
+   plafonds « enregistrer puis compter » (`interaction_maxPerUserHour` pour `info` + `security`, `interaction_askMaxPerUserHour`
+   pour les questions, `interaction_maxExternalPerHour` pour toute l'app) ⇒ `skipped CAPPED`. **Une notice `critical`** (arrêt
+   d'urgence de TradeKong…) est exemptée de ces plafonds (par utilisateur et global) depuis le lot 5.15 — jamais du
+   dédoublonnage — et n'est retenue que par le plafond absolu `CRITICAL_MAX_PER_USER_HOUR` (60 remises externes de
+   l'utilisateur dans l'heure, toutes catégories et priorités comptées : garde-fou contre une boucle ; au-delà `skipped CAPPED`
+   et un avertissement dans le journal). La notice `inapp` est toujours écrite. Les remises `critical` comptent ensuite dans
+   les plafonds des notices `normal`.
 8. Envoi : tous les fournisseurs en même temps, chacun sous `AbortSignal` de `interaction_providerTimeoutMs` ; une
    exception ou un délai devient un code (`ERROR`, `TIMEOUT`) sur la ligne et sur le canal (`last_error`), sans retarder
    les autres. Pas de relance automatique.
@@ -248,6 +259,23 @@ Codes d'erreur (§12) : `INVALID_INPUT`, `INVALID_CONFIG { field, reason }`, `VE
   donnée hors de l'app laisse une notice `security` `interaction.answered_elsewhere` dans la boîte des destinataires — pas
   celle d'un canal dont l'interface est dans l'app (`proof: 'in_app'`, ex. la messagerie d'AgentHub, C2).
 - Expiration : refus dès `expires_at` ; balayage (workers, `interaction_expirySweepMs`) ⇒ `expired` remise une fois.
+- **Réouverture** (`reopen(source, correlationId, { expiresAt? })`, lot 5.15, revue humaine requise) : un billet **annulé** alors
+  que sa question attendait encore (AgentHub : le balayage des dialogues orphelins l'annule, puis le runner revient et le dialogue
+  est rouvert ; `ask` du même `(source, correlationId)` rend le billet annulé tel quel) est rouvert par **un** UPDATE conditionnel
+  `cancelled → open` écrit seulement si le billet n'a jamais été répondu (`answered_at` / `answer_action` nuls), si la remise de
+  son annulation est terminée (`dispatch_status` `done` ou `failed` : aucun gestionnaire ne la reçoit en ce moment) et si son
+  échéance (la stockée, ou `expiresAt` donné, dans `(now, now + interaction_askMaxTtlSeconds]`, sinon
+  `INVALID_QUESTION { field: 'expiresAt' }`) est à venir. Un seul gagnant : des appels concurrents ne notifient qu'une fois.
+  Le gagnant efface l'annulation (`cancel_reason`, état de remise remis à `none`, tentatives à 0), notifie de nouveau ses
+  destinataires **actifs** exactement comme `ask` (notice `inapp`, `ticket.opened`, canaux externes selon préférences, heures
+  calmes et plafonds, sous une clé de remise propre `t:<id>:r:<instant>`), et écrit `ticket.reopen` au journal d'audit pour
+  chacun (ids seulement). Résultat `{ outcome, ticket }` : `reopened` ; `already_open` (rien n'est fait : idempotent) ;
+  `not_found` ; `answered` et `expired` (**jamais rouverts**, même avec une nouvelle échéance) ; `no_recipient` (plus aucun
+  destinataire — retiré par `revokeRecipient` ou `forgetUser` — ou aucun actif) ; `busy` (remise de l'annulation en cours ou
+  en attente de relance : réessayer plus tard). Un destinataire retiré le reste ; le gestionnaire `onAnswer` du `kind` reste
+  requis (`UNKNOWN_QUESTION_KIND`). L'annulation déjà remise au gestionnaire ne lui est pas retirée : il reçoit ensuite l'issue
+  finale du billet rouvert (réponse, expiration ou nouvelle annulation) — il doit donc rester idempotent par `ticketId` et
+  accepter un billet `cancelled` puis `answered`.
 
 ## Telegram (§8.3, §9)
 
@@ -346,6 +374,9 @@ bornes reprend le défaut. Libellés : `locales/interaction.<lang>.json` (`inter
 - **Ports** (`forRoot({ ports })`) : `secretStore` (`InteractionSecretStore`), `realtime` (`InteractionRealtimePort`), `audit`
   (`InteractionAuditSink`), `stepUp` (`InteractionStepUpPort` : `methods`, `begin`, `complete`, `consume` — implémentation
   `UserStepUpService` du lot S), `vapidKeys` (`VapidKeySource`). `directory` (`InteractionDirectory`) est obligatoire.
+- **Participant d'effacement de compte** (`InteractionAccountErasure`, `@AccountErasureParticipant()` de
+  `common/types/ExtensionPoints.ts`) : trouvé par `user` (découverte Nest, jamais un import), il oublie le compte fermé
+  (`forgetUser`). Aucune option.
 - **Services exportés** : `UserInteractionService`, `TelegramInboundRegistry`, `InteractionHooks`
   (`registerRenderHook((ctx) => RenderedMessage)`), `InteractionTicketCardStore`, `INTERACTION_SECRET_STORE`.
 - `routes: { user: false, admin: false }` : l'app sert ses propres façades (AgentHub, C2).
@@ -417,6 +448,11 @@ côté front). SQLite exige `better-sqlite3` (sinon ignoré) ; Postgres exige `I
   (interrupteur basculé pendant le step-up ou après la vérification précoce ⇒ refus à la décision), `S3` (webhook au plus
   une fois, gestionnaire en échec non relancé), `S4` (endpoint déplacé seulement avec les mêmes clés), `F1 / S6` (règle
   fermée : principal sans `isHumanSession` refusé).
+- `testing/interactionReopenCap.testkit.ts` (`reopenCap.sqlite.spec.ts`, et `conformance.postgres.spec.ts`) : lot 5.15 — réouverture
+  d'un billet annulé (de nouveau dans la boîte, cartes et push renvoyés, répondable ; idempotente et une seule notification sous
+  cinq appels concurrents ; jamais un billet répondu ou expiré ; nouvelle échéance bornée ; personne à notifier ; remise de
+  l'annulation en cours ; préférences respectées), notices `critical` hors plafonds par utilisateur et global mais
+  dédoublonnées et retenues par `CRITICAL_MAX_PER_USER_HOUR`, et le participant d'effacement de compte trouvé par découverte.
 - `testing/interactionConcurrency.testkit.ts` (**Postgres seulement**, depuis `conformance.postgres.spec.ts`) : variantes
   parallèles des tests 4, 9, 10, 11, 12, 15, 17 sur un pool de 24 connexions (`trackPoolUsage` prouve que plusieurs
   connexions étaient prises en même temps), plus le bail de réception Telegram, la purge, les types de colonnes, et les

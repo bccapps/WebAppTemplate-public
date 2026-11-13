@@ -31,6 +31,8 @@ import type {
   InteractionTicket,
   OpenTicketRef,
   PendingAnswer,
+  ReopenOptions,
+  ReopenResult,
 } from '../types/interactionTypes';
 import { INTERACTION_AUDIT, INTERACTION_DIRECTORY, INTERACTION_REALTIME, INTERACTION_STEP_UP, stepUpPurposeOf } from '../types/ports';
 import type { InteractionAuditSink, InteractionDirectory, InteractionRealtimePort, InteractionStepUpPort } from '../types/ports';
@@ -625,6 +627,92 @@ export class InteractionTicketService {
     return true;
   }
 
+  /**
+   * Opens again a ticket CANCELLED while its question was still pending (AgentHub: the orphan sweep cancelled a dialog the runner
+   * still waits on). One conditional UPDATE `cancelled → open`, written only if the ticket was never answered, its cancellation is
+   * already handed over (`dispatch_status` `done` / `failed`: no handler is receiving it now) and its expiry (the stored one, or
+   * `options.expiresAt`, within the max TTL) is still ahead: a single winner, so concurrent calls notify once. An answered or expired
+   * ticket is never reopened. The winner clears the cancellation (`cancel_reason`, hand-over state), notifies its ACTIVE recipients
+   * again exactly like `ask` (in-app notice, `ticket.opened`, external channels per their preferences and caps, fresh delivery keys)
+   * and writes `ticket.reopen` to the audit sink for each of them (ids only). Recipients withdrawn before stay withdrawn.
+   */
+  async reopen(source: string, correlationId: string, options: ReopenOptions = {}): Promise<ReopenResult> {
+    if (typeof source !== 'string' || !SOURCE_PATTERN.test(source) || typeof correlationId !== 'string') return { outcome: 'not_found', ticket: null };
+    const now = new Date();
+    const newExpiry = options.expiresAt === undefined ? null : this.reopenExpiry(options.expiresAt, now);
+    const ticket = await this.tickets.findOne({ where: { source, correlationId } });
+    if (!ticket) return { outcome: 'not_found', ticket: null };
+    if (ticket.status !== 'cancelled') {
+      const outcome = ticket.status === 'open' ? 'already_open' : ticket.status === 'answered' ? 'answered' : 'expired';
+      return { outcome, ticket: await this.toTicket(ticket, []) };
+    }
+    // A cancelled ticket carrying an answer never happens through this module (an answer closes it as `answered`): refused all the same.
+    if (ticket.answeredAt !== null || ticket.answerAction !== null) return { outcome: 'answered', ticket: await this.toTicket(ticket, []) };
+    const expiresAt = newExpiry ?? ticket.expiresAt;
+    if (expiresAt.getTime() <= now.getTime()) return { outcome: 'expired', ticket: await this.toTicket(ticket, []) };
+    if (ticket.dispatchStatus !== 'done' && ticket.dispatchStatus !== 'failed') return { outcome: 'busy', ticket: await this.toTicket(ticket, []) };
+    const binding = this.handlers.get(ticket.kind);
+    if (!binding) throw new InteractionError('UNKNOWN_QUESTION_KIND', { kind: ticket.kind });
+    const recipientIds = (await this.recipients.find({ where: { ticketId: ticket.id } })).map((row) => row.userId);
+    const active: number[] = [];
+    for (const id of recipientIds) if (await this.directory.isActive(id).catch(() => false)) active.push(id);
+    if (active.length === 0) return { outcome: 'no_recipient', ticket: await this.toTicket(ticket, []) };
+    const result = await this.tickets
+      .createQueryBuilder()
+      .update(InteractionTicketEntity)
+      .set({ status: 'open', cancelReason: null, expiresAt, dispatchStatus: 'none', dispatchAttempts: 0, dispatchNextAt: null })
+      .where('id = :id', { id: ticket.id })
+      .andWhere('status = :cancelled', { cancelled: 'cancelled' })
+      .andWhere('answered_at IS NULL')
+      .andWhere('answer_action IS NULL')
+      .andWhere('dispatch_status IN (:...settled)', { settled: ['done', 'failed'] })
+      .andWhere('expires_at = :seen', { seen: ticket.expiresAt })
+      .execute();
+    const fresh = (await this.tickets.findOne({ where: { id: ticket.id } })) as InteractionTicketEntity;
+    if ((result.affected ?? 0) === 0) {
+      const outcome = fresh.status === 'open' ? 'already_open' : fresh.status === 'answered' ? 'answered' : fresh.status === 'expired' ? 'expired' : 'busy';
+      return { outcome, ticket: await this.toTicket(fresh, []) };
+    }
+    const reports = await this.notifyAgain(fresh, active, now);
+    return { outcome: 'reopened', ticket: await this.toTicket(fresh, reports) };
+  }
+
+  /** `reopen`'s new expiry: in (now, now + max TTL], else `INVALID_QUESTION { field: 'expiresAt' }` (the rule of `ask`). */
+  private reopenExpiry(value: unknown, now: Date): Date {
+    const maxTtlMs = this.config.number('interaction_askMaxTtlSeconds', 60, 604800) * 1000;
+    const at = value instanceof Date ? value.getTime() : Number.NaN;
+    if (Number.isNaN(at) || at <= now.getTime() || at > now.getTime() + maxTtlMs) throw new InteractionError('INVALID_QUESTION', { field: 'expiresAt' });
+    return new Date(at);
+  }
+
+  /**
+   * The notification of a reopened ticket, as `ask` does it, under a delivery key of its own (`t:<id>:r:<instant>`: the keys of the
+   * first notification would make every channel a duplicate). External channels in the background; the audit line of each recipient.
+   */
+  private async notifyAgain(ticket: InteractionTicketEntity, active: number[], now: Date): Promise<DeliveryReport[]> {
+    const dedupKey = `t:${ticket.id}:r:${now.getTime()}`;
+    const notice = ticketNotice({ source: ticket.source, category: ticket.category as CleanQuestion['category'], summary: ticket.summary });
+    const reports: DeliveryReport[] = [];
+    const pending: Array<{ userId: number; reserved: ReservedDelivery[] }> = [];
+    for (const userId of active) {
+      await this.recipients.update({ ticketId: ticket.id, userId }, { notifiedAt: now, seenAt: null });
+      const meta: DeliveryMeta = { dedupKey, category: ticket.category as DeliveryMeta['category'], priority: 'normal', type: QUESTION_TYPE, ticketId: ticket.id };
+      const inapp = await this.delivery.reserveInapp(userId, meta);
+      const noticeId = inapp === 'duplicate' ? null : await this.inbox.write(userId, notice, ticket.id);
+      this.realtime.publish(userId, { type: 'ticket.opened', id: ticket.id });
+      const reserved = await this.delivery.planAndReserve(userId, meta, []);
+      pending.push({ userId, reserved });
+      reports.push({ userId, noticeId, outcome: 'inapp_only', deliveries: [{ kind: INAPP_KIND, status: inapp === 'duplicate' ? 'duplicate' : 'sent', code: null }, ...reserved.map((r) => ({ kind: r.kind, status: r.status, code: r.code }))] });
+      await this.audit
+        .record({ action: 'ticket.reopen', actor: { userId: null, admin: false }, ownerUserId: userId, kind: INAPP_KIND, at: now, ticket: { id: ticket.id, kind: ticket.kind, source: ticket.source, actionId: null }, code: null })
+        .catch(() => undefined);
+    }
+    this.background.run('ticket.externals', async () => {
+      for (const { userId, reserved } of pending) await this.delivery.sendReserved(userId, reserved, this.builder(ticket, userId));
+    });
+    return reports;
+  }
+
   /** One sweep (worker, under `runExclusive('interaction.expire')`): open tickets past `expires_at` → `expired`. */
   async expireDue(now = new Date()): Promise<number> {
     const due = await this.tickets.find({ where: { status: 'open', expiresAt: LessThanOrEqual(now) }, order: { expiresAt: 'ASC' }, take: SWEEP_BATCH });
@@ -778,7 +866,7 @@ export function closedError(ticket: InteractionTicketEntity, now: Date): Interac
   return new InteractionError('ALREADY_ANSWERED', { via: '', at: '' });
 }
 
-function ticketNotice(q: CleanQuestion): CleanNotice {
+function ticketNotice(q: Pick<CleanQuestion, 'source' | 'category' | 'summary'>): CleanNotice {
   return { type: QUESTION_TYPE, source: q.source, category: q.category, priority: 'normal', title: q.summary.title, body: q.summary.body ?? null, url: q.summary.url ?? null, dedupKey: null, data: null };
 }
 

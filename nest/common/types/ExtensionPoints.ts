@@ -7,6 +7,8 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import { SetMetadata } from '@nestjs/common';
+
 /**
  * Extension points that let a module use capabilities of an OPTIONAL module without
  * importing it: `user` uses `infra` / `commerce`, public modules (`issue-report`)
@@ -76,3 +78,27 @@ export interface UserContactProvider {
   /** Preferred language of the account (`fr`, `en`…), `null` when unknown. */
   localeOf?(userId: string | number): Promise<string | null>;
 }
+
+/**
+ * Account erasure participants: any number of modules react to the closure of an account without `user` importing them (a public
+ * module such as `interaction` forgets the account's channels, notices and tickets). Unlike the single-provider tokens above, this is
+ * a LIST: each participant is a provider of its own module whose class carries `@AccountErasureParticipant()`; `user`
+ * (`AccountErasureParticipants`) finds them through Nest's `DiscoveryService` at call time (never constructor-injected, so a
+ * participant may depend on `UserService` without a DI cycle). Absent => nothing happens.
+ *
+ * Each call is isolated: a participant that throws is logged and traced, never blocks the other participants nor the closure (the
+ * right to erasure). Both methods must be IDEMPOTENT: `onAccountErased` runs at the closure and again when the deep sweep reaches an
+ * account closed earlier (`eraseClosedAccountIdentifiers`).
+ */
+export const ACCOUNT_ERASURE_PARTICIPANT = 'vx:account-erasure-participant';
+export interface AccountErasureParticipant {
+  /** Short stable name for the logs and traces (`interaction`): never a user value. */
+  readonly erasureKey: string;
+  /** Before the account row is anonymized (its e-mail still readable), after the legacy `ACCOUNT_DELETION_HOOK` of `user`. */
+  beforeAccountDeletion?(userId: number): Promise<void>;
+  /** After the account row is anonymized (the account is inactive), and for an account closed earlier when the deep sweep reaches it. */
+  onAccountErased?(userId: number): Promise<void>;
+}
+
+/** Marks a provider class as an `AccountErasureParticipant` (it must implement the interface and be a singleton provider). */
+export const AccountErasureParticipant = (): ClassDecorator => SetMetadata(ACCOUNT_ERASURE_PARTICIPANT, true);

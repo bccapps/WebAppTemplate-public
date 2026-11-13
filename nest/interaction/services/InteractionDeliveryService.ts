@@ -32,6 +32,12 @@ import { errorCode, InteractionHooks } from './InteractionRuntime';
 
 const HOUR_MS = 3_600_000;
 const ACTIVE_STATUSES = ['sent', 'queued'];
+/**
+ * A `critical` notice (an emergency stop) is exempt from `interaction_maxPerUserHour` and `interaction_maxExternalPerHour`, never from
+ * the deduplication nor from this absolute ceiling against a loop: past this many external deliveries of the user in the last hour
+ * (every category and priority counted), even a critical notice keeps its in-app copy only (`skipped CAPPED`).
+ */
+export const CRITICAL_MAX_PER_USER_HOUR = 60;
 
 /** What identifies a delivery in the journal (never a content). */
 export interface DeliveryMeta {
@@ -127,7 +133,7 @@ export class InteractionDeliveryService {
     }
     for (const entry of reserved) {
       if (entry.status !== 'queued' || !entry.deliveryId) continue;
-      if (await this.overCap(userId, meta.category)) {
+      if (await this.overCap(userId, meta.category, meta.priority)) {
         await this.deliveries.update({ id: entry.deliveryId }, { status: 'skipped', code: 'CAPPED' });
         Object.assign(entry, { status: 'skipped', code: 'CAPPED' });
       }
@@ -209,9 +215,17 @@ export class InteractionDeliveryService {
     }
   }
 
-  /** « Record then count »: the queued row is already in; over the user's (or the app's) hourly cap it is skipped. */
-  private async overCap(userId: number, category: InteractionCategory): Promise<boolean> {
+  /**
+   * « Record then count »: the queued row is already in; over the user's (or the app's) hourly cap it is skipped. A `critical` notice
+   * passes both caps and is held by `CRITICAL_MAX_PER_USER_HOUR` only (every external delivery of the user in the last hour).
+   */
+  private async overCap(userId: number, category: InteractionCategory, priority: InteractionPriority = 'normal'): Promise<boolean> {
     const since = new Date(Date.now() - HOUR_MS);
+    if (priority === 'critical') {
+      const capped = (await this.deliveries.count({ where: { userId, kind: Not(INAPP_KIND), status: In(ACTIVE_STATUSES), createdAt: MoreThan(since) } })) > CRITICAL_MAX_PER_USER_HOUR;
+      if (capped) this.logger.warn(`critical notice to user ${userId} held by the absolute ceiling (${CRITICAL_MAX_PER_USER_HOUR}/h)`);
+      return capped;
+    }
     const ask = category === 'approval';
     const cap = ask ? this.config.number('interaction_askMaxPerUserHour', 0, 100000) : this.config.number('interaction_maxPerUserHour', 0, 100000);
     const categories = ask ? ['approval'] : ['info', 'security'];

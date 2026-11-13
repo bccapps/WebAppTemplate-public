@@ -24,6 +24,8 @@ import type {
   InteractionQuestion,
   InteractionTicket,
   OpenTicketRef,
+  ReopenOptions,
+  ReopenResult,
   UserInteractionApi,
   UserNotice,
 } from '../types/interactionTypes';
@@ -108,6 +110,16 @@ export class UserInteractionService implements UserInteractionApi, OnModuleInit,
 
   cancel(source: string, correlationId: string, reason: string): Promise<boolean> {
     return this.tickets.cancel(source, correlationId, reason);
+  }
+
+  /**
+   * Opens again a ticket that was CANCELLED while its question was still pending (e.g. a dialog the app cancelled, then found waiting
+   * again): one conditional UPDATE `cancelled → open`, never for an answered or expired ticket; its active recipients are notified again
+   * (preferences, quiet hours and caps apply). Idempotent: `already_open` on an open ticket, and concurrent calls notify once. `expiresAt`:
+   * a new expiry (required when the stored one has passed). `busy`: the cancellation is still being handed over, try again later.
+   */
+  reopen(source: string, correlationId: string, options?: ReopenOptions): Promise<ReopenResult> {
+    return this.tickets.reopen(source, correlationId, options);
   }
 
   getTicket(ticketId: string): Promise<InteractionTicket | null> {

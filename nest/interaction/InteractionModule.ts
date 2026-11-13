@@ -45,6 +45,7 @@ import { InteractionSendQuotaService } from './services/InteractionSendQuotaServ
 import { InteractionTicketCardStore } from './services/InteractionTicketCardStore';
 import { InteractionTicketService } from './services/InteractionTicketService';
 import { UserInteractionService } from './services/UserInteractionService';
+import { InteractionAccountErasure } from './services/InteractionAccountErasure';
 import type { InteractionChannelProvider } from './types/providerTypes';
 import {
   INTERACTION_AUDIT,
@@ -74,6 +75,8 @@ const CORE_SERVICES: Provider[] = [
   InteractionTicketCardStore,
   InteractionTicketService,
   UserInteractionService,
+  // Found by `user` at account closure (`@AccountErasureParticipant()`): `forgetUser` without any import between the two modules.
+  InteractionAccountErasure,
   InteractionMaintenanceService,
   InteractionErrorInterceptor,
   RequireHumanSessionInterceptor,

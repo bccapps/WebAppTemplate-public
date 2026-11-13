@@ -19,6 +19,7 @@ import { describeInteractionConformance } from './testing/interactionConformance
 import { describeInteractionHardening } from './testing/interactionHardening.testkit';
 import { describeInteractionGate } from './testing/interactionGate.testkit';
 import { describeInteractionReview } from './testing/interactionReview.testkit';
+import { describeInteractionReopenAndCap } from './testing/interactionReopenCap.testkit';
 
 const url = process.env.INTERACTION_TEST_PG_URL;
 const schemas: string[] = [];
@@ -49,6 +50,8 @@ if (url) {
   describeInteractionGate('Postgres', { database });
   // Races a single SQLite connection hides: a pool of connections, every contender launched at once.
   describeInteractionConcurrency('Postgres', { database });
+  // Lot 5.15: reopening a cancelled ticket, critical notices and the hourly caps.
+  describeInteractionReopenAndCap('Postgres', { database });
 } else {
   describe.skip('interaction conformance — Postgres (INTERACTION_TEST_PG_URL not set)', () => {
     it('skipped', () => undefined);

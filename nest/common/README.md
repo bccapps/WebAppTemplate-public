@@ -858,12 +858,24 @@ le token (`{ provide: TOKEN, useExisting: Service }`) et l'exporte d'un scope gl
 | `USER_METRICS_SINK` | `UserMetricsSink` | `infra` (Prometheus) | `user` |
 | `TIER_PRICING_PROVIDER` | `TierPricingProvider` | `commerce` | `user` |
 | `HEALTH_CONTRIBUTORS` | `HealthContributor` (ou tableau) | `infra` | `HealthController` (voir « Santé ») |
+| `ACCOUNT_ERASURE_PARTICIPANT` (2026-11-13) | `AccountErasureParticipant` (liste, décorateur `@AccountErasureParticipant()`) | `interaction` (`InteractionAccountErasure`) | `user` (`AccountErasureParticipants`, fermeture d'un compte) |
 | `USER_CONTACT` (2026-10-27) | `UserContactProvider { emailOf(userId): Promise<string \| null>; localeOf?(userId): Promise<string \| null> }` | `user` (`UserContactModule`, `@Global()`, importé par `UserModule`) | `issue-report` (e-mail de clôture d'un signalement) |
 
 `USER_CONTACT` est le sens inverse des autres : il permet à un module **public** de joindre un utilisateur sans importer
 le module privé `user` et sans garder sa propre copie de l'adresse. `emailOf` ne renvoie l'adresse que d'un compte actif
 et non supprimé (`null` sinon), `localeOf` sa langue préférée. Sans `user`, le token est absent : le consommateur
 n'envoie rien et le dit une fois dans le journal.
+
+**Participants d'effacement de compte** (`ACCOUNT_ERASURE_PARTICIPANT`, 2026-11-13, lot 5.15) : contrairement aux tokens
+ci-dessus, une **liste**. Chaque module qui garde des données d'un compte fournit un provider singleton dont la classe porte
+`@AccountErasureParticipant()` et implémente `AccountErasureParticipant { erasureKey; beforeAccountDeletion?(userId);
+onAccountErased?(userId) }` ; `user` (`AccountErasureParticipants`) les trouve par le `DiscoveryService` de Nest **au moment de
+l'appel** (jamais injectés dans `UserService` : un participant peut dépendre de `UserService` sans cycle), un appel isolé par
+participant (un échec est journalisé — clé et code d'erreur seulement — et tracé `user.account.erasure.participant` en
+`violation`, sans bloquer les autres ni la fermeture). `beforeAccountDeletion` : avant l'anonymisation de la ligne (après le
+crochet unique `ACCOUNT_DELETION_HOOK` de `commerce`, inchangé) ; `onAccountErased` : après, et de nouveau quand le balayage
+RGPD atteint un compte fermé plus tôt — d'où l'**idempotence** exigée. Fourni par `interaction` (`InteractionAccountErasure` :
+`forgetUser`). Sans `user`, rien ne les appelle.
 
 ## Plugins
 
