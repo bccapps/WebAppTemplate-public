@@ -230,9 +230,6 @@ esac
 if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 && "${ROLLBACK_MODE}" != "1" ]]; then
   [[ -n "${VOICE_ENGINE_VERSION:-}" ]] || { err "VOICE_ENGINE=on needs VOICE_ENGINE_VERSION (a release of vx-voice-engine, e.g. 0.1.0)."; exit 1; }
   [[ -n "${VOICE_ENGINE_TOKEN:-}" ]] || { err "VOICE_ENGINE=on needs VOICE_ENGINE_TOKEN (secret shared by the back and the engine)."; exit 1; }
-  case "${COMPOSE_FILE_NAME:-}" in
-    *cloud*) err "VOICE_ENGINE=on is not available with the multi-host cloud compose file (the engine's volumes are host-local)."; exit 1 ;;
-  esac
   [[ "${VOICE_ENGINE_REPO}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { err "VOICE_ENGINE_REPO='${VOICE_ENGINE_REPO}' is not owner/name."; exit 1; }
   # Fail early, before anything is built: the value itself is dropped at once and asked again for the build.
   [[ -n "$(voice_engine_release_token || true)" ]] || { voice_engine_no_credential; exit 1; }
@@ -349,6 +346,21 @@ if [[ "${IS_SQLITE_DB}" -eq 1 && "${DEPLOY_TARGET}" != "front" ]]; then
     exit 1
   fi
   [[ "${BACK_REPLICAS:-1}" -gt 1 ]] && echo "Warning: DB_ENGINE=sqlite with BACK_REPLICAS=${BACK_REPLICAS}: replicas share one SQLite file (writes are serialized); prefer BACK_REPLICAS=1." >&2
+fi
+
+# VOICE_ENGINE=on, checked here (compose file and hosts are known) and before any host is touched: the engine's models and
+# profiles live in volumes of ONE host, so it needs a single back host; and the compose file must define the `voice-engine`
+# service (docker-compose.yml, docker-compose-preprod.yml and docker-compose-cloud.yml do) — otherwise the failure only came
+# at the image build, in the middle of the deploy (`no such service: voice-engine`).
+if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 && "${ROLLBACK_MODE}" != "1" && "${DEPLOY_TARGET}" != "front" ]]; then
+  if [[ "${BACK_HOSTS_RAW}" == *,* ]]; then
+    err "VOICE_ENGINE=on needs a single back host (BACK_HOSTS='${BACK_HOSTS_RAW}'): the engine's models and profiles live in volumes of one host."
+    exit 1
+  fi
+  if [[ -f "${COMPOSE_FILE_PATH}" ]] && ! grep -Eq '^  voice-engine:[[:space:]]*$' "${COMPOSE_FILE_PATH}"; then
+    err "VOICE_ENGINE=on but ${COMPOSE_FILE_PATH} defines no 'voice-engine' service: use a compose file that does (scripts/docker-compose*.yml of the template) or set VOICE_ENGINE=off."
+    exit 1
+  fi
 fi
 
 # ======================
