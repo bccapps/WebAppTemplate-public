@@ -21,6 +21,4 @@ export const Configuration: { [id: string]: string | number | boolean } = {
   localeDefault: 'fr',
   localesCategories: 'common,custom',
   localesLocation: 'remote',
-  // Only read by the user module (ignored when "user" is not listed in shared-modules.json).
-  serversideUsers: true,
 };

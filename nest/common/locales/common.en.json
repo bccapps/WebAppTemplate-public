@@ -243,8 +243,6 @@
   "common.localesLocation.remote": "Remote (API)",
   "common.localeDefault": "Default locale",
   "common.localeDefault.description": "Fallback language code when user preference is unavailable",
-  "common.serversideUsers": "Server-side users",
-  "common.serversideUsers.description": "Enable server-side user management (authentication, profiles, tiers)",
   "common.features": "Feature flags",
   "common.features.description": "Global feature flags (JSON). Per-feature { enabled: boolean }. Set enabled:false to disable for non-admin users.",
   "common.themes.title": "Themes",

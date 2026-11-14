@@ -59,14 +59,6 @@ export const commonConfigSchema: ModuleConfigSchema = {
       group: 'general',
     },
     {
-      key: 'serversideUsers',
-      label: 'common.serversideUsers',
-      description: 'common.serversideUsers.description',
-      type: 'boolean',
-      defaultValue: true,
-      group: 'general',
-    },
-    {
       key: 'common_bugReport_recipientEmail',
       label: 'common.bugReport_recipientEmail',
       description: 'common.bugReport_recipientEmail.description',

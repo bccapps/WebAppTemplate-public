@@ -243,8 +243,6 @@
   "common.localesLocation.remote": "Distant (API)",
   "common.localeDefault": "Locale par défaut",
   "common.localeDefault.description": "Code de langue de secours quand la préférence utilisateur n'est pas disponible",
-  "common.serversideUsers": "Gestion serveur des utilisateurs",
-  "common.serversideUsers.description": "Activer la gestion serveur des utilisateurs (authentification, profils, tiers)",
   "common.features": "Feature flags",
   "common.features.description": "Flags de fonctionnalités globaux (JSON). Par fonctionnalité { enabled: boolean }. Mettre enabled:false pour désactiver pour les non-admins.",
   "common.themes.title": "Thèmes",
