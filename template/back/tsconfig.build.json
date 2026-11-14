@@ -4,6 +4,6 @@
     "rootDir": "./src",
     "incremental": false
   },
-  "exclude": ["node_modules", "dist", "test", "**/*spec.ts"],
+  "exclude": ["node_modules", "dist", "test", "**/*spec.ts", "src/**/testing/**", "src/**/*Fixture.ts", "src/**/*Fixtures.ts"],
   "include": ["src", "src/locales/*.json"]
 }
