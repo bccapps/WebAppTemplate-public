@@ -160,14 +160,25 @@ function databaseModule(database: HarnessDatabase, keepData: boolean, poolSize?:
 export interface PoolUsage {
   /** Highest number of connections in use at once since the last `reset()`. */
   peak(): number;
-  reset(): void;
+  /**
+   * Starts a new measure. With `gather > 1`, also arms a start gate: the connections checked out from now on are handed
+   * to their callers only once `gather` of them are checked out at the same time (or after `GATHER_TIMEOUT_MS`, then the
+   * peak stays below `gather` and the test's own assertion fails). Without it, short queries (one UPDATE) end before the
+   * next contender gets a connection: `pg-pool` hands a released client to the queued request instead of the one it is
+   * still opening, so the peak would depend on how many connections earlier steps happened to open, and on the load.
+   */
+  reset(gather?: number, timeoutMs?: number): void;
   stop(): void;
 }
+
+/** Longest wait of an armed gate (a contender that never comes must fail the test, not hang it). */
+export const GATHER_TIMEOUT_MS = 10_000;
 
 /**
  * Counts the connections of the `pg` pool of a Postgres data source that are checked out at the same time, to PROVE a
  * test raced on several connections (a single-connection engine can never get past 1). TypeORM obtains its connections
- * with `pool.connect(callback)`; the callback and the `release` function are wrapped.
+ * with `pool.connect(callback)`; the callback and the `release` function are wrapped. `reset(gather)` makes the overlap
+ * deterministic (see `PoolUsage.reset`): a held connection has not run any statement yet, so no lock is held while waiting.
  */
 export function trackPoolUsage(dataSource: DataSource): PoolUsage {
   const pool = (dataSource.driver as unknown as { master?: { connect: (...args: unknown[]) => unknown } }).master;
@@ -175,6 +186,17 @@ export function trackPoolUsage(dataSource: DataSource): PoolUsage {
   const original = pool.connect;
   let inUse = 0;
   let peak = 0;
+  let gather = 0;
+  let held: Array<() => void> = [];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const openGate = (): void => {
+    gather = 0;
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+    const waiting = held;
+    held = [];
+    for (const handOver of waiting) handOver();
+  };
   pool.connect = function (this: unknown, ...args: unknown[]): unknown {
     const callback = args[args.length - 1];
     if (typeof callback !== 'function') return original.apply(this, args);
@@ -183,20 +205,31 @@ export function trackPoolUsage(dataSource: DataSource): PoolUsage {
       inUse += 1;
       peak = Math.max(peak, inUse);
       let released = false;
-      callback(error, client, (...rest: unknown[]) => {
-        if (!released) inUse -= 1;
-        released = true;
-        release(...rest);
-      });
+      const handOver = (): void =>
+        callback(error, client, (...rest: unknown[]) => {
+          if (!released) inUse -= 1;
+          released = true;
+          release(...rest);
+        });
+      if (gather <= 1) return handOver();
+      held.push(handOver);
+      if (inUse >= gather) openGate();
     };
     return original.apply(this, [...args.slice(0, -1), wrapped]);
   };
   return {
     peak: () => peak,
-    reset: () => {
+    reset: (size = 0, timeoutMs = GATHER_TIMEOUT_MS) => {
+      openGate();
       peak = inUse;
+      if (size > 1 && inUse < size) {
+        gather = size;
+        timer = setTimeout(openGate, timeoutMs);
+        timer.unref?.();
+      }
     },
     stop: () => {
+      openGate();
       pool.connect = original;
     },
   };

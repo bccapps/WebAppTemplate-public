@@ -13,7 +13,8 @@
 // review: one bot per user, five links per bot, one handling per webhook update). SQLite runs on
 // ONE connection, which serializes everything and hides races: here the Postgres pool has several connections
 // (`poolSize`), every contender is launched at once with `Promise.all`, and `trackPoolUsage` PROVES that several
-// connections were checked out at the same time. Each test loops `INTERACTION_CONCURRENCY_ROUNDS` times (default 5) on
+// connections were checked out at the same time: `pool.reset(n)` holds the contenders' connections until n are checked out
+// together, so the overlap no longer depends on the load or on how many connections earlier steps opened. Each test loops `INTERACTION_CONCURRENCY_ROUNDS` times (default 5) on
 // fresh tickets / codes / counters, so a CI run can raise it (20 for a soak) without changing the code.
 
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
@@ -98,6 +99,20 @@ export function describeInteractionConcurrency(label: string, options: Concurren
     /** The contenders really ran on several connections at the same time. */
     const expectParallel = (min = 4): void => expect(pool.peak()).toBeGreaterThanOrEqual(min);
 
+    it('pool gate. the start gate of trackPoolUsage creates no parallelism: sequential queries stay at 1 (gate times out), parallel ones reach the gate', async () => {
+      const store = h.get(TelegramBotStateStore);
+      await store.load('u-gate');
+      pool.reset(4, 300);
+      const started = Date.now();
+      for (let i = 0; i < 6; i += 1) await store.claimUpdate('u-gate', 100 + i);
+      expect(pool.peak()).toBe(1);
+      expect(Date.now() - started).toBeGreaterThanOrEqual(250);
+      pool.reset(4);
+      const claims = await Promise.all(Array.from({ length: 4 }, (_, i) => store.claimUpdate('u-gate', 200 + i)));
+      expect(claims).toEqual([true, true, true, true]);
+      expectParallel();
+    });
+
     it('9-pg. 50 answers in parallel on a pool (in-app + Telegram): ONE winner, the others ALREADY_ANSWERED, outcome handed over once', async () => {
       const tg = await linkOwnTelegram(h, 1);
       const tickets = h.get(InteractionTicketService);
@@ -108,7 +123,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
         const ticket = await h.get(UserInteractionService).ask(1, question({ correlationId: `race-${round}` }));
         await idle(h);
         const card = lastCard(h);
-        pool.reset();
+        pool.reset(4);
         const contenders: Array<Promise<{ who: string; result: string }>> = [];
         for (let i = 0; i < 25; i += 1) {
           const index = i % 2;
@@ -146,7 +161,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
         const end = new Date(Date.now() + 5_000);
         await h.dataSource.getRepository(InteractionTicketEntity).update({ id: ticket.id }, { expiresAt: end });
         const afterEnd = new Date(end.getTime() + 1);
-        pool.reset();
+        pool.reset(4);
         const answers = Array.from({ length: 20 }, () => tickets.answer({ ticketId: ticket.id, userId: 1, via: 'inapp', actionId: 'approve' }).then(() => 'won', codeOf));
         const sweeps = Array.from({ length: 5 }, () => tickets.expireDue(afterEnd));
         const cancel = tickets.cancelById(ticket.id, 'race');
@@ -176,7 +191,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
       await rounds(async (round) => {
         const ticket = await h.get(UserInteractionService).ask(1, question({ correlationId: `edge-${round}` }));
         await h.dataSource.getRepository(InteractionTicketEntity).update({ id: ticket.id }, { expiresAt: new Date(Date.now() + 40) });
-        pool.reset();
+        pool.reset(2);
         const results = await Promise.all(
           Array.from({ length: 40 }, (_, i) =>
             new Promise<void>((resolve) => setTimeout(resolve, (i * 3) % 80)).then(() => tickets.answer({ ticketId: ticket.id, userId: 1, via: 'inapp', actionId: 'approve' }).then(() => 'won', codeOf)),
@@ -214,7 +229,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
         await idle(h);
         const ids = created.map((t) => t.id);
         await h.dataSource.getRepository(InteractionTicketEntity).update({ id: In(ids) }, { expiresAt: new Date(Date.now() - 1000) });
-        pool.reset();
+        pool.reset(4);
         const counts = await Promise.all(Array.from({ length: 6 }, () => tickets.expireDue()));
         expectParallel();
         await idle(h);
@@ -243,7 +258,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
         await tickets.answer({ ticketId: ticket.id, userId: 1, via: 'inapp', actionId: 'deny' });
         await idle(h);
         expect(calls).toBe(1);
-        pool.reset();
+        pool.reset(4);
         const later = new Date(Date.now() + 15_000);
         await Promise.all(Array.from({ length: 20 }, () => tickets.retryDispatches(later)));
         expectParallel();
@@ -262,7 +277,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
         await links.clear();
         const account = String(880_000_000 + round);
         const { code } = await provider.issueCode('u1', 1);
-        pool.reset();
+        pool.reset(4);
         const start = { telegramUserId: account, chatId: account, code, label: null, languageCode: null };
         const outcomes = await Promise.all(Array.from({ length: 50 }, () => provider.consume('u1', start)));
         expectParallel();
@@ -273,7 +288,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
         // The same Telegram account claimed by two users on two bots, 4 accounts at once (at most 5 pending codes per user and bot).
         const accounts = Array.from({ length: 4 }, (_, i) => String(770_000_000 + round * 10 + i));
         const issued = await Promise.all(accounts.flatMap((a) => [provider.issueCode('u1', 1).then((c) => ({ a, botRef: 'u1', code: c.code })), provider.issueCode('u2', 2).then((c) => ({ a, botRef: 'u2', code: c.code }))]));
-        pool.reset();
+        pool.reset(4);
         const raced = await Promise.all(issued.map(({ a, botRef, code: c }) => provider.consume(botRef, { telegramUserId: a, chatId: a, code: c, label: null, languageCode: null }).then((outcome) => ({ a, botRef, outcome }))));
         expectParallel();
         for (const a of accounts) {
@@ -296,7 +311,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
         h.config.values.set('interaction_testsPerUserHour', 5);
         h.config.values.set('interaction_testsPerIpHour', 1000);
         h.config.values.set('interaction_testsGlobalHour', 100_000);
-        pool.reset();
+        pool.reset(2);
         const exact = await Promise.all(Array.from({ length: 5 }, () => quota.take('channel_test', { userId: user }).then(() => 'ok', codeOf)));
         expectParallel(2);
         expect(exact).toEqual(Array(5).fill('ok'));
@@ -306,7 +321,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
         // 40 parallel sends against a cap of 3 (other user): at most 3 admitted (« may both be refused, never both admitted »).
         const other = 300 + round;
         h.config.values.set('interaction_linkCodesPerUserHour', 3);
-        pool.reset();
+        pool.reset(4);
         const burst = await Promise.all(Array.from({ length: 40 }, () => quota.take('link_code', { userId: other }).then(() => 'ok', codeOf)));
         expectParallel();
         const admitted = burst.filter((r) => r === 'ok').length;
@@ -339,7 +354,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
     it('17b-pg. the per-user hourly cap of deliveries holds under 30 parallel notify (distinct dedup keys)', async () => {
       await linkOwnTelegram(h, 1);
       h.config.values.set('interaction_maxPerUserHour', 3);
-      pool.reset();
+      pool.reset(4);
       const reports = await Promise.all(Array.from({ length: 30 }, (_, i) => h.get(UserInteractionService).notify(1, notice({ category: 'security', dedupKey: `cap-${i}` }))));
       expectParallel();
       await idle(h);
@@ -352,7 +367,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
     it('4-pg. 30 parallel notify with one dedupKey and 30 parallel ask with one correlationId: one of each, the rest duplicate / the same ticket', async () => {
       await linkOwnTelegram(h, 1);
       await rounds(async (round) => {
-        pool.reset();
+        pool.reset(4);
         const reports = await Promise.all(Array.from({ length: 30 }, () => h.get(UserInteractionService).notify(1, notice({ dedupKey: `same-${round}` }))));
         expectParallel();
         for (const kind of ['inapp', 'telegram']) {
@@ -360,7 +375,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
           expect(statuses.filter((s) => s === 'sent')).toHaveLength(1);
           expect(statuses.filter((s) => s === 'duplicate')).toHaveLength(29);
         }
-        pool.reset();
+        pool.reset(4);
         const asked = await Promise.all(Array.from({ length: 30 }, () => h.get(UserInteractionService).ask(1, question({ correlationId: `once-${round}` }))));
         expectParallel();
         await idle(h);
@@ -379,7 +394,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
       await store.patch('u1', { enabled: true, status: 'starting' });
       await rounds(async (round) => {
         await h.dataSource.getRepository(InteractionTelegramBotEntity).update({ id: 'u1' }, { leaseOwner: null, leaseUntil: null, receivedCount: 0 });
-        pool.reset();
+        pool.reset(4);
         const now = new Date();
         const got = await Promise.all(Array.from({ length: 20 }, (_, i) => store.tryLease('u1', `owner-${round}-${i}`, now, 30_000)));
         expectParallel();
@@ -400,14 +415,14 @@ export function describeInteractionConcurrency(label: string, options: Concurren
       const body = (endpoint: string) => ({ endpoint, keys: { p256dh: 'BPk' + 'a'.repeat(80), auth: 'auth' + 'b'.repeat(18) }, userAgent: 'Test/1.0' });
       await rounds(async (round) => {
         const user = 10 + round;
-        pool.reset();
+        pool.reset(4);
         const same = await Promise.all(Array.from({ length: 20 }, () => browser.subscribe(owner(user), body(`${ENDPOINT}-same-${round}`)).then(() => 'ok', codeOf)));
         expectParallel();
         expect(same).toEqual(Array(20).fill('ok'));
         expect(await subs.count({ where: { endpoint: `${ENDPOINT}-same-${round}` } })).toBe(1);
         expect(await channels.count({ where: { userId: user, kind: 'browser' } })).toBe(1);
         const other = 50 + round;
-        pool.reset();
+        pool.reset(4);
         const many = await Promise.all(Array.from({ length: 40 }, (_, i) => browser.subscribe(owner(other), body(`${ENDPOINT}-${round}-${i}`)).then(() => 'ok', codeOf)));
         expectParallel();
         expect(many.every((r) => r === 'ok' || r === 'RATE_LIMITED')).toBe(true);
@@ -424,7 +439,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
       await rounds(async (round) => {
         const user = 200 + round;
         h.directory.add(user);
-        pool.reset();
+        pool.reset(4);
         const results = await Promise.all([
           ...Array.from({ length: 10 }, (_, i) => prefs.save(user, { criticalBypass: i % 2 === 0 }).then(() => 'ok', codeOf)),
           ...Array.from({ length: 10 }, () => channels.configure(owner(user), 'boom', {}).then(() => 'ok', codeOf)),
@@ -438,7 +453,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
         expect(typeof (await prefs.get(user)).criticalBypass).toBe('boolean');
         const token = `${7100000 + round}:AAH-test-token-of-round-${round}-0123456789`;
         h.telegram.addBot(token, token.split(':')[0], `bot_r${round}`);
-        pool.reset();
+        pool.reset(4);
         const telegram = await Promise.all(Array.from({ length: 10 }, () => channels.configure(owner(user), 'telegram', { mode: 'own', token }).then(() => 'ok', codeOf)));
         expectParallel();
         expect(telegram).toEqual(Array(10).fill('ok'));
@@ -453,7 +468,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
         const user = 400 + round;
         h.directory.add(user);
         await channels.configure(owner(user), 'boom', {});
-        pool.reset();
+        pool.reset(4);
         const results = await Promise.all([
           ...Array.from({ length: 20 }, (_, i) => channels.setState(owner(user), 'boom', i % 2 === 0 ? { position: i } : { enabled: true }).then(() => 'ok', codeOf)),
           channels.adminSetDisabled({ userId: 9 }, user, 'boom', true).then(() => 'ok', codeOf),
@@ -472,7 +487,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
       const codes = h.dataSource.getRepository(InteractionLinkCodeEntity);
       await rounds(async (round) => {
         const user = 600 + round;
-        pool.reset();
+        pool.reset(4);
         const results = await Promise.all(Array.from({ length: 12 }, () => links.issueCode(`u${user}`, user).then((issued) => issued.code, codeOf)));
         expectParallel();
         const handedOut = results.filter((r) => /^[A-Za-z0-9_-]{43}$/.test(r));
@@ -491,7 +506,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
       await rounds(async (round) => {
         const ticket = await h.get(UserInteractionService).ask(1, question({ correlationId: `proof-${round}`, freshProof: true }));
         const before = { calls: port.calls.length, consumed: port.consumed.length };
-        pool.reset();
+        pool.reset(4);
         const results = await Promise.all(Array.from({ length: 20 }, (_, i) => tickets.answer({ ticketId: ticket.id, userId: 1, via: 'inapp', actionId: 'approve', stepUpProof: `ok:${stepUpPurposeOf(ticket.id)}:${i}` }).then(() => 'won', codeOf)));
         expectParallel();
         expect(results.filter((r) => r === 'won')).toHaveLength(1);
@@ -512,7 +527,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
         h.directory.add(a);
         h.directory.add(b);
         h.telegram.addBot(token, token.split(':')[0], `race_bot_${round}`);
-        pool.reset();
+        pool.reset(2);
         const results = await Promise.all([a, b].map((id) => channels.configure(owner(id), 'telegram', { mode: 'own', token }).then(() => 'ok', codeOf)));
         expectParallel(2);
         expect([...results].sort()).toEqual(['BOT_IN_USE', 'ok']);
@@ -534,7 +549,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
         }
         const codes: string[] = [];
         for (let i = 0; i < 5; i += 1) codes.push((await links.issueCode(botRef, user)).code);
-        pool.reset();
+        pool.reset(2);
         const outcomes = await Promise.all(codes.map((code, i) => links.consume(botRef, { telegramUserId: String(6_000_000 + round * 100 + i), chatId: String(6_000_000 + round * 100 + i), code, label: null, languageCode: null })));
         expectParallel(2);
         expect(outcomes.every((o) => o === 'linked' || o === 'limit')).toBe(true);
@@ -549,7 +564,7 @@ export function describeInteractionConcurrency(label: string, options: Concurren
       await rounds(async (round) => {
         const botRef = `u${1400 + round}`;
         await store.load(botRef);
-        pool.reset();
+        pool.reset(4);
         const claims = await Promise.all(Array.from({ length: 20 }, () => store.claimUpdate(botRef, 500 + round)));
         expectParallel();
         expect(claims.filter(Boolean)).toHaveLength(1);

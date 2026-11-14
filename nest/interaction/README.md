@@ -455,7 +455,10 @@ côté front). SQLite exige `better-sqlite3` (sinon ignoré) ; Postgres exige `I
   dédoublonnées et retenues par `CRITICAL_MAX_PER_USER_HOUR`, et le participant d'effacement de compte trouvé par découverte.
 - `testing/interactionConcurrency.testkit.ts` (**Postgres seulement**, depuis `conformance.postgres.spec.ts`) : variantes
   parallèles des tests 4, 9, 10, 11, 12, 15, 17 sur un pool de 24 connexions (`trackPoolUsage` prouve que plusieurs
-  connexions étaient prises en même temps), plus le bail de réception Telegram, la purge, les types de colonnes, et les
+  connexions étaient prises en même temps ; `reset(n)` arme une barrière de départ : les connexions ne sont remises aux
+  concurrents qu'une fois `n` prises ensemble, sinon une requête courte finit avant que la suivante ne parte et le pic
+  dépendrait de la charge et des connexions déjà ouvertes ; au-delà de `GATHER_TIMEOUT_MS` la barrière s'ouvre et le test
+  échoue sur son pic), plus le bail de réception Telegram, la purge, les types de colonnes, et les
   courses du durcissement (abonnements Web Push et leur plafond, premières écritures dont le bot propre, propriétaire
   contre interrupteur administrateur, codes de liaison, preuves de step-up) et de la revue (même bot par deux utilisateurs,
   5 comptes par bot, rediffusions parallèles d'une mise à jour du webhook). Chaque test boucle
