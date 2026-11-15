@@ -1021,3 +1021,48 @@ exit 0
     } finally { p.cleanup(); }
   }
 });
+
+// Hardened profile (docker-compose-hardened.yml, template README « Hardened compose profile »): same deploy-full.sh flow.
+const HARDENED_ENV = [
+  'COMPOSE_FILE_NAME=scripts/docker-compose-hardened.yml',
+  'FRONT_HOSTS=10.0.0.1',
+  'HARDEN_RUNTIME_UID=61000',
+  'HARDEN_RUNTIME_GID=61000',
+  'HARDEN_SUBNET=10.231.73.0/24',
+  'HARDEN_FRONT_IP=10.231.73.10',
+  'HARDEN_BACK_LB_IP=10.231.73.11',
+  'HARDEN_BACK_LB_REALIP="set_real_ip_from 198.51.100.7;"',
+  'REDIS_PORT=4733',
+  `REDIS_PASSWORD=FAKE${'redis'}`,
+].join('\n');
+
+test('hardened compose: deployed by the usual flow (staged with ./back paths, maintenance, back-lb reload, colocated front --no-deps)', () => {
+  const p = deployedProject({ engine: 'postgres', extraBackEnv: HARDENED_ENV });
+  try {
+    const r = p.run(['prod', '--no-update-common'], { KEEP_BUILD_CONTEXT: '1' });
+    assert.equal(r.status, 0, r.out);
+    const ctx = strip(r.out).match(/Build context staged at (\S+)/)[1];
+    const staged = readFileSync(path.join(ctx, 'docker-compose.yml'), 'utf8');
+    const source = readFileSync(path.join(SCRIPTS_DIR, 'docker-compose-hardened.yml'), 'utf8');
+    assert.equal(staged, source.replaceAll('../back', './back').replaceAll('../front', './front'), 'the hardened file is the one staged');
+    assert.doesNotMatch(staged, /\.\.\//);
+    const lines = p.logLines();
+    const touch = indexOfLine(lines, /exec testapp_back_lb touch \/etc\/nginx\/maintenance\.flag$/);
+    const reload = indexOfLine(lines, /compose .* exec -T back-lb nginx -s reload$/, touch);
+    const off = indexOfLine(lines, /exec testapp_back_lb rm -f \/etc\/nginx\/maintenance\.flag$/, reload);
+    assert.ok(touch >= 0 && reload > touch && off > reload, 'maintenance on, back-lb reloaded, maintenance off');
+    assert.ok(lines.includes('ENV_SNAPSHOT: DB_HOST=db'), 'self-hosted Postgres patches kept');
+    assert.ok(indexOfLine(lines, new RegExp(`compose --project-directory \\S+ --project-name ${BACK_PROJECT} up -d --no-deps front$`)) >= 0,
+      'front colocated with the back: same compose project (one network), --no-deps');
+  } finally { p.cleanup(); }
+});
+
+test('hardened compose: refused for an engine without a Postgres container (it defines `db`), before anything is built', () => {
+  const p = deployedProject({ engine: 'sqlite', extraBackEnv: HARDENED_ENV });
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back']);
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /docker-compose-hardened\.yml defines a 'db' \(Postgres\) service but DB_ENGINE=sqlite/);
+    assert.equal(indexOfLine(p.logLines(), /compose .* (build|up) /), -1);
+  } finally { p.cleanup(); }
+});
