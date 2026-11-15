@@ -49,13 +49,15 @@ COPY --chown=node:node *.crt ./
 RUN rm -f .no-cert.crt
 
 ARG APP_RUNTIME_DIR=.cache
-RUN mkdir -p "/app/${APP_RUNTIME_DIR}" && chown -R node:node "/app/${APP_RUNTIME_DIR}"
+# Owner of the writable dirs below (default node:node; docker-compose-hardened.yml: its dedicated account, see back/Dockerfile).
+ARG APP_RUNTIME_OWNER=node:node
+RUN mkdir -p "/app/${APP_RUNTIME_DIR}" && chown -R "${APP_RUNTIME_OWNER}" "/app/${APP_RUNTIME_DIR}"
 
 # Persistent data dir for DB_ENGINE=sqlite (the compose files mount the sqlite_data volume here), owned by node.
-RUN mkdir -p /data && chown node:node /data
+RUN mkdir -p /data && chown "${APP_RUNTIME_OWNER}" /data
 
 # Log dir: the dedicated `back_logs` volume (back and back-worker only), 0700, owned by node (see back/Dockerfile).
-RUN mkdir -p /app/logs && chown node:node /app/logs && chmod 700 /app/logs
+RUN mkdir -p /app/logs && chown "${APP_RUNTIME_OWNER}" /app/logs && chmod 700 /app/logs
 
 COPY --chown=node:node _prebuilt_locales/app ./src/locales
 COPY --chown=node:node _prebuilt_locales/modules/src/ ./src/

@@ -98,16 +98,21 @@ RUN rm -f .no-cert.crt
 
 # Writable runtime dir for the unprivileged user (e.g. backtest cache / shared data).
 # Override per project (e.g. "shared") via --build-arg APP_RUNTIME_DIR=...
+# APP_RUNTIME_OWNER: owner (uid:gid) of the writable dirs below (runtime dir, /data, /app/logs), so that a new named
+# volume mounted there inherits it. Default node:node (the image's USER); docker-compose-hardened.yml passes the
+# dedicated account it runs the container as (HARDEN_RUNTIME_UID:HARDEN_RUNTIME_GID).
 ARG APP_RUNTIME_DIR=.cache
-RUN mkdir -p "/app/${APP_RUNTIME_DIR}" && chown -R node:node "/app/${APP_RUNTIME_DIR}"
+ARG APP_RUNTIME_OWNER=node:node
+RUN mkdir -p "/app/${APP_RUNTIME_DIR}" && chown -R "${APP_RUNTIME_OWNER}" "/app/${APP_RUNTIME_DIR}"
 
 # Persistent data dir (DB_ENGINE=sqlite: the compose files mount the `sqlite_data` volume here and set DB_PATH). It is
-# created owned by node so the named volume inherits write access for the unprivileged user; empty and unused otherwise.
-RUN mkdir -p /data && chown node:node /data
+# created owned by node (APP_RUNTIME_OWNER) so the named volume inherits write access for the unprivileged user; empty and
+# unused otherwise.
+RUN mkdir -p /data && chown "${APP_RUNTIME_OWNER}" /data
 
 # Log dir (back-<day>.log, validation-<day>.jsonl): the compose files mount the dedicated `back_logs` volume here (back and
-# back-worker only, never the front). Created 0700, owned by node, so a new volume inherits both.
-RUN mkdir -p /app/logs && chown node:node /app/logs && chmod 700 /app/logs
+# back-worker only, never the front). Created 0700, owned by node (APP_RUNTIME_OWNER), so a new volume inherits both.
+RUN mkdir -p /app/logs && chown "${APP_RUNTIME_OWNER}" /app/logs && chmod 700 /app/logs
 
 COPY --chown=node:node --from=builder /locales/app ./src/locales
 COPY --chown=node:node --from=builder /locales/modules/src/ ./src/
