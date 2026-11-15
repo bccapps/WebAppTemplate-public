@@ -539,10 +539,14 @@ dv_environment_name() {
   esac
 }
 
-# current.json -> previous.json, then writes the new current.json {revision, environment, date, dbBackup}.
+# current.json -> previous.json, then writes the new current.json {revision, environment, date, dbBackup[, imageTag, imageDigest]}.
+# imageTag / imageDigest (registry mode, lib/deploy-images.sh): what this host pulled, to tell from the host which image runs.
 dv_write_state() {
-  local revision="$1" backup="$2" json
-  json="{\"revision\":\"$(dv_json_escape "${revision}")\",\"environment\":\"$(dv_json_escape "$(dv_environment_name)")\",\"date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"dbBackup\":\"$(dv_json_escape "${backup}")\"}"
+  local revision="$1" backup="$2" json image_json=""
+  if [[ "${DI_ACTIVE:-0}" == "1" ]]; then
+    image_json=",\"imageTag\":\"$(dv_json_escape "${DI_TAG:-}")\",\"imageDigest\":\"$(dv_json_escape "${DI_LAST_DIGEST:-}")\""
+  fi
+  json="{\"revision\":\"$(dv_json_escape "${revision}")\",\"environment\":\"$(dv_json_escape "$(dv_environment_name)")\",\"date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"dbBackup\":\"$(dv_json_escape "${backup}")\"${image_json}}"
   dv_ssh "mkdir -p '${DV_REMOTE_DIR}/.deploy' && cd '${DV_REMOTE_DIR}/.deploy' && { [ ! -f current.json ] || mv -f current.json previous.json; } && cat > current.json" <<<"${json}" \
     || { warn "[BACK:${DV_HOST}] Could not write ${DV_REMOTE_DIR}/.deploy/current.json"; return 1; }
 }

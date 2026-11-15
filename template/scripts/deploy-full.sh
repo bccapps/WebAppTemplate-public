@@ -31,6 +31,17 @@ set -euo pipefail
 #                                            normally launched through `./scripts/run.sh rollback <preprod|prod>`
 #   ./scripts/deploy-full.sh --help          Show this help
 #
+# Registry mode (lib/deploy-images.sh; on when DEPLOY_REGISTRY is set, otherwise everything below is unchanged): the images are
+# built once, pushed under an immutable tag and pulled by every host.
+#   ./scripts/deploy-full.sh --build         Compile + build the image(s) on the builder (nothing pushed, no host touched)
+#   ./scripts/deploy-full.sh --push          Build and push them to the registry (implies --build; no host touched)
+#   ./scripts/deploy-full.sh --deploy --tag=<t>   Pull the already pushed tag <t> on every host and switch (nothing built)
+#   (no phase flag)                          build + push + deploy, as before
+#   --builder=remote|local                   Where the image is assembled (DEPLOY_BUILDER, default remote)
+# Environment (also readable from back/.env; the caller's environment wins): DEPLOY_REGISTRY, DEPLOY_REGISTRY_PUSH,
+# DEPLOY_BUILDER_HOST, DEPLOY_IMAGE_TAG, DEPLOY_BACK_HOSTS / DEPLOY_FRONT_HOSTS (override BACK_HOSTS / FRONT_HOSTS),
+# DEPLOY_MANAGE_UFW=0 (do not apply the UFW rules of PROXY_HOSTS/WHITELIST: Docker-published ports are filtered elsewhere).
+#
 # Versioning (lib/deploy-versions.sh): each host keeps `<image>:previous` next to `:latest`, the remote
 # .env as .env.previous and .deploy/current.json|previous.json; DEPLOY_REVISION (env var, else git short sha
 # + -dirty) is injected into the back env and exposed by GET /api/v1/health. Database backups (lib/deploy-versions.sh):
@@ -66,6 +77,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Physical template root (scripts/ is a symlink into front/.libs/apptemplate): back|front/Dockerfile.prebuilt live there.
 TEMPLATE_ROOT="$(dirname "$(dirname "$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")")")"
 source "${SCRIPT_DIR}/lib/db-engine.sh"
+source "${SCRIPT_DIR}/lib/deploy-images.sh"
 cd "${PROJECT_ROOT}"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || "${1:-}" == "help" ]]; then
@@ -90,6 +102,7 @@ for arg in "$@"; do
     --no-auto-rollback) DEPLOY_AUTO_ROLLBACK=0 ;;
     --migrate) DV_MIGRATE=1 ;;
     --force-db-backup) DV_FORCE_DB_BACKUP=1 ;;
+    --build|--push|--deploy|--tag=*|--builder=*) di_parse_flag "${arg}" ;;
   esac
 done
 if [[ "${DEPLOY_TARGET}" != "all" && "${DEPLOY_TARGET}" != "back" && "${DEPLOY_TARGET}" != "front" ]]; then
@@ -158,9 +171,12 @@ BACK_ENV_FILE="${BACK_ENV_FILE:-./back/.env}"
 FRONT_ENV_FILE="${FRONT_ENV_FILE:-./front/.env}"
 
 # Export all vars from back env so compose interpolation works without a root .env
+# (a DEPLOY_* value given by the caller — Ansible, Agent Hub, a shell — is kept over the one of the file: lib/deploy-images.sh)
+di_snapshot_caller_env
 set -a
 source "${BACK_ENV_FILE}"
 set +a
+di_restore_caller_env
 COMPOSE_PROJECT_NAME="${PROJECT_NAME:?PROJECT_NAME is required}"
 
 # ── Deploy origin/main, never the working copy (opt-in, per project: back/.env DEPLOY_FROM_MAIN=true) ──
@@ -289,9 +305,20 @@ KEEP_BUILD_CONTEXT="${KEEP_BUILD_CONTEXT:-0}"
 # Revision of this deploy (DEPLOY_REVISION, else git short sha + -dirty): injected into the back env below and shown
 # by GET /api/v1/health, so a deploy can be verified (and a rollback recognised) from the outside.
 if [[ "${ROLLBACK_MODE}" != "1" ]]; then
-  DEPLOY_REVISION="$(dv_compute_revision)"
+  # Registry mode (lib/deploy-images.sh): which of build / push / deploy this run does, and the image tag.
+  di_resolve_phases
+  if [[ "${DI_ACTIVE}" -eq 1 && "${DI_BUILD}" -eq 0 ]]; then
+    # Nothing is built here: the revision of the running back is the one of the image that is shipped.
+    DEPLOY_REVISION="${DEPLOY_IMAGE_TAG}"
+  else
+    DEPLOY_REVISION="$(dv_compute_revision)"
+  fi
+  [[ "${DI_ACTIVE}" -eq 1 ]] && di_compute_tag
   export DEPLOY_REVISION
   echo "==> [LOCAL] Deploy revision: ${DEPLOY_REVISION}"
+  if [[ "${DI_ACTIVE}" -eq 1 ]]; then
+    echo "==> [LOCAL] Registry mode: image tag ${DI_TAG} (build=${DI_BUILD} push=${DI_PUSH} deploy=${DI_DEPLOY}, builder=${DEPLOY_BUILDER:-remote})"
+  fi
 fi
 
 # Cloud front detection (early, needed to make FRONT_HOSTS optional)
@@ -318,7 +345,7 @@ FRONT_SSH_PORT="${FRONT_SSH_PORT:-${REMOTE_SSH_PORT:-22}}"
 FRONT_SSH_KEY_FILE="${FRONT_SSH_KEY_FILE:-${SSH_KEY_FILE:-}}"
 FRONT_CONTEXT_NAME="${FRONT_CONTEXT_NAME:-${REMOTE_CONTEXT_NAME:-example-front}}"
 FRONT_REMOTE_APP_DIR="${FRONT_REMOTE_APP_DIR:-${REMOTE_APP_DIR:-~/example/front}}"
-FRONT_HOSTS_RAW="${FRONT_HOSTS:-${FRONT_REMOTE_HOST:-${REMOTE_HOST:-}}}"
+FRONT_HOSTS_RAW="${DEPLOY_FRONT_HOSTS:-${FRONT_HOSTS:-${FRONT_REMOTE_HOST:-${REMOTE_HOST:-}}}}"
 
 # Back hosts configuration (comma-separated list via BACK_HOSTS)
 BACK_REMOTE_USER="${BACK_REMOTE_USER:-${REMOTE_USER:-ubuntu}}"
@@ -326,7 +353,7 @@ BACK_SSH_PORT="${BACK_SSH_PORT:-${REMOTE_SSH_PORT:-22}}"
 BACK_SSH_KEY_FILE="${BACK_SSH_KEY_FILE:-${SSH_KEY_FILE:-}}"
 BACK_CONTEXT_NAME="${BACK_CONTEXT_NAME:-${REMOTE_CONTEXT_NAME:-example-back}}"
 BACK_REMOTE_APP_DIR="${BACK_REMOTE_APP_DIR:-${REMOTE_APP_DIR:-~/example/back}}"
-BACK_HOSTS_RAW="${BACK_HOSTS:-${BACK_REMOTE_HOST:-${REMOTE_HOST:-}}}"
+BACK_HOSTS_RAW="${DEPLOY_BACK_HOSTS:-${BACK_HOSTS:-${BACK_REMOTE_HOST:-${REMOTE_HOST:-}}}}"
 
 if [[ "${DEPLOY_TARGET}" != "back" && -z "${FRONT_HOSTS_RAW}" && "${IS_CLOUD_FRONT}" -eq 0 ]]; then
   echo "Error: FRONT_HOSTS must specify at least one host (comma-separated), or set VITE_API_URL to https://... for cloud front deployment."
@@ -1245,7 +1272,9 @@ FRONT_PREBUILT=0
 BACK_PREBUILT=0
 echo "==> [LOCAL] Preparing build context"
 __t0="$(dt_now)"
-if [[ "${DEPLOY_TARGET}" != "back" ]]; then
+# Registry mode without --build (`--deploy --tag=<t>`): nothing is compiled or staged for a build; the compose file, the
+# env files and empty back/front dirs (what compose parsing needs) are staged below.
+if [[ "${DI_BUILD}" -eq 1 && "${DEPLOY_TARGET}" != "back" ]]; then
   # Cloud front builds directly from ./front/ — no need to create a copy
   if [[ "${IS_CLOUD_FRONT}" -eq 0 ]]; then
     prepare_front_build
@@ -1255,7 +1284,7 @@ if [[ "${DEPLOY_TARGET}" != "back" ]]; then
     fi
   fi
 fi
-if [[ "${DEPLOY_TARGET}" != "front" ]]; then
+if [[ "${DI_BUILD}" -eq 1 && "${DEPLOY_TARGET}" != "front" ]]; then
   __t0="$(dt_now)"
   prepare_back_build
   dt_record "back: stage build dir (rsync -aL)" "${__t0}"
@@ -1266,6 +1295,10 @@ fi
 
 __t0="$(dt_now)"
 for dir in "${CONTEXT_DIRS[@]}"; do
+  if [[ "${DI_BUILD}" -eq 0 ]]; then
+    mkdir -p "${BUILD_CONTEXT_DIR}/${dir}"
+    continue
+  fi
   if [[ "${dir}" == "front" && "${DEPLOY_TARGET}" == "back" ]]; then
     continue
   fi
@@ -1692,13 +1725,19 @@ deploy_back_host() {
   local -a BACK_BUILD_SERVICES=("back")
   if [[ "${BACK_WORKER_ENABLED}" -eq 1 ]]; then BACK_BUILD_SERVICES+=("back-worker"); fi
 
-  echo "==> [BACK:${target_host}] Building service"
-  t0="$(dt_now)"
-  DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
-    --project-directory "${BUILD_CONTEXT_DIR}" \
-    --project-name "${project_name}" \
-    build --pull ${NO_CACHE_FLAG} "${BACK_BUILD_SERVICES[@]}"
-  dt_record "back ${target_host}: image build on the server (context upload + prod deps + layers)" "${t0}"
+  if [[ "${DI_ACTIVE}" -eq 1 ]]; then
+    # Registry mode: the image was built once (di_build_all) or is an older tag; this host only pulls it. back-worker shares
+    # the back image, so there is nothing more to fetch for it. A failed pull stops the deploy before the switch.
+    di_pull_and_tag back || { dv_restore_latest_tag "$(dv_back_image)"; exit 1; }
+  else
+    echo "==> [BACK:${target_host}] Building service"
+    t0="$(dt_now)"
+    DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
+      --project-directory "${BUILD_CONTEXT_DIR}" \
+      --project-name "${project_name}" \
+      build --pull ${NO_CACHE_FLAG} "${BACK_BUILD_SERVICES[@]}"
+    dt_record "back ${target_host}: image build on the server (context upload + prod deps + layers)" "${t0}"
+  fi
 
   # Voice engine image (VOICE_ENGINE=on): downloads the private release with the BuildKit secret gh_token, which compose reads from
   # VOICE_ENGINE_RELEASE_TOKEN — set for this one command only, from git's credential helpers, never exported. Built while the
@@ -2001,13 +2040,18 @@ deploy_front_host() {
   dv_tag_previous "$(dv_front_image)"
   dt_record "front ${target_host}: prepare (ssh, env upload, docker context, tag previous)" "${t0}"
 
-  echo "==> [FRONT:${target_host}] Building service"
-  t0="$(dt_now)"
-  DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
-    --project-directory "${BUILD_CONTEXT_DIR}" \
-    --project-name "${project_name}" \
-    build --pull ${NO_CACHE_FLAG} front
-  dt_record "front ${target_host}: image build on the server" "${t0}"
+  if [[ "${DI_ACTIVE}" -eq 1 ]]; then
+    # Registry mode: pull the pushed front image (tag carries the environment); a failure stops before the switch.
+    di_pull_and_tag front || { dv_restore_latest_tag "$(dv_front_image)"; exit 1; }
+  else
+    echo "==> [FRONT:${target_host}] Building service"
+    t0="$(dt_now)"
+    DOCKER_SSH_COMMAND="${docker_ssh_command}" docker --context "${context_name}" compose \
+      --project-directory "${BUILD_CONTEXT_DIR}" \
+      --project-name "${project_name}" \
+      build --pull ${NO_CACHE_FLAG} front
+    dt_record "front ${target_host}: image build on the server" "${t0}"
+  fi
 
   # Set to --no-deps in the colocated branch below (see the note there): the front must
   # never reconcile the back service it shares its host with.
@@ -2180,6 +2224,15 @@ if [[ "${ROLLBACK_MODE}" == "1" ]]; then
   exit 0
 fi
 
+# Registry mode: build (and push) the image(s) ONCE, before any host is touched; a failure here leaves every host as it was.
+if [[ "${DI_ACTIVE}" -eq 1 && "${DI_BUILD}" -eq 1 ]]; then
+  di_build_all
+fi
+if [[ "${DI_ACTIVE}" -eq 1 && "${DI_DEPLOY}" -eq 0 ]]; then
+  echo "==> Image phase completed — tag ${DI_TAG} (no host touched)"
+  exit 0
+fi
+
 if [[ "${DEPLOY_TARGET}" != "front" && -n "${REDIS_HOST_VALUE}" ]]; then
   echo "==> Deploying Redis on ${REDIS_HOST_VALUE}"
   __t0="$(dt_now)"
@@ -2276,11 +2329,17 @@ else
   done
 fi
 
-if [[ "${DEPLOY_TARGET}" != "front" ]]; then
+case "$(printf '%s' "${DEPLOY_MANAGE_UFW:-1}" | tr '[:upper:]' '[:lower:]')" in
+  0|false|off|no) DEPLOY_MANAGE_UFW_ON=0 ;;
+  *) DEPLOY_MANAGE_UFW_ON=1 ;;
+esac
+if [[ "${DEPLOY_TARGET}" != "front" && "${DEPLOY_MANAGE_UFW_ON}" -eq 1 ]]; then
   __t0="$(dt_now)"
   configure_firewall_rules
   apply_firewall_rules
   dt_record "firewall rules" "${__t0}"
+elif [[ "${DEPLOY_TARGET}" != "front" ]]; then
+  echo "==> [FIREWALL] DEPLOY_MANAGE_UFW=${DEPLOY_MANAGE_UFW}: UFW rules are not applied by this script (ports published by Docker are filtered in DOCKER-USER, by the infrastructure)"
 fi
 
 download_db_backups

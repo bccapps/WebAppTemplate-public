@@ -32,6 +32,12 @@ set -euo pipefail
 #   ./scripts/run.sh preprod|prod --no-update-common
 #                                     Skip the shared-library sync (update_common.sh: commit + push of the libs);
 #                                     also SKIP_UPDATE_COMMON=1. Used by Agent Hub's deploy button.
+#   ./scripts/run.sh preprod|prod --build [--push]
+#   ./scripts/run.sh preprod|prod --deploy --tag=<tag>
+#                                     Registry mode (DEPLOY_REGISTRY set, see deploy-full.sh --help): build the image(s) on the
+#                                     builder (--push: and push them), or ship an already pushed tag to the hosts without
+#                                     building. --build/--push touch no host and run no migration; --deploy alone skips the
+#                                     library sync (what was built is what is shipped). No phase flag = build + push + deploy.
 #   ./scripts/run.sh rollback <preprod|prod> [--restore-db] [--target=all|back|front]
 #                                     Swap back to the previous version kept by the last deploy (no build, no library
 #                                     sync, no submodule update). --restore-db also restores the SQLite backup taken
@@ -518,14 +524,24 @@ migrations_enabled_for_target() {
 split_deploy_args() {
   DEPLOY_ARGS=()
   SKIP_UPDATE_COMMON="${SKIP_UPDATE_COMMON:-0}"
-  local a
+  RUN_SKIP_MIGRATIONS=0
+  local a has_build=0 has_deploy=0
   for a in "$@"; do
-    if [[ "${a}" == "--no-update-common" ]]; then
-      SKIP_UPDATE_COMMON=1
-    else
-      DEPLOY_ARGS+=("${a}")
-    fi
+    case "${a}" in
+      --no-update-common) SKIP_UPDATE_COMMON=1; continue ;;
+      --build|--push) has_build=1 ;;
+      --deploy) has_deploy=1 ;;
+    esac
+    DEPLOY_ARGS+=("${a}")
   done
+  # Registry-mode phases (deploy-full.sh): a run that only ships an already built tag has no use for the library sync; a run that
+  # only builds/pushes touches no host, so no migration either.
+  if [[ "${has_deploy}" -eq 1 && "${has_build}" -eq 0 ]]; then
+    SKIP_UPDATE_COMMON=1
+  fi
+  if [[ "${has_build}" -eq 1 && "${has_deploy}" -eq 0 ]]; then
+    RUN_SKIP_MIGRATIONS=1
+  fi
 }
 
 # Phases measured here are handed to deploy-full.sh, which prints them in its timing summary (lib/deploy-timing.sh).
@@ -586,7 +602,7 @@ cmd_preprod() {
     warn "front/.env.preprod not found — using front/.env"
   fi
 
-  if [[ "$*" == *"--target=front"* || ! -f "${SCRIPT_DIR}/migrate-db.sh" ]]; then
+  if [[ "$*" == *"--target=front"* || "${RUN_SKIP_MIGRATIONS}" -eq 1 || ! -f "${SCRIPT_DIR}/migrate-db.sh" ]]; then
     :
   elif migrations_enabled_for_target "${back_env}" "$@"; then
     run_deploy_migrations "${back_env}" "preprod: ${back_env}"
@@ -612,7 +628,7 @@ cmd_prod() {
     exit 1
   fi
 
-  if [[ "$*" == *"--target=front"* || ! -f "${SCRIPT_DIR}/migrate-db.sh" ]]; then
+  if [[ "$*" == *"--target=front"* || "${RUN_SKIP_MIGRATIONS}" -eq 1 || ! -f "${SCRIPT_DIR}/migrate-db.sh" ]]; then
     :
   elif migrations_enabled_for_target "./back/.env" "$@"; then
     run_deploy_migrations "./back/.env" "prod: ./back/.env"
@@ -780,6 +796,7 @@ usage() {
   echo "  prod [--target=...] [--migrate] [--no-update-common] [--no-auto-rollback]"
   echo "                           Deploy to prod via deploy-full.sh (back/.env + front/.env)"
   echo "                           --no-update-common (or SKIP_UPDATE_COMMON=1) skips the shared library sync"
+  echo "                           Registry mode (DEPLOY_REGISTRY): --build [--push] | --deploy --tag=<tag> (see deploy-full.sh --help)"
   echo "  rollback <preprod|prod> [--restore-db] [--target=all|back|front]"
   echo "                           Swap back to the previous deployed version (no build, no library sync);"
   echo "                           --restore-db restores the SQLite backup taken before the current version"
