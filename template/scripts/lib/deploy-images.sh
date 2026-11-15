@@ -309,7 +309,9 @@ di_build_service() {
   t0="$(dt_now)"
   echo "==> [BUILDER:$(di_builder_label)] Building ${svc} → ${push_ref}"
   if [[ "${DEPLOY_BUILDER:-remote}" == "remote" ]]; then
-    di_bdocker build --pull ${NO_CACHE_FLAG} -f "${df}" "${args[@]}" -t "${push_ref}" "${ctx}" \
+    # No provenance/SBOM attestation: BuildKit would push an OCI INDEX (image + attestation) and the registry's garbage collection
+    # (registry:2) deletes the children of such an index, leaving a tag that cannot be pulled. A plain manifest is GC-safe.
+    BUILDX_NO_DEFAULT_ATTESTATIONS=1 di_bdocker build --pull ${NO_CACHE_FLAG} -f "${df}" "${args[@]}" -t "${push_ref}" "${ctx}" \
       || { err "Image build failed for ${svc} — nothing was pushed, no host was touched."; exit 1; }
     dt_record "image ${svc}: build on the builder" "${t0}"
     if [[ "${DI_PUSH}" -eq 1 ]]; then
@@ -323,7 +325,7 @@ di_build_service() {
   else
     local mode="--load"
     [[ "${DI_PUSH}" -eq 1 ]] && mode="--push"
-    docker buildx build --pull ${NO_CACHE_FLAG} --platform "${DEPLOY_PLATFORM:-linux/amd64}" -f "${df}" "${args[@]}" \
+    docker buildx build --provenance=false --sbom=false --pull ${NO_CACHE_FLAG} --platform "${DEPLOY_PLATFORM:-linux/amd64}" -f "${df}" "${args[@]}" \
       -t "${push_ref}" "${mode}" "${ctx}" \
       || { err "Local image build/push failed for ${svc} (Docker running? docker login to ${DEPLOY_REGISTRY_PUSH:-${DEPLOY_REGISTRY}} done?) — no host was touched."; exit 1; }
     dt_record "image ${svc}: build$([[ "${DI_PUSH}" -eq 1 ]] && printf ' + push') (local buildx)" "${t0}"
