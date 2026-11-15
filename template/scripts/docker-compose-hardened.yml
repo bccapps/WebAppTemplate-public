@@ -48,6 +48,22 @@
 # Not shared with docker-compose.yml on purpose: a volume has no fixed name here, so the Postgres volume is
 # `<compose project>_postgres_data` (`<PROJECT_NAME>-back-<host>_postgres_data`): a renamed host or project starts on
 # an EMPTY database (restore a dump), and switching an existing app from docker-compose.yml to this file does too.
+#
+# What this file does NOT guarantee by itself (the deployment tooling must, and FleetForge does):
+#   - Values: Compose only refuses EMPTY variables. HARDEN_RUNTIME_UID=0 (or `root`, `-5`), HARDEN_BACK_CPUS=0 and
+#     HARDEN_BACK_MEM_LIMIT=0 all pass `docker compose config`. "Never root, never node (1000), limits > 0" comes from
+#     FleetForge: render.yml writes the uid/gid only if they match ^[1-9][0-9]*$ (dedicated account it created), and
+#     its run-time check compares each container's Config.User, Memory > 0 and NanoCpus > 0, stopping it otherwise.
+#     The back keeps its image's entrypoint (no `id -u` guard here: that would replace the image's ENTRYPOINT).
+#   - Egress: the back can reach anything its host routes to (Internet, 169.254.169.254, the bridge gateway `.1`, so
+#     the host's own ports). Outbound filtering belongs to the host firewall of the profile, not to this file.
+#   - Writable places of the code services: /tmp (tmpfs with no size of its own, bounded only by mem_limit; the static
+#     check requires exactly `/tmp`), /app/logs (logs, LOG_DIR pinned), /app/shared and /data. /app/shared is SERVED
+#     PUBLICLY by the front (/images/graphs): never put private files there, never point APP_DATA_DIR at it. Private
+#     data goes to /data (`app_data` volume, unused unless the app sets APP_DATA_DIR=/data).
+#   - back-lb: no `Upgrade` header (no WebSocket through NODE_PORT; SSE works: buffering off, 180 s read timeout),
+#     128 KB request bodies, no proxy_next_upstream (a failing replica is not retried on another one).
+#   - db: POSTGRES_HOST_AUTH_METHOD md5 as in docker-compose.yml (scram-sha-256 would be better: later, for all files).
 
 # Code services: hardening shared by back and back-worker (same image, same account, same limits).
 x-code-service: &code-service
@@ -77,11 +93,13 @@ x-code-service: &code-service
     timeout: 10s
     retries: 5
     start_period: 120s
-  # Both owned by the dedicated account: the image creates the mount points owned by APP_RUNTIME_OWNER (build arg of
-  # the back service below) and a NEW named volume inherits that ownership.
+  # All owned by the dedicated account: the image creates the mount points owned by APP_RUNTIME_OWNER (build arg of
+  # the back service below) and a NEW named volume inherits that ownership. shared_directory is public (the front
+  # serves it); app_data is private, for an app that sets APP_DATA_DIR=/data (unused otherwise).
   volumes:
     - shared_directory:/app/shared
     - back_logs:/app/logs
+    - app_data:/data
 
 services:
   db:
@@ -137,6 +155,8 @@ services:
       # The dedicated account has no entry in the image's /etc/passwd (HOME would be `/`, read-only): tools that write
       # under HOME (git, npm caches) get the tmpfs.
       HOME: /tmp
+      # Logs stay on back_logs even when the app sets APP_DATA_DIR (which would move them to <APP_DATA_DIR>/logs).
+      LOG_DIR: /app/logs
     depends_on:
       db:
         condition: service_healthy
@@ -155,6 +175,7 @@ services:
       DB_SCHEMA_MODE: manual
       METRICS_TOKEN: ${METRICS_TOKEN:-}
       HOME: /tmp
+      LOG_DIR: /app/logs
     depends_on:
       back:
         condition: service_healthy
@@ -243,7 +264,10 @@ services:
     cpus: 0.5
     environment:
       REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD is required: Redis is always authenticated in the hardened profile}"
-    # The charset guard keeps the value a single token of redis.conf (a space or a quote would change the directive).
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-256mb}
+      REDIS_MAXMEMORY_POLICY: ${REDIS_MAXMEMORY_POLICY:-volatile-ttl}
+    # The guards keep each value a single token of redis.conf (a space, a quote or a newline would change the
+    # directives): password charset, maxmemory = digits + optional b/kb/mb/gb, policy = one of Redis's eight.
     entrypoint:
       - /bin/sh
       - -c
@@ -251,8 +275,16 @@ services:
         case "$$REDIS_PASSWORD" in
           *[!A-Za-z0-9._~+/=-]*) echo 'redis: REDIS_PASSWORD must match [A-Za-z0-9._~+/=-]+, refusing to start' >&2; exit 1 ;;
         esac
+        size="$${REDIS_MAXMEMORY%[kmg]b}"; size="$${size%b}"
+        case "$$size" in
+          ''|*[!0-9]*) echo 'redis: REDIS_MAXMEMORY must match [0-9]+(b|kb|mb|gb)?, refusing to start' >&2; exit 1 ;;
+        esac
+        case "$$REDIS_MAXMEMORY_POLICY" in
+          noeviction|allkeys-lru|allkeys-lfu|allkeys-random|volatile-lru|volatile-lfu|volatile-random|volatile-ttl) ;;
+          *) echo 'redis: REDIS_MAXMEMORY_POLICY is not a Redis eviction policy, refusing to start' >&2; exit 1 ;;
+        esac
         umask 077
-        printf 'requirepass %s\nappendonly yes\nappendfsync everysec\nmaxmemory ${REDIS_MAXMEMORY:-256mb}\nmaxmemory-policy ${REDIS_MAXMEMORY_POLICY:-volatile-ttl}\n' "$$REDIS_PASSWORD" > /data/redis.conf
+        printf 'requirepass %s\nappendonly yes\nappendfsync everysec\nmaxmemory %s\nmaxmemory-policy %s\n' "$$REDIS_PASSWORD" "$$REDIS_MAXMEMORY" "$$REDIS_MAXMEMORY_POLICY" > /data/redis.conf
         exec docker-entrypoint.sh redis-server /data/redis.conf
     networks:
       - app
@@ -301,7 +333,8 @@ services:
       retries: 3
       start_period: 10s
     volumes:
-      - shared_directory:/usr/share/nginx/html/images/graphs
+      # Read-only: the front only serves what the back writes there.
+      - shared_directory:/usr/share/nginx/html/images/graphs:ro
 
 networks:
   # The project's only network: a fixed /24 (front and back-lb at fixed addresses, the host firewall admits this
@@ -318,3 +351,5 @@ volumes:
   shared_directory:
   # Logs of back and back-worker only: never under shared_directory, which the front serves.
   back_logs:
+  # Private data of back and back-worker (/data): used only when the app sets APP_DATA_DIR=/data; never served.
+  app_data:

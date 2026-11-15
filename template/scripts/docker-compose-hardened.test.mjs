@@ -114,7 +114,8 @@ test('text: back-lb rewrites X-Forwarded-For to the client address, trusts only 
 
 test('text: Redis password never on a command line; every isolation variable fails closed', () => {
   assert.doesNotMatch(SOURCE, /--requirepass|redis-cli[^\n]*\s-a\s/);
-  assert.match(SOURCE, /printf 'requirepass %s\\n[^\n]*"\$\$REDIS_PASSWORD" > \/data\/redis\.conf/);
+  assert.match(SOURCE, /printf 'requirepass %s\\n[^\n]*' "\$\$REDIS_PASSWORD"[^\n]* > \/data\/redis\.conf/);
+  assert.doesNotMatch(SOURCE, /maxmemory \$\{/, 'Redis settings reach redis.conf as printf arguments, after their checks');
   assert.match(SOURCE, /REDISCLI_AUTH=\\"\$\$REDIS_PASSWORD\\" redis-cli ping/);
   for (const name of FAILCLOSED_VARIABLES) assert.match(SOURCE, new RegExp(`\\$\\{${name}:\\?`), `${name} is \${${name}:?…}`);
 });
@@ -161,7 +162,16 @@ test('rendered: account, read-only root, capabilities, limits, ports, network an
   assert.deepEqual(Object.keys(services.db.environment).sort(),
     ['POSTGRES_DB', 'POSTGRES_HOST_AUTH_METHOD', 'POSTGRES_INITDB_ARGS', 'POSTGRES_PASSWORD', 'POSTGRES_USER']);
   assert.equal(services.front.environment, undefined);
-  assert.deepEqual(Object.keys(services.redis.environment), ['REDIS_PASSWORD']);
+  assert.deepEqual(Object.keys(services.redis.environment).sort(), ['REDIS_MAXMEMORY', 'REDIS_MAXMEMORY_POLICY', 'REDIS_PASSWORD']);
+  // The public shared directory is read-only for the front; private data has its own volume, never mounted on the front.
+  const mounts = (name) => Object.fromEntries((services[name].volumes ?? []).map((m) => [m.target, m]));
+  assert.equal(mounts('front')['/usr/share/nginx/html/images/graphs'].read_only, true);
+  for (const name of CODE_SERVICES) {
+    assert.deepEqual(Object.fromEntries(Object.entries(mounts(name)).map(([t, m]) => [t, m.source])),
+      { '/app/shared': 'shared_directory', '/app/logs': 'back_logs', '/data': 'app_data' }, name);
+    assert.equal(services[name].environment.LOG_DIR, '/app/logs', name);
+  }
+  assert.ok(!Object.values(mounts('front')).some((m) => ['app_data', 'back_logs'].includes(m.source)));
   assert.ok('DB_PASSWORD' in services.back.environment, 'code services read back/.env');
   // `docker compose config` re-escapes `$` as `$$` (its output is a compose file itself).
   const nginx = backLbNginx(services['back-lb'].entrypoint.join('\n')).replaceAll('$$', '$');
