@@ -79,6 +79,30 @@ Exit codes of a deploy: `0` ok · `3` failed, previous version restored · `4` f
 
 Progress markers (`==> ` lines parsed by Agent Hub): `[BACK:<host>] Tagging current images as previous`, `[BACK:<host>] Backing up database`, `[BACK|FRONT:<host>] Rolling back to previous version` / `Rolled back to previous version` / `Rollback failed`, then `Deployment failed, previous version restored` (3), `Deployment failed, rollback failed` (4) or `Rollback completed`. The logic lives in `scripts/lib/deploy-versions.sh`; tests: `node --test scripts/deploy-versions.test.mjs` (stub executables, no host is contacted).
 
+### Registry mode: build once, push a tag, every host pulls it
+
+Without a registry every host builds its own image from an uploaded context (N hosts = N builds) and a rollback is only the `:previous` tag kept on each host. Set `DEPLOY_REGISTRY` (`back/.env` or the environment; the caller's environment wins over the file) and the images are built **once**, pushed under an immutable tag, and each host only pulls that tag — what was built (and tested on preprod) is what runs on prod. Unset, nothing changes.
+
+```bash
+./scripts/run.sh prod                        # build + push + deploy (no phase flag = all three)
+./scripts/run.sh prod --build                # compile + build on the builder; nothing pushed, no host touched, no migration
+./scripts/run.sh prod --push                 # build and push (implies --build); no host touched
+./scripts/run.sh prod --deploy --tag=<tag>   # pull an already pushed tag on every host and switch; builds nothing,
+                                             # skips the library sync. A deploy of an older tag is a rollback by tag.
+./scripts/run.sh prod --builder=local        # assemble the image on this machine (buildx, linux/amd64) instead of the builder host
+```
+
+| Setting | Meaning |
+|---|---|
+| `DEPLOY_REGISTRY` | `host[:port]` the **hosts** pull from (turns the mode on). Images: `<registry>/<PROJECT_NAME>/<service>:<tag>`, one per compose service that has a `build:` and no `profiles:` (`back`, `front`; the back image does not depend on the environment, the front tag carries it: `<tag>-prod`) |
+| `DEPLOY_REGISTRY_PUSH` | name the **builder** pushes to (default `DEPLOY_REGISTRY`); `localhost:<port>` when the builder is the registry machine |
+| `DEPLOY_BUILDER` | `remote` (default: a Docker daemon reached through an SSH context, `DEPLOY_BUILDER_HOST`=`[user@]host`, `DEPLOY_BUILDER_SSH_PORT`, `DEPLOY_BUILDER_SSH_KEY_FILE`; amd64-native, already logged in to the registry) or `local` (this machine, `DEPLOY_PLATFORM`, default `linux/amd64`, this machine's `docker login`) |
+| `DEPLOY_IMAGE_TAG` / `--tag=` | tag to build or ship; default the git short sha (`-dirty-<timestamp>` for a dirty tree, so an immutable tag is never overwritten) |
+| `DEPLOY_BACK_HOSTS`, `DEPLOY_FRONT_HOSTS` | override `BACK_HOSTS` / `FRONT_HOSTS` of the file (the infrastructure, not the app, decides where it runs) |
+| `DEPLOY_MANAGE_UFW=0` | do not apply the ufw rules of `PROXY_HOSTS`/`WHITELIST` (decorative for ports published by Docker) |
+
+On each host the pulled image is tagged with the name the compose file uses, so the maintenance window, `:previous` and the automatic/manual rollbacks work unchanged; `.deploy/current.json` also records `imageTag` and `imageDigest`. The host pulls with **its own** registry login (this machine never holds a registry secret in remote mode). Guards: an image context must be a whitelist (`*`, the prebuilt variants) or exclude `.env*` files — an image that goes to a registry never carries an env file — and the compose model kept in the staged context drops the values `compose config` inlines from `env_file`. Progress marker: `==> [IMAGE:<project>] service=<s> tag=<t> digest=<sha256:…> host=<h>|builder=<h>`. Logic: `scripts/lib/deploy-images.sh`; tests: `node --test scripts/deploy-registry.test.mjs` (stubs, no host contacted; harness shared with the other suite in `scripts/deploy-test-kit.mjs`).
+
 ### Stop & Status
 ```bash
 ./scripts/run.sh stop dev         # Stop dev environment
