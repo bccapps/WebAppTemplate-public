@@ -143,7 +143,7 @@ Feature access control (`hasFeature`, `@RequireFeature`, tiers) only exists with
 ## 10. Security
 
 - No secrets, keys or passwords in prompts or code. All user input validated **server-side**. Every dependency justified, established and maintained (where to declare it: §1b).
-- Authentication, payments, personal data: mandatory human review.
+- Authentication, payments, personal data: mandatory independent Opus review (a reviewer other than the author of the change; no human review required, owner decision of 2026-11-15).
 - HTTP hardening only through `configureHttpApp`: never disable `helmet`, widen CORS to `*` in production, wrap `enableCors` or parse webhook bodies by hand (webhooks read `req.rawBody`, `RAW_BODY_PATHS`); per-route CORS openings via `publicCorsPaths` / `corsOriginPolicy` (`nest/common/README.md`). Client IP = `req.ip` (`extractClientIp`), never `X-Forwarded-For` read by hand; behind proxies `TRUST_PROXY` is a list of trusted addresses, not a hop count.
 - `LOCAL_TRUST=true` (single-user local apps only): never on a server, never weaken its checks (loopback **socket** address, never `req.ip`/`X-Forwarded-For`); per-user app routes still use `RequireUserInterceptor`.
 - Remote command execution / terminal sessions are security-critical: least privilege, no unvalidated input in a command line, no credentials in logs.
