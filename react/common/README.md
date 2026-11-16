@@ -425,9 +425,13 @@ plugin `user` d'avant) fonctionne tel quel.
 - **Menus** (`menus.ts`, `useMenuContext.ts`) : `resolveMenu(sections, ctx, { adminOnly? })` garde les entrées dont `visible(ctx)` n'est pas faux
   et retire les sections vides ; `mergeMenuSections(...listes)` fusionne les sections de même `id` (l'app d'abord). `useMenuContext()` donne
   `ctx` et se met à jour avec la session. `AppSidebar` (gabarit) lit `config/navigation.ts` (`appNavMenu`, `appAdminMenu`) puis les plugins ;
-  sans entrée visible, pas de barre latérale.
+  sans entrée visible, pas de barre latérale. Sous le breakpoint `sm` (téléphone), la barre reste un rail de 64 px (fermée au départ) et
+  la déplier ouvre un tiroir par-dessus la page (classe `mobile-drawer`, fermé au clic sur un lien) au lieu d'écraser le contenu
+  (`useCompactSidebar`, `PageLayout`). `AppSidebar`, `PageLayout`, `Header` et `Title` sont des fichiers de l'app copiés à la création
+  du projet : une app existante reporte ce correctif à la main.
 - **En-tête** : `<PluginHeaderActions placement="end" />` rend les `HeaderActions` de tous les plugins, avec `{ isAuth, isAdmin }`, dans
-  n'importe quel en-tête (celui du gabarit, la barre supérieure d'une app).
+  n'importe quel en-tête (celui du gabarit, la barre supérieure d'une app). Celui du gabarit masque le titre sous `sm` et fait défiler
+  les actions à l'horizontale (le compte et les actions des plugins, dont la cloche de l'inbox, sont visibles au départ).
 - Tests : `AppPlugin.spec.ts`, `resolveRoutes.spec.ts`, `menus.spec.ts`, `featureAccess.spec.ts`, `core/preload/preloadPlan.spec.ts`,
   `core/preload/Preloader.spec.ts`. Clés i18n ajoutées : `common.nav.sidebar.{collapse,expand}`.
 

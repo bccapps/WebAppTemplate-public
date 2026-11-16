@@ -71,9 +71,15 @@ export function Header({ alertsCount = 0 }: HeaderProps) {
         <Link to="/" style={{ display: 'inline-flex', alignItems: 'center' }}>
           <img style={{ height: 44, width: 'auto' }} src="/favicon.svg" alt="Logo" />
         </Link>
-        <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexGrow: 1, ml: 2, gap: 2, height: '100%' }}>
-          <Title />
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexGrow: 1, minWidth: 0, ml: { xs: 1, sm: 2 }, gap: { xs: 1, sm: 2 }, height: '100%' }}>
+          {/* On a phone the logo is enough: the name would push the actions out of the screen. */}
+          <Box sx={{ display: { xs: 'none', sm: 'block' } }}>
+            <Title />
+          </Box>
+          {/* Actions that do not fit a narrow screen scroll sideways instead of being cut off; `rtl` on the scroller only
+              starts it at its end, so the account and the plugin actions (inbox bell) are the ones in view. */}
+          <Box sx={{ minWidth: 0, ml: 'auto', overflowX: 'auto', direction: 'rtl', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1 }, direction: 'ltr', width: 'max-content', '& > *': { flexShrink: 0 } }}>
             <Tooltip
               title={
                 alertsCount > 0 ? (
@@ -180,6 +186,7 @@ export function Header({ alertsCount = 0 }: HeaderProps) {
             <ThemeSwitch />
             {/* Header actions of the plugins (wallet button with `user`, cart with `commerce`, ...). */}
             <PluginHeaderActions placement="end" />
+          </Box>
           </Box>
         </Box>
       </Toolbar>

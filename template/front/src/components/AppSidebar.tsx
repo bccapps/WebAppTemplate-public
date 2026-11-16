@@ -19,8 +19,10 @@ import {
   ListItemText,
   ListSubheader,
   Toolbar,
-  Tooltip
+  Tooltip,
+  useMediaQuery
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import ChevronLeftRoundedIcon from '@mui/icons-material/ChevronLeftRounded';
 import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
 import { NavLink } from 'react-router-dom';
@@ -33,6 +35,12 @@ import type { MenuSection, RouteLayout } from '@/modules_shared/common/plugins/A
 
 export const SIDEBAR_WIDTH = 240;
 export const SIDEBAR_COLLAPSED_WIDTH = 64;
+
+/** Phones (below the `sm` breakpoint): the sidebar stays a rail and expanding it opens an overlay instead of squeezing the page. */
+export function useCompactSidebar(): boolean {
+  const theme = useTheme();
+  return useMediaQuery(theme.breakpoints.down('sm'), { noSsr: true });
+}
 
 interface AppSidebarProps {
   open: boolean;
@@ -52,7 +60,7 @@ function useSidebarSections(layout: AppSidebarProps['layout']): MenuSection[] {
   return layout === 'admin' ? [...nav, ...resolveMenu(adminSections, ctx, { adminOnly: true })] : nav;
 }
 
-function SidebarSection({ section, open }: { section: MenuSection; open: boolean }) {
+function SidebarSection({ section, open, onNavigate }: { section: MenuSection; open: boolean; onNavigate?: () => void }) {
   return (
     <Box component="nav">
       {open ? (
@@ -70,6 +78,7 @@ function SidebarSection({ section, open }: { section: MenuSection; open: boolean
               <ListItemButton
                 component={NavLink}
                 to={item.to}
+                onClick={onNavigate}
                 sx={{
                   minHeight: 48,
                   justifyContent: open ? 'initial' : 'center',
@@ -90,25 +99,21 @@ function SidebarSection({ section, open }: { section: MenuSection; open: boolean
   );
 }
 
-export const AppSidebar = ({ open, onToggle, layout }: AppSidebarProps) => {
-  const sections = useSidebarSections(layout);
-  const width = open ? SIDEBAR_WIDTH : SIDEBAR_COLLAPSED_WIDTH;
-  if (sections.length === 0) return null;
+interface SidebarBodyProps {
+  sections: MenuSection[];
+  open: boolean;
+  onToggle: () => void;
+  onNavigate?: () => void;
+}
+
+function SidebarBody({ sections, open, onToggle, onNavigate }: SidebarBodyProps) {
   return (
-    <Drawer
-      variant="permanent"
-      sx={{
-        width,
-        flexShrink: 0,
-        '& .MuiDrawer-paper': { width, boxSizing: 'border-box', transition: 'width 0.2s ease-in-out' }
-      }}
-      open={open}
-    >
+    <>
       <Toolbar />
       <Divider sx={{ mx: 2, mb: 1 }} />
       <List disablePadding>
         {sections.map((section) => (
-          <SidebarSection key={section.id} section={section} open={open} />
+          <SidebarSection key={section.id} section={section} open={open} onNavigate={onNavigate} />
         ))}
       </List>
       <Box sx={{ mt: 'auto', display: 'flex', justifyContent: open ? 'flex-end' : 'center', p: 1 }}>
@@ -118,6 +123,41 @@ export const AppSidebar = ({ open, onToggle, layout }: AppSidebarProps) => {
           </IconButton>
         </Tooltip>
       </Box>
-    </Drawer>
+    </>
+  );
+}
+
+export const AppSidebar = ({ open, onToggle, layout }: AppSidebarProps) => {
+  const sections = useSidebarSections(layout);
+  const compact = useCompactSidebar();
+  if (sections.length === 0) return null;
+  // The column that takes room in the page: never wider than the rail on a phone (the overlay below covers the page instead).
+  const columnOpen = open && !compact;
+  const width = columnOpen ? SIDEBAR_WIDTH : SIDEBAR_COLLAPSED_WIDTH;
+  return (
+    <>
+      <Drawer
+        variant="permanent"
+        sx={{
+          width,
+          flexShrink: 0,
+          '& .MuiDrawer-paper': { width, boxSizing: 'border-box', transition: 'width 0.2s ease-in-out' }
+        }}
+        open={columnOpen}
+      >
+        <SidebarBody sections={sections} open={columnOpen} onToggle={onToggle} />
+      </Drawer>
+      {compact && (
+        <Drawer
+          variant="temporary"
+          className="mobile-drawer"
+          open={open}
+          onClose={onToggle}
+          sx={{ '& .MuiDrawer-paper': { width: SIDEBAR_WIDTH, maxWidth: '85vw', boxSizing: 'border-box' } }}
+        >
+          <SidebarBody sections={sections} open onToggle={onToggle} onNavigate={onToggle} />
+        </Drawer>
+      )}
+    </>
   );
 };

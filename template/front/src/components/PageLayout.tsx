@@ -7,12 +7,12 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Box, CssBaseline, Toolbar } from '@mui/material';
 import { useLocation } from 'react-router-dom';
 import { useTheme } from '@mui/material/styles';
 import { Header } from './Header';
-import { AppSidebar } from './AppSidebar';
+import { AppSidebar, useCompactSidebar } from './AppSidebar';
 import { resolvedRoutes } from './routes';
 import { layoutForPath } from '@/modules_shared/common/plugins/routeLayout';
 
@@ -32,7 +32,10 @@ export function PageLayout({ children }: PageLayoutProps) {
   // unchanged across our re-renders, so React skips its subtree — a key change is the
   // only way a layout-level subscription can propagate (re-runs all page effects too).
   const sessionKey = sessionAuth.isAuth() ? String(sessionAuth.get()?.id ?? 'auth') : 'anon';
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Expanded on a desktop, closed (rail + overlay on demand) on a phone; re-evaluated when the viewport crosses the breakpoint.
+  const compact = useCompactSidebar();
+  const [sidebarOpen, setSidebarOpen] = useState(!compact);
+  useEffect(() => setSidebarOpen(!compact), [compact]);
   const layout = layoutForPath(resolvedRoutes, useLocation().pathname);
   const theme = useTheme();
   const layoutBg =
@@ -54,7 +57,7 @@ export function PageLayout({ children }: PageLayoutProps) {
         sx={{
           flexGrow: 1,
           minWidth: 0,
-          p: 3,
+          p: { xs: 1.5, sm: 3 },
           minHeight: '100vh',
           bgcolor: layoutBg,
         }}
