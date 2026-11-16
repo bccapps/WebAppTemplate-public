@@ -34,7 +34,7 @@ test('renderClaudeMd: fresh, marker preserved, legacy content kept below the mar
   assert.equal(renderClaudeMd('legacy notes\n', imp), `@a\n${MARKER}\nlegacy notes\n`);
 });
 
-test('ensure: symlink CLAUDE.md/AGENTS.md replaced, private import only when mounted, idempotent, AGENTS inlines imports', () => {
+test('ensure: replaces symlinks, preserves notes and keeps a stable AGENTS pointer as sources change', () => {
   const root = project(true);
   symlinkSync('front/.libs/apptemplate/CLAUDE.md', path.join(root, 'CLAUDE.md'));
   symlinkSync('CLAUDE.md', path.join(root, 'AGENTS.md'));
@@ -43,21 +43,27 @@ test('ensure: symlink CLAUDE.md/AGENTS.md replaced, private import only when mou
   assert.equal(lstatSync(path.join(root, 'AGENTS.md')).isSymbolicLink(), false);
   const claude = readFileSync(path.join(root, 'CLAUDE.md'), 'utf8');
   assert.match(claude, /^@front\/\.libs\/apptemplate\/CLAUDE\.md\n@front\/\.libs\/vx-private\/CLAUDE\.private\.md\n/);
+  const initialAgents = readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
   writeFileSync(path.join(root, 'CLAUDE.md'), `${claude}note A\n`);
   assert.equal(ensure(root).claudeChanged, false);
   const agents = readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
-  assert.ok(agents.includes('# Template rules') && agents.includes('# Private rules') && agents.includes('note A'));
+  assert.equal(agents, initialAgents);
+  assert.doesNotMatch(agents, /# Template rules|# Private rules|note A/);
   assert.match(readFileSync(path.join(root, '.gitignore'), 'utf8'), /^\/AGENTS\.md$/m);
   rmSync(path.join(root, 'front/.libs/vx-private'), { recursive: true });
   ensure(root);
   const without = readFileSync(path.join(root, 'CLAUDE.md'), 'utf8');
   assert.doesNotMatch(without, /vx-private/);
   assert.match(without, /note A/);
+  assert.equal(readFileSync(path.join(root, 'AGENTS.md'), 'utf8'), initialAgents);
   rmSync(root, { recursive: true, force: true });
 });
 
-test('renderAgentsMd flags a missing import', () => {
-  assert.match(renderAgentsMd('@nope\nx', () => null), /missing import: nope/);
+test('renderAgentsMd instructs agents to read CLAUDE.md and recursively resolve imports relative to their source', () => {
+  const agents = renderAgentsMd();
+  assert.match(agents, /read CLAUDE\.md at the project root in full and follow its instructions/);
+  assert.match(agents, /Recursively read every file referenced by an @path import line/);
+  assert.match(agents, /relative to the directory of the file containing it/);
 });
 
 test('withRequiredGitignore appends logs/, .validation-cache/ and /AGENTS.md once, never rewrites the rest', () => {

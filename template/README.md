@@ -408,8 +408,10 @@ invalid identifier. The identifier names the OS data folder of the app: change t
   an error. Package scripts call `.libs/apptemplate/scripts/*.mjs` directly (no per-project copy of `link-shared.mjs`).
 - **Agent docs** (`scripts/project-docs.mjs`, run by `update_common.sh`): the root `CLAUDE.md` is a real file made of `@imports`
   (`@front/.libs/apptemplate/CLAUDE.md`, plus `@front/.libs/vx-private/CLAUDE.private.md` when vx-private is mounted), the marker
-  `<!-- project-specific notes below -->` and the project notes (kept across refreshes). `AGENTS.md` (for agents that ignore
-  `@import`) is generated from the same files and git-ignored.
+  `<!-- project-specific notes below -->` and the project notes (kept across refreshes). The wizard, migration and
+  `update_common.sh` generate a short, git-ignored `AGENTS.md` that tells agents to read `CLAUDE.md` in full and its
+  `@imports` recursively, resolving each path relative to the importing file. No rules or project notes are duplicated;
+  edit their source files, never `AGENTS.md`.
   A project may keep its `CLAUDE.md` out of git (`/CLAUDE.md` in its `.gitignore`): `update_common.sh` then commits only what is tracked
   (`.gitignore` when it changed), never forces an ignored file in, and an empty commit is skipped, not an error (`scripts/lib/git-paths.sh`).
 
