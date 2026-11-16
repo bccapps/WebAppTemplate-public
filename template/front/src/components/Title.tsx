@@ -17,7 +17,6 @@ type TitleProps = {
 
 const FONT_SIZE = 32;
 const SUB_FONT_SIZE = Math.round(FONT_SIZE * 0.6);
-const DEFAULT_SITE_NAME = i18n.get('custom.app.name');
 
 type ImportMetaWithEnv = ImportMeta & {
   env?: Record<string, string | undefined>;
@@ -26,7 +25,7 @@ type ImportMetaWithEnv = ImportMeta & {
 const getTitleParts = () => {
   const rawName =
     ((import.meta as ImportMetaWithEnv).env?.VITE_PROJECT_NAME ?? '').trim() ||
-    DEFAULT_SITE_NAME;
+    i18n.get('custom.app.name'); // read when rendered: at import time the locales are not loaded yet (the raw key would show)
   const lastSpaceIndex = rawName.lastIndexOf(' ');
 
   if (lastSpaceIndex === -1) {
