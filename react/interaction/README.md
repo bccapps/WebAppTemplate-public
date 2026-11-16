@@ -47,10 +47,16 @@ pour le brancher. Options (`config/pluginOptions.ts` de l'app ; `false` désacti
 | Option | Défaut | Effet |
 |---|---|---|
 | `host` | `true` | Monte `<InteractionHost />` (Provider du plugin, placement `inner`) |
-| `headerBadge` | `true` | Action d'en-tête : `<InteractionInboxBadge />`, qui mène à `path`. `true` : visible connecté ; `'admin'` : administrateurs seulement ; `false` : absente |
-| `routes` | `true` | Page de l'utilisateur à `path` (garde `RequireAuth`) et page admin à `adminPath` (garde `RequireAdmin`), chargées à la demande |
+| `headerBadge` | `true` | Action d'en-tête : `<InteractionInboxBadge />`, qui mène à `path` ; absente avec `false`. Soumise à l'interrupteur `interaction_allowUsers` (ci-dessous) |
+| `routes` | `true` | Page de l'utilisateur à `path` (garde : connecté **et** `interaction_allowUsers`, admins toujours) et page admin à `adminPath` (garde `RequireAdmin`), chargées à la demande |
 | `path` | `/interaction` | Chemin de la page de l'utilisateur (boîte, canaux, préférences) |
 | `adminPath` | `/admin/interaction` | Chemin de la page admin (panneau des canaux) |
+
+**Interrupteur « Autoriser les interactions pour les utilisateurs »** : clé de configuration `interaction_allowUsers` (booléen, `false` par
+défaut, onglet « Config » du module dans l'admin : `components/ui/AdminConfig.tsx`, formulaire générique). Lue côté front dans la
+configuration publique (`configurationService.get`, règle pure `pure/interactionAccess.ts` : `canUseInteraction`). Désactivé : la cloche
+et la page `path` ne sont offertes qu'aux administrateurs (un non-admin qui ouvre l'URL voit « non autorisé »). Le garde est une
+commodité d'interface : les routes `/interaction/me/*` du back restent celles de tout utilisateur connecté.
 
 Une option du mauvais type, ou un chemin qui n'est pas un chemin d'app (`^/[A-Za-z0-9/_-]*$`), lève une erreur au démarrage.
 
@@ -224,10 +230,10 @@ ajoute `interaction.channels.<kind>.title` dans les libellés de l'app.
 | `types/interactionTypes.ts` | DTO et codes d'erreur (miroir du back, sans logique) |
 | `services/interactionApi.ts`, `services/labels.ts` | Appels HTTP ; `ixLabel` (libellé en texte pour un attribut) |
 | `hooks/interactionHooks.ts` | Hooks et `registerInteractionStepUp` |
-| `pure/` | `inappDisplay.ts`, `text.ts`, `channelState.ts` : règles sans `window` |
+| `pure/` | `inappDisplay.ts`, `text.ts`, `channelState.ts`, `interactionAccess.ts` : règles sans `window` |
 | `browser/browserNotifications.ts` | Permission, choix « ne plus proposer », notification native, Web Push |
 | `browser/webPushSession.ts` | `useWebPushSessionGuard` : l'abonnement Web Push suit l'utilisateur connecté (règle pure `pure/webPushSession.ts`) |
-| `components/` | Hôte, modale, boîte, panneaux, pages, registre et cartes de canal (`channels/`) |
+| `components/` | Hôte, modale, boîte, panneaux, pages, registre et cartes de canal (`channels/`) ; `ui/AdminConfig.tsx` (onglet de configuration de l'admin) |
 | `sw/interactionPush.ts` | Gestionnaires du service worker |
 | `styles/`, `locales/` | Jetons et classes ; libellés en et fr |
 

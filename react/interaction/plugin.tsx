@@ -7,17 +7,23 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { configurationService } from '../common/services/ConfigurationService';
+import { sessionAuth } from '../common/auth/sessionAuth';
+import { useSessionKeys } from '../common/hooks/useSessionKeys';
+import Unauthorized from '../common/components/ui/unauthorized/Unauthorized';
 import type { AppPlugin, AppPluginFactory, HeaderActionsProps } from '../common/plugins/AppPlugin';
-import { RequireAdmin, RequireAuth } from '../common/plugins/guards';
+import { RequireAdmin } from '../common/plugins/guards';
 import { InteractionInboxBadge } from './components/InteractionInbox';
+import { INTERACTION_ALLOW_USERS_KEY, canUseInteraction } from './pure/interactionAccess';
 import { InteractionHostProvider } from './components/InteractionPluginParts';
 
 export interface InteractionPluginOptions {
   /** Mounts `<InteractionHost />` (toasts / native notifications / question modal); default `true`. */
   host?: boolean;
-  /** Inbox badge in the header: `true` (default) for every signed-in user, `'admin'` for admins only, `false` for nobody. */
-  headerBadge?: boolean | 'admin';
+  /** Inbox badge in the header (for the users `interaction_allowUsers` lets through); default `true`. */
+  headerBadge?: boolean;
   /** The user's page (inbox, channels, preferences) and the admin page; default `true`. */
   routes?: boolean;
   /** Path of the user's page; default `/interaction`. */
@@ -26,17 +32,24 @@ export interface InteractionPluginOptions {
   adminPath?: string;
 }
 
+/** Admins always; other signed-in users when the admin switch « Allow interactions for users » is on (reactive: config + session). */
+function useInteractionAllowed({ isAuth, isAdmin }: HeaderActionsProps): boolean {
+  useSessionKeys(['config', 'user']);
+  return canUseInteraction({ isAuth, isAdmin, allowUsers: configurationService.get(INTERACTION_ALLOW_USERS_KEY) });
+}
+
 /** Header action of the plugin: the badge, leading to the module's page. */
-function headerBadge(path: string, adminOnly: boolean) {
-  return function InteractionHeaderBadge({ isAuth, isAdmin }: HeaderActionsProps) {
+function headerBadge(path: string) {
+  return function InteractionHeaderBadge(props: HeaderActionsProps) {
     const navigate = useNavigate();
-    return isAuth && (!adminOnly || isAdmin) ? <InteractionInboxBadge onOpen={() => navigate(path)} /> : null;
+    return useInteractionAllowed(props) ? <InteractionInboxBadge onOpen={() => navigate(path)} /> : null;
   };
 }
 
-function headerBadgeOption(value: unknown): boolean | 'admin' {
-  if (value === 'admin') return 'admin';
-  return booleanOption('headerBadge', value);
+/** Route guard of the user's page: signed in, and allowed by the admin switch (admins always). */
+function RequireInteractionAccess({ children }: { children: ReactNode }) {
+  const allowed = useInteractionAllowed({ isAuth: sessionAuth.isAuth(), isAdmin: sessionAuth.isAdmin() });
+  return allowed ? <>{children}</> : <Unauthorized />;
 }
 
 function booleanOption(name: string, value: unknown): boolean {
@@ -53,17 +66,17 @@ function pathOption(name: string, value: unknown, fallback: string): string {
 
 export const createInteractionPlugin: AppPluginFactory<InteractionPluginOptions> = (options) => {
   const host = booleanOption('host', options?.host);
-  const badge = headerBadgeOption(options?.headerBadge);
+  const badge = booleanOption('headerBadge', options?.headerBadge);
   const routes = booleanOption('routes', options?.routes);
   const path = pathOption('path', options?.path, '/interaction');
   const adminPath = pathOption('adminPath', options?.adminPath, '/admin/interaction');
   return {
     id: 'interaction',
     ...(host ? { Provider: InteractionHostProvider, providerPlacement: 'inner' as const } : {}),
-    ...(badge ? { HeaderActions: headerBadge(path, badge === 'admin') } : {}),
+    ...(badge ? { HeaderActions: headerBadge(path) } : {}),
     ...(routes
       ? {
-          routes: [{ path, lazy: () => import('./components/InteractionPages'), guard: RequireAuth }],
+          routes: [{ path, lazy: () => import('./components/InteractionPages'), guard: RequireInteractionAccess }],
           adminRoutes: [{ path: adminPath, lazy: () => import('./components/InteractionAdminPage'), guard: RequireAdmin }],
         }
       : {}),

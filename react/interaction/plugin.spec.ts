@@ -12,7 +12,12 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('./components/InteractionPluginParts', () => ({ InteractionHostProvider: () => null }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => () => undefined }));
 vi.mock('./components/InteractionInbox', () => ({ InteractionInboxBadge: () => 'badge' }));
-vi.mock('../common/plugins/guards', () => ({ RequireAdmin: () => null, RequireAuth: () => null }));
+vi.mock('../common/plugins/guards', () => ({ RequireAdmin: () => null }));
+const { allowUsers, session } = vi.hoisted(() => ({ allowUsers: { value: false as unknown }, session: { isAuth: true, isAdmin: false } }));
+vi.mock('../common/services/ConfigurationService', () => ({ configurationService: { get: () => allowUsers.value } }));
+vi.mock('../common/auth/sessionAuth', () => ({ sessionAuth: { isAuth: () => session.isAuth, isAdmin: () => session.isAdmin } }));
+vi.mock('../common/hooks/useSessionKeys', () => ({ useSessionKeys: () => undefined }));
+vi.mock('../common/components/ui/unauthorized/Unauthorized', () => ({ default: () => null }));
 
 import { collectPlugins } from '../common/plugins/AppPlugin';
 import { createInteractionPlugin, plugin } from './plugin';
@@ -34,14 +39,30 @@ describe('interaction plugin', () => {
     expect(createInteractionPlugin({ path: '/me/alerts' }).routes?.[0].path).toBe('/me/alerts');
   });
 
-  it('shows the header badge to admins only with headerBadge: "admin"', () => {
-    const render = (options: Parameters<typeof createInteractionPlugin>[0], isAuth: boolean, isAdmin: boolean) =>
-      (createInteractionPlugin(options).HeaderActions as unknown as (props: { isAuth: boolean; isAdmin: boolean }) => unknown)({ isAuth, isAdmin });
-    expect(render({ headerBadge: 'admin' }, true, true)).not.toBeNull();
-    expect(render({ headerBadge: 'admin' }, true, false)).toBeNull();
-    expect(render({ headerBadge: 'admin' }, false, false)).toBeNull();
-    expect(render({}, true, false)).not.toBeNull();
-    expect(render({}, false, false)).toBeNull();
+  it('shows the header badge to admins, and to other users only when interaction_allowUsers is on', () => {
+    const render = (isAuth: boolean, isAdmin: boolean) =>
+      (createInteractionPlugin(undefined).HeaderActions as unknown as (props: { isAuth: boolean; isAdmin: boolean }) => unknown)({ isAuth, isAdmin });
+    allowUsers.value = false;
+    expect(render(true, true)).not.toBeNull();
+    expect(render(true, false)).toBeNull();
+    expect(render(false, false)).toBeNull();
+    allowUsers.value = true;
+    expect(render(true, false)).not.toBeNull();
+    expect(render(false, false)).toBeNull();
+  });
+
+  it('guards the user page with the same rule', () => {
+    const Guard = createInteractionPlugin(undefined).routes![0].guard as unknown as (props: { children: string }) => { props: { children: string } };
+    const shown = () => Guard({ children: 'page' }).props.children === 'page';
+    session.isAuth = true;
+    session.isAdmin = false;
+    allowUsers.value = false;
+    expect(shown()).toBe(false);
+    allowUsers.value = true;
+    expect(shown()).toBe(true);
+    allowUsers.value = false;
+    session.isAdmin = true;
+    expect(shown()).toBe(true);
   });
 
   it('refuses invalid options', () => {
