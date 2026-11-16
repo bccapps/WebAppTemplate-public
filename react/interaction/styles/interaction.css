@@ -90,6 +90,8 @@
 .ix-form fieldset { border: none; padding: 0; margin: 0; display: grid; gap: 0.6rem; }
 .ix-field { display: grid; gap: 0.2rem; }
 .ix-switch { display: flex; align-items: center; gap: 0.4rem; }
+/* The app shell stretches every input to 100% (common/styles/app_shell.css): a checkbox keeps its natural size. */
+.ix-switch input, .ix-table input[type='checkbox'] { width: auto; }
 .ix-table { width: 100%; border-collapse: collapse; }
 .ix-table th, .ix-table td { text-align: left; padding: 0.3rem 0.5rem; }
 .ix-prompt { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; padding: 0.6rem 0.9rem; border-radius: 0.5rem; background: var(--interaction-inbox-item-unread-bg); }
