@@ -37,6 +37,10 @@ module.exports = async () => {
     // imports of public modules (`../../common/...`) from the real path, where they do not exist
     // (jest-resolver.cjs fixes the runtime side; `nest build` type-checks the sources through the links).
     transform: { '^.+\\.(t|j)s$': ['ts-jest', { diagnostics: { exclude: ['**/.libs/vx-private/**'] } }] },
+    // Not transformed: node_modules (Jest's default) and llm-client's vendored ESM `.js` (`llm-client/core/vendor/`), which ts-jest's
+    // `^.+\.(t|j)s$` rule would rewrite to CommonJS (`ReferenceError: exports is not defined`). The array is REPLACED by an app's
+    // `jest.transformIgnorePatterns` in package.local.json (see below): such an override must list these two entries again.
+    transformIgnorePatterns: ['/node_modules/', '/llm-client/core/vendor/'],
     collectCoverageFrom: ['**/*.(t|j)s'],
     coverageDirectory: '../coverage',
     testEnvironment: 'node',
