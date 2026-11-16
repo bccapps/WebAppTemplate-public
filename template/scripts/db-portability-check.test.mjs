@@ -41,6 +41,21 @@ test('ignores comments, documentation strings, Date.now() and IPv6-looking text'
   assert.deepEqual(rules('/*\n ILIKE in a block comment\n*/\nconst a = 1;'), []);
 });
 
+test('the English word « now » followed by an interpolation is prose, a real now() call in SQL is still flagged', () => {
+  // The four sentences of the AgentHub false positives (an interpolation after « now » used to read as `now ( )`).
+  assert.deepEqual(rules("  return `${name} could not be woken right now (${wake.reason ?? 'skipped'}): the message waits in its box`;"), []);
+  assert.deepEqual(rules('throw new FleetForgeError(`FleetForge could not do ${name} now (${code}): ${error}`);'), []);
+  assert.deepEqual(rules("  ? `Available now (${how}): ${listed(input.available)}`"), []);
+  assert.deepEqual(rules("return new Exception('RESUME_BLOCKED', `The session you picked cannot be resumed now (${reason})`, { reason });"), []);
+  // Real uses stay errors, with or without an interpolation around them.
+  assert.deepEqual(rules("qb.where('e.at > NOW()')"), ['now:error']);
+  assert.deepEqual(rules("qb.where('e.at > now ()')"), ['now:error']);
+  assert.deepEqual(rules("qb.where('e.at > now( )')"), ['now:error']);
+  assert.deepEqual(rules('qb.where(`e.at > NOW() - ${interval}`)'), ['now:error']);
+  assert.deepEqual(rules('qb.where(`${column} > NOW()`)'), ['now:error']);
+  assert.deepEqual(rules('await ds.query(`UPDATE ${table} SET at = now()`)'), ['now:error']);
+});
+
 test('an exemption needs a reason, on the same line or the line above', () => {
   assert.deepEqual(rules("qb.where('p.name ILIKE :q'); // pg-only: admin tool, Postgres hub only"), []);
   assert.deepEqual(rules("// pg-only: guarded by the engine check\nqb.where('p.name ILIKE :q');"), []);

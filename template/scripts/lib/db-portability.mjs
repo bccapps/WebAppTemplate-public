@@ -56,6 +56,9 @@ export const ENTITY_TYPE_RULES = [
   ['entity-bytea', /type:\s*['"]bytea['"]/, 'bytea → blob'],
 ];
 
+/** Stands for a `${…}` of a template literal in the text the rules run on (see `scanText`). */
+const INTERPOLATION = '\u0001';
+
 const EXEMPT = /\/\/\s*pg-only\s*:\s*(\S.*)$/;
 const EXEMPT_NO_REASON = /\/\/\s*pg-only\s*:?\s*$/;
 
@@ -96,8 +99,9 @@ export function scanText(text, { file = '<memory>', isEntity = false } = {}) {
       }
     }
     // Only look at what is inside quotes or backticks (SQL lives in strings); a `::` in plain TS code is not SQL.
-    // `${…}` of a template literal is code, not SQL text.
-    const quoted = [...line.matchAll(/(['"`])((?:\\.|(?!\1).)*)\1/g)].map((match) => match[2].replace(/\$\{[^}]*\}/g, ' ')).join(' ');
+    // `${…}` of a template literal is code, not SQL text: it becomes a placeholder that is neither a word character nor whitespace,
+    // so that « could not be woken right now (${reason}) » never reads as the call `now ( )` (a space would collapse the parentheses).
+    const quoted = [...line.matchAll(/(['"`])((?:\\.|(?!\1).)*)\1/g)].map((match) => match[2].replace(/\$\{[^}]*\}/g, INTERPOLATION)).join(' ');
     const code = line.replace(EXEMPT, '');
     for (const [rule, regex, severity, hint, scope] of PG_RULES) {
       if (!regex.test(scope === 'code' ? code : quoted)) continue;
