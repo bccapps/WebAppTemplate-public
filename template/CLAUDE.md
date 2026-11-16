@@ -143,7 +143,7 @@ Feature access control (`hasFeature`, `@RequireFeature`, tiers) only exists with
 ## 10. Security
 
 - No secrets, keys or passwords in prompts or code. All user input validated **server-side**. Every dependency justified, established and maintained (where to declare it: §1b).
-- Authentication, payments, personal data: mandatory independent Opus review (a reviewer other than the author of the change; no human review required, owner decision of 2026-11-15).
+- Authentication, payments, personal data: mandatory independent review in a separate reviewer session/sub-agent (never the author's self-review; no human review required). Choose the reviewer by the implementing agent: **GPT/Codex → GPT Sol; Claude → Opus** (use the available version of that model family). **GPT/Codex must never launch an Opus review unless the user explicitly requests it.** If the required reviewer is unavailable, report that the review remains pending; never silently switch model families (owner decision of 2026-11-16).
 - HTTP hardening only through `configureHttpApp`: never disable `helmet`, widen CORS to `*` in production, wrap `enableCors` or parse webhook bodies by hand (webhooks read `req.rawBody`, `RAW_BODY_PATHS`); per-route CORS openings via `publicCorsPaths` / `corsOriginPolicy` (`nest/common/README.md`). Client IP = `req.ip` (`extractClientIp`), never `X-Forwarded-For` read by hand; behind proxies `TRUST_PROXY` is a list of trusted addresses, not a hop count.
 - `LOCAL_TRUST=true` (single-user local apps only): never on a server, never weaken its checks (loopback **socket** address, never `req.ip`/`X-Forwarded-For`); per-user app routes still use `RequireUserInterceptor`.
 - Remote command execution / terminal sessions are security-critical: least privilege, no unvalidated input in a command line, no credentials in logs.
@@ -157,4 +157,4 @@ Feature access control (`hasFeature`, `@RequireFeature`, tiers) only exists with
 - Plans extremely concise; once validated, don't interrupt yourself until everything is done; finish with a synthesis, then open questions or suggestions.
 
 ---
-**Updated:** 2026-11-13 — keep under ~6,000 tokens: rules here, detail in the READMEs/annexes (§7). Getting started: template `README.md`, « Needed Customizations ».
+**Updated:** 2026-11-16 — keep under ~6,000 tokens: rules here, detail in the READMEs/annexes (§7). Getting started: template `README.md`, « Needed Customizations ».
