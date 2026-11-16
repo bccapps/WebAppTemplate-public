@@ -17,6 +17,8 @@
   "interaction_enabledKinds_description": "The in-app channel is always on. Other kinds need their provider.",
   "interaction_inappDisplayDefault": "Default in-app display",
   "interaction_inappDisplayDefault_description": "How a notice shows while the app is open, for users who did not choose.",
+  "interaction_allowUsers": "Allow interactions for users",
+  "interaction_allowUsers_description": "Shows the notification bell in the header and opens the interaction page to regular users. Off: only admins see them.",
   "interaction_defaultTimezone": "Default time zone",
   "interaction_defaultTimezone_description": "Time zone of the quiet hours of users who did not choose one (IANA name).",
   "interaction_maxPerUserHour": "External deliveries per user and hour",

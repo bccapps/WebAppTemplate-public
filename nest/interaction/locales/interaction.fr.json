@@ -17,6 +17,8 @@
   "interaction_enabledKinds_description": "Le canal dans l'app est toujours actif. Les autres types exigent leur fournisseur.",
   "interaction_inappDisplayDefault": "Affichage dans l'app par défaut",
   "interaction_inappDisplayDefault_description": "Comment une notice s'affiche quand l'app est ouverte, pour les utilisateurs qui n'ont pas choisi.",
+  "interaction_allowUsers": "Autoriser les interactions pour les utilisateurs",
+  "interaction_allowUsers_description": "Affiche la cloche de notifications dans l'en-tête et ouvre la page d'interaction aux utilisateurs classiques. Désactivé : seuls les administrateurs les voient.",
   "interaction_defaultTimezone": "Fuseau horaire par défaut",
   "interaction_defaultTimezone_description": "Fuseau des heures calmes des utilisateurs qui n'en ont pas choisi (nom IANA).",
   "interaction_maxPerUserHour": "Remises externes par utilisateur et par heure",

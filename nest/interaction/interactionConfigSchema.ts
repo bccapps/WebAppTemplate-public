@@ -15,6 +15,8 @@ import type { ConfigFieldSchema, ModuleConfigSchema } from '../common/types/Modu
 type Field = Omit<ConfigFieldSchema, 'label' | 'description'>;
 
 const FIELDS: Field[] = [
+  // Front switch (public configuration): off = regular users get neither the header bell nor the `/interaction` page, admins always do.
+  { key: 'interaction_allowUsers', type: 'boolean', defaultValue: false, group: 'general' },
   {
     key: 'interaction_enabledKinds',
     type: 'multiselect',

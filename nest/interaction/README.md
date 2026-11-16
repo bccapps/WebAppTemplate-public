@@ -345,7 +345,7 @@ Telegram enregistré par deux utilisateurs avant ce lot) font échouer `synchron
 
 ## Configuration (`interaction_*`)
 
-`enabledKinds` (`browser, telegram`), `inappDisplayDefault` (`toast`), `defaultTimezone` (`Europe/Paris`),
+`allowUsers` (`false` : cloche d'en-tête et page `/interaction` réservées aux admins ; lu par le front via la configuration publique), `enabledKinds` (`browser, telegram`), `inappDisplayDefault` (`toast`), `defaultTimezone` (`Europe/Paris`),
 `maxPerUserHour` (60), `askMaxPerUserHour` (30), `maxExternalPerHour` (0 = aucun), `providerTimeoutMs` (10 000),
 `askDefaultTtlSeconds` (300), `askMaxTtlSeconds` (86 400), `expirySweepMs` (30 000), `emailCodesPerUserHour` /
 `PerIpHour` / `PerAddressDay` / `GlobalHour` (5 / 10 / 3 / 60), `testsPerUserHour` / `PerIpHour` / `GlobalHour`
