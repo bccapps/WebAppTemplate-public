@@ -10,7 +10,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('./components/InteractionPluginParts', () => ({ InteractionHostProvider: () => null }));
-vi.mock('./components/InteractionInbox', () => ({ InteractionInboxBadge: () => null }));
+vi.mock('react-router-dom', () => ({ useNavigate: () => () => undefined }));
+vi.mock('./components/InteractionInbox', () => ({ InteractionInboxBadge: () => 'badge' }));
 vi.mock('../common/plugins/guards', () => ({ RequireAdmin: () => null, RequireAuth: () => null }));
 
 import { collectPlugins } from '../common/plugins/AppPlugin';
@@ -31,6 +32,16 @@ describe('interaction plugin', () => {
     const built = createInteractionPlugin({ host: false, headerBadge: false, routes: false });
     expect([built.Provider, built.HeaderActions, built.routes, built.adminRoutes]).toEqual([undefined, undefined, undefined, undefined]);
     expect(createInteractionPlugin({ path: '/me/alerts' }).routes?.[0].path).toBe('/me/alerts');
+  });
+
+  it('shows the header badge to admins only with headerBadge: "admin"', () => {
+    const render = (options: Parameters<typeof createInteractionPlugin>[0], isAuth: boolean, isAdmin: boolean) =>
+      (createInteractionPlugin(options).HeaderActions as unknown as (props: { isAuth: boolean; isAdmin: boolean }) => unknown)({ isAuth, isAdmin });
+    expect(render({ headerBadge: 'admin' }, true, true)).not.toBeNull();
+    expect(render({ headerBadge: 'admin' }, true, false)).toBeNull();
+    expect(render({ headerBadge: 'admin' }, false, false)).toBeNull();
+    expect(render({}, true, false)).not.toBeNull();
+    expect(render({}, false, false)).toBeNull();
   });
 
   it('refuses invalid options', () => {

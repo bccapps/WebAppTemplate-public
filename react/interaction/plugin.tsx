@@ -16,8 +16,8 @@ import { InteractionHostProvider } from './components/InteractionPluginParts';
 export interface InteractionPluginOptions {
   /** Mounts `<InteractionHost />` (toasts / native notifications / question modal); default `true`. */
   host?: boolean;
-  /** Inbox badge in the header; default `true`. */
-  headerBadge?: boolean;
+  /** Inbox badge in the header: `true` (default) for every signed-in user, `'admin'` for admins only, `false` for nobody. */
+  headerBadge?: boolean | 'admin';
   /** The user's page (inbox, channels, preferences) and the admin page; default `true`. */
   routes?: boolean;
   /** Path of the user's page; default `/interaction`. */
@@ -27,11 +27,16 @@ export interface InteractionPluginOptions {
 }
 
 /** Header action of the plugin: the badge, leading to the module's page. */
-function headerBadge(path: string) {
-  return function InteractionHeaderBadge({ isAuth }: HeaderActionsProps) {
+function headerBadge(path: string, adminOnly: boolean) {
+  return function InteractionHeaderBadge({ isAuth, isAdmin }: HeaderActionsProps) {
     const navigate = useNavigate();
-    return isAuth ? <InteractionInboxBadge onOpen={() => navigate(path)} /> : null;
+    return isAuth && (!adminOnly || isAdmin) ? <InteractionInboxBadge onOpen={() => navigate(path)} /> : null;
   };
+}
+
+function headerBadgeOption(value: unknown): boolean | 'admin' {
+  if (value === 'admin') return 'admin';
+  return booleanOption('headerBadge', value);
 }
 
 function booleanOption(name: string, value: unknown): boolean {
@@ -48,14 +53,14 @@ function pathOption(name: string, value: unknown, fallback: string): string {
 
 export const createInteractionPlugin: AppPluginFactory<InteractionPluginOptions> = (options) => {
   const host = booleanOption('host', options?.host);
-  const badge = booleanOption('headerBadge', options?.headerBadge);
+  const badge = headerBadgeOption(options?.headerBadge);
   const routes = booleanOption('routes', options?.routes);
   const path = pathOption('path', options?.path, '/interaction');
   const adminPath = pathOption('adminPath', options?.adminPath, '/admin/interaction');
   return {
     id: 'interaction',
     ...(host ? { Provider: InteractionHostProvider, providerPlacement: 'inner' as const } : {}),
-    ...(badge ? { HeaderActions: headerBadge(path) } : {}),
+    ...(badge ? { HeaderActions: headerBadge(path, badge === 'admin') } : {}),
     ...(routes
       ? {
           routes: [{ path, lazy: () => import('./components/InteractionPages'), guard: RequireAuth }],

@@ -47,7 +47,7 @@ pour le brancher. Options (`config/pluginOptions.ts` de l'app ; `false` désacti
 | Option | Défaut | Effet |
 |---|---|---|
 | `host` | `true` | Monte `<InteractionHost />` (Provider du plugin, placement `inner`) |
-| `headerBadge` | `true` | Action d'en-tête : `<InteractionInboxBadge />`, visible connecté, qui mène à `path` |
+| `headerBadge` | `true` | Action d'en-tête : `<InteractionInboxBadge />`, qui mène à `path`. `true` : visible connecté ; `'admin'` : administrateurs seulement ; `false` : absente |
 | `routes` | `true` | Page de l'utilisateur à `path` (garde `RequireAuth`) et page admin à `adminPath` (garde `RequireAdmin`), chargées à la demande |
 | `path` | `/interaction` | Chemin de la page de l'utilisateur (boîte, canaux, préférences) |
 | `adminPath` | `/admin/interaction` | Chemin de la page admin (panneau des canaux) |
