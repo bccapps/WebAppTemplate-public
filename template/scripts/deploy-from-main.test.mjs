@@ -10,7 +10,7 @@
 // Tests of DEPLOY_FROM_MAIN=true (deploy-full.sh -> lib/deploy-from-main.sh) with REAL git: local bare origins (an app, a
 // library submodule with a nested submodule), a working copy on `dev` with committed, staged, uncommitted and untracked
 // changes, a stash, ignored inputs, node_modules, a library mount past what main records, an unpushed local main and a
-// newer origin/main. docker, ssh, scp, rsync, npm... are the stubs of deploy-versions.test.mjs (read from that file):
+// newer origin/main. docker, ssh, scp, rsync are the stubs of deploy-test-kit.mjs (npm... are local to this file):
 // nothing ever reaches a host. Checks: the working copy is byte-identical afterwards, the clean tree is exactly
 // origin/main with the submodule commits main records, inputs are staged, the exit code is the inner deploy's, the
 // temporary tree is removed on success, failure, Ctrl-C, SIGHUP and SIGTERM.
@@ -28,9 +28,9 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
 
-const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
+import { SCRIPTS_DIR, STUBS as KIT_STUBS } from './deploy-test-kit.mjs';
+
 // vx-public commit whose deploy-full.sh still switched branches (stash + checkout): a project's main may record it.
 const OLD_SCRIPT_COMMIT = '3e211b688b3531acfc0dee56aa20cd450b9da93a';
 
@@ -48,16 +48,10 @@ function missingTools() {
 const SKIP = missingTools();
 const dfmTest = (name, fn) => test(name, { skip: SKIP }, fn);
 
-// Stubs shared with deploy-versions.test.mjs (copied from its STUBS object, so both suites fake hosts the same way). git
-// is NOT stubbed here; npm logs its directory and `npm run build` makes a dist.
-const harness = readFileSync(path.join(SCRIPTS_DIR, 'deploy-versions.test.mjs'), 'utf8');
-const stubBody = (name) => {
-  const m = harness.match(new RegExp(`\\n  ${name}: \`([\\s\\S]*?)\`,\\n`));
-  if (!m) throw new Error(`stub ${name} not found in deploy-versions.test.mjs`);
-  return new Function(`return \`${m[1]}\`;`)(); // eslint-disable-line no-new-func
-};
+// Stubs shared with the other deploy suites (docker, ssh, scp, rsync come from deploy-test-kit.mjs, so every suite fakes
+// hosts the same way). git is NOT stubbed here (real git); npm logs its directory and `npm run build` makes a dist.
 const STUBS = {
-  docker: stubBody('docker'), ssh: stubBody('ssh'), scp: stubBody('scp'), rsync: stubBody('rsync'),
+  docker: KIT_STUBS.docker, ssh: KIT_STUBS.ssh, scp: KIT_STUBS.scp, rsync: KIT_STUBS.rsync,
   npm: '#!/usr/bin/env bash\necho "npm $* @ $(pwd -P)" >> "$STUB_LOG"\nif [ "$1 $2" = "run build" ]; then mkdir -p dist && echo built > dist/main.js; fi\nexit 0\n',
   npx: '#!/usr/bin/env bash\necho "npx $*" >> "$STUB_LOG"\nexit 0\n',
   curl: '#!/usr/bin/env bash\nexit 0\n',
