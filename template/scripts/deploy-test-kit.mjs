@@ -76,7 +76,8 @@ case "$cmd" in
     case "$sub" in
       config)
         # the staged compose project as \`docker compose config --format json\` prints it (env_file values inlined = secrets)
-        printf '{"services":{"back":{"build":{"context":"%s/back","dockerfile":"Dockerfile","args":{"APP_RUNTIME_DIR":"shared"}},"image":"testapp_back:latest","environment":{"JWT_SECRET":"s3cret-do-not-keep"}},"back-worker":{"image":"testapp_back:latest"},"front":{"build":{"context":"%s/front","dockerfile":"Dockerfile","args":{"NODE_PORT":"9741"}}},"voice-engine":{"profiles":["voice"],"build":{"context":"%s/voice-engine"}},"db":{"image":"postgres:17-alpine"}}}' "$dir" "$dir" "$dir"
+        printf '{"services":{"back":{"build":{"context":"%s/back","dockerfile":"Dockerfile","args":{"APP_RUNTIME_DIR":"shared"}},"image":"testapp_back:latest","environment":{"JWT_SECRET":"s3cret-do-not-keep"}},"back-worker":{"image":"testapp_back:latest"},"front":{"build":{"context":"%s/front","dockerfile":"Dockerfile","args":{"NODE_PORT":"9741"}}},"voice-engine":{"profiles":["voice"],"build":{"context":"%s/voice-engine"}},"db":{"image":"postgres:17-alpine"}}}' "$dir" "$dir" "$dir" \
+          | { if [ -n "\${STUB_WORKER_BUILD:-}" ]; then sed 's#"back-worker":{"image":"testapp_back:latest"}#"back-worker":{"image":"testapp_worker:latest","build":{"context":"/tmp/worker","dockerfile":"Dockerfile.worker"}}#'; else cat; fi; }
         ;;
       build)
         case "$*" in *back*) echo new > "$(img "\${PROJECT_NAME}_back:latest")" ;; esac

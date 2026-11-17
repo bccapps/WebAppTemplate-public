@@ -337,6 +337,13 @@ di_build_service() {
 di_build_all() {
   local svc
   di_load_compose_model
+  # Registry mode ships the back and front images only (the worker normally shares the back image). A back-worker with its OWN
+  # build section (e.g. a browser worker built FROM the back) would have no image on the hosts: `up --no-build back-worker` would fail
+  # after the back was switched. Refused here, before anything is built or pushed.
+  if [[ "${BACK_WORKER_ENABLED:-1}" -eq 1 && "$(di_cfg back-worker has_build)" == "1" ]]; then
+    err "Registry mode does not support a back-worker built from its own context: only the back and front images are built and shipped, the worker image would be missing on the hosts. Set BACK_WORKER=off, or unset DEPLOY_REGISTRY to build on each host. Nothing was built, no host was touched."
+    exit 1
+  fi
   di_builder_prepare
   for svc in $(di_services); do
     di_build_service "${svc}"

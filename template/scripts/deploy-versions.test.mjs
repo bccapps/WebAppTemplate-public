@@ -588,6 +588,19 @@ test('Postgres dump: zstd:9 by default (gzip fallback decided on the server), DE
   } finally { p.cleanup(); }
 });
 
+test('local npm install keeps devDependencies even when back/.env sets NODE_ENV=production (nest / tsc must stay installed)', () => {
+  const p = makeProject({ extraBackEnv: 'NODE_ENV=production' });
+  p.seedImage('testapp_back:latest', 'v1');
+  p.seedVolume('testapp-back-10-0-0-1_sqlite_data');
+  try {
+    const r = p.run(['prod', '--no-update-common', '--target=back']);
+    assert.equal(r.status, 0, r.out);
+    const installs = p.logLines().filter((l) => /^npm install/.test(l));
+    assert.ok(installs.length > 0, 'an install ran');
+    for (const line of installs) assert.match(line, /^npm install --include=dev /, line);
+  } finally { p.cleanup(); }
+});
+
 test('local npm install: skipped when package.json, package-lock.json and Node are unchanged; DEPLOY_NPM_INSTALL=always forces it', () => {
   const p = deployedProject();
   for (const stack of ['back', 'front']) {
@@ -599,7 +612,7 @@ test('local npm install: skipped when package.json, package-lock.json and Node a
     let r = p.run(['prod', '--no-update-common']);
     assert.equal(r.status, 0, r.out);
     assert.equal(installs(), 2, 'first deploy installs both stacks');
-    assert.ok(p.logLines().includes('npm install --no-audit --no-fund'));
+    assert.ok(p.logLines().includes('npm install --include=dev --no-audit --no-fund'));
 
     writeFileSync(p.log, '');
     r = p.run(['prod', '--no-update-common']);

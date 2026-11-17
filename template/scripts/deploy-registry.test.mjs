@@ -222,6 +222,24 @@ test('--builder=local assembles the image on this machine for linux/amd64 and pu
   } finally { p.cleanup(); }
 });
 
+test('a back-worker with its own build is refused in registry mode, before anything is built; BACK_WORKER=off lets it through', () => {
+  const p = registryProject();
+  try {
+    let r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_WORKER_BUILD: '1' });
+    assert.equal(r.status, 1, r.out);
+    assert.match(strip(r.out), /does not support a back-worker built from its own context/);
+    const lines = p.logLines();
+    assert.equal(indexOfLine(lines, /^docker --context \S+ build /), -1, 'nothing built');
+    assert.equal(indexOfLine(lines, /docker push/), -1, 'nothing pushed');
+    assert.equal(indexOfLine(lines, /deploy@10\.0\.0\.1 docker pull/), -1, 'no host touched');
+  } finally { p.cleanup(); }
+  const off = registryProject('BACK_WORKER=off');
+  try {
+    const r = off.run(['prod', '--no-update-common', '--target=back'], { STUB_WORKER_BUILD: '1' });
+    assert.equal(r.status, 0, r.out);
+  } finally { off.cleanup(); }
+});
+
 test('the compose model kept on disk never holds the secrets that `compose config` inlines', () => {
   const p = registryProject();
   try {

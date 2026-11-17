@@ -1123,7 +1123,10 @@ npm_install_if_changed() {
     info "[LOCAL] ${stack}: package.json, package-lock.json and Node unchanged since the last install — npm install skipped"
     return 0
   fi
-  (cd "${stack}" && npm install --no-audit --no-fund) || return 1
+  # `--include=dev`: back/.env is sourced with `set -a`, so an app whose .env sets NODE_ENV=production (Maestro) exports it to npm, which
+  # then OMITS (and prunes) devDependencies: `nest` / `tsc` vanish, the local build fails and the script falls back to a remote build
+  # that a registry refuses. The compiler and the bundler are devDependencies by design, whatever NODE_ENV the app runs with.
+  (cd "${stack}" && npm install --include=dev --no-audit --no-fund) || return 1
   # Hashed again: npm install may have updated package-lock.json.
   if [[ -d "${stack}/node_modules" ]]; then stack_install_hash "${stack}" > "${stamp}"; fi
 }
