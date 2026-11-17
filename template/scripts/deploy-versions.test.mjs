@@ -627,9 +627,9 @@ test('Postgres: a dump younger than DEPLOY_DB_BACKUP_MIN_AGE_HOURS is reused; --
   try {
     let r = p.run(['prod', '--no-update-common', '--target=back'], { STUB_RECENT_DUMP: recent });
     assert.equal(r.status, 0, r.out);
-    assert.match(strip(r.out), /less than 24 h old .*no new dump/);
+    assert.match(strip(r.out), /less than 72 h old .*no new dump/);
     let lines = p.logLines();
-    assert.ok(indexOfLine(lines, /^ssh .*-mmin -1440 /) >= 0, '24 h by default');
+    assert.ok(indexOfLine(lines, /^ssh .*-mmin -4320 /) >= 0, '72 h by default');
     assert.equal(indexOfLine(lines, PG_DUMP), -1);
     const state = JSON.parse(lines.find((l) => l.startsWith('STATE_JSON: ')).slice('STATE_JSON: '.length));
     assert.equal(state.dbBackup, recent, 'the reused dump is the recorded safety net');
@@ -673,7 +673,7 @@ test('cloud database (sync): dumped from this machine by backup-db.sh before the
     writeFileSync(p.log, '');
     r = p.run(['prod', '--no-update-common', '--target=back']);
     assert.equal(r.status, 0, r.out);
-    assert.match(strip(r.out), /Cloud database: the last pre-deploy dump is less than 24 h old .*no new dump/);
+    assert.match(strip(r.out), /Cloud database: the last pre-deploy dump is less than 72 h old .*no new dump/);
     assert.equal(indexOfLine(p.logLines(), /^pg_dump /), -1);
 
     for (let i = 0; i < 2; i += 1) {
@@ -755,7 +755,7 @@ test('backups: 2 kept by default on the volume (SQLite) and locally; a recent lo
     writeFileSync(p.log, '');
     r = p.run(['prod', '--no-update-common', '--target=back']);
     assert.equal(r.status, 0, r.out);
-    assert.match(strip(r.out), /local backup copy younger than 24 h exists/);
+    assert.match(strip(r.out), /local backup copy younger than 72 h exists/);
     assert.equal(indexOfLine(p.logLines(), /tar -cf/), -1);
 
     r = p.run(['prod', '--no-update-common', '--target=back'], { DEPLOY_DB_BACKUP_DOWNLOAD: '0' });

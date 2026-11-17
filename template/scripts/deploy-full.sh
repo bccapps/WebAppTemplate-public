@@ -49,7 +49,7 @@ set -euo pipefail
 # .env as .env.previous and .deploy/current.json|previous.json; DEPLOY_REVISION (env var, else git short sha
 # + -dirty) is injected into the back env and exposed by GET /api/v1/health. Database backups (lib/deploy-versions.sh):
 # SQLite: on the volume at every switch; self-hosted Postgres (--migrate or DB_SCHEMA_MODE=sync): a dump on the server
-# while the old back still serves, at most one per DEPLOY_DB_BACKUP_MIN_AGE_HOURS (24); DEPLOY_DB_BACKUP_KEEP (2) kept
+# while the old back still serves, at most one per DEPLOY_DB_BACKUP_MIN_AGE_HOURS (72); DEPLOY_DB_BACKUP_KEEP (2) kept
 # on the server and in ./backups (local copy at the end of the deploy, DEPLOY_DB_BACKUP_DOWNLOAD=0 to skip); cloud
 # database (supabase/neon/cloud): same conditions and period, dumped from this machine by backup-db.sh straight into
 # ./backups/deploy-<environment>/ (DEPLOY_CLOUD_DB_BACKUP=0 to skip).

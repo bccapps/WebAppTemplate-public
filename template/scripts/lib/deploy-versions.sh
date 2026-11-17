@@ -213,7 +213,7 @@ dv_sqlite_file()   { printf '/data/%s.db' "${PROJECT_NAME}"; }
 #              switch are not in it), into <remote app dir>/backups/<project>_pre-<revision>_<UTC ts>.dump on the server
 #              (custom format, compressed in the container, written by the server's shell: the dump itself never
 #              crosses the network, only the end-of-deploy local copy does). At most one per
-#              DEPLOY_DB_BACKUP_MIN_AGE_HOURS (default 24, 0 = every deploy): a more recent dump is reused, unless
+#              DEPLOY_DB_BACKUP_MIN_AGE_HOURS (default 72, 0 = every deploy): a more recent dump is reused, unless
 #              --migrate or --force-db-backup.
 #   other    : cloud/supabase/neon — same conditions and period as the self-hosted dump, but the database is not on the
 #              host: scripts/backup-db.sh runs on THIS machine BEFORE the switch (Supabase: public schema, direct
@@ -259,7 +259,7 @@ dv_backup_db_before_switch() {
 # Newest local cloud dump of this project younger than DEPLOY_DB_BACKUP_MIN_AGE_HOURS (empty when none / disabled).
 dv_recent_cloud_dump() {
   local dir="$1" min_age
-  min_age="$(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 24)"
+  min_age="$(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 72)"
   [[ "${min_age}" -gt 0 && -d "${dir}" ]] || return 0
   find "${dir}" -maxdepth 1 -name "${PROJECT_NAME}_pre-*.sql.gz" -mmin -$((min_age * 60)) -exec ls -1t {} + 2>/dev/null \
     | head -n 1 || true
@@ -286,7 +286,7 @@ dv_backup_cloud() {
     recent="$(dv_recent_cloud_dump "${dir}")"
     if [[ -n "${recent}" ]]; then
       DV_CLOUD_DUMP="${recent}"
-      echo "==> [BACK:${DV_HOST}] Cloud database: the last pre-deploy dump is less than $(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 24) h old (${recent}) — no new dump (--force-db-backup forces one)"
+      echo "==> [BACK:${DV_HOST}] Cloud database: the last pre-deploy dump is less than $(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 72) h old (${recent}) — no new dump (--force-db-backup forces one)"
       return 0
     fi
   fi
@@ -349,7 +349,7 @@ dv_backup_sqlite() {
 # Newest dump of this project on the server younger than DEPLOY_DB_BACKUP_MIN_AGE_HOURS (empty when none / disabled).
 dv_recent_postgres_dump() {
   local dir="$1" min_age
-  min_age="$(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 24)"
+  min_age="$(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 72)"
   [[ "${min_age}" -gt 0 ]] || return 0
   dv_ssh "find '${dir}' -maxdepth 1 -name '${PROJECT_NAME}_pre-*.dump' -mmin -$((min_age * 60)) -exec ls -1t {} + 2>/dev/null | head -n 1" 2>/dev/null || true
 }
@@ -397,7 +397,7 @@ dv_backup_postgres() {
     recent="$(dv_recent_postgres_dump "${dir}")"
     if [[ -n "${recent}" ]]; then
       DV_DB_BACKUP="${recent}"
-      echo "==> [BACK:${DV_HOST}] Postgres: the last pre-deploy dump is less than $(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 24) h old (${recent}) — no new dump (--force-db-backup forces one)"
+      echo "==> [BACK:${DV_HOST}] Postgres: the last pre-deploy dump is less than $(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 72) h old (${recent}) — no new dump (--force-db-backup forces one)"
       return 0
     fi
   fi
@@ -478,7 +478,7 @@ dv_download_backups() {
   fi
   local i dir pattern dest min_age recent level
   dir="$(dv_local_backup_dir)"
-  min_age="$(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 24)"
+  min_age="$(dv_int_setting DEPLOY_DB_BACKUP_MIN_AGE_HOURS 72)"
   mkdir -p "${dir}"
   for ((i = 0; i < ${#DV_DL_IDX[@]}; i++)); do
     dv_load_record "${DV_DL_IDX[i]}"
