@@ -172,6 +172,13 @@ dfm_stage_env_files() {
   (umask 077 && grep -Ev '^[[:space:]]*(export[[:space:]]+)?DEPLOY_FROM_MAIN[[:space:]]*=' "${src}" > "${dst}") \
     || [[ $? -eq 1 ]] || { err "Could not copy ${BACK_ENV_FILE} into the clean tree."; return 1; }
   DFM_COPIED+=("${DFM_BACK_ENV#./} (without DEPLOY_FROM_MAIN)")
+  # Hardened request: an older deploy-full.sh in the tree sources this file over the exported COMPOSE_FILE_NAME, so an empty
+  # `COMPOSE_FILE_NAME=` line would bring the default compose file back. The last assignment wins: pin it (a conflicting value
+  # was already refused by harden_preflight; the current deploy-full.sh resolves --harden itself and agrees).
+  if cf_harden_requested; then
+    printf '\nCOMPOSE_FILE_NAME=%s\n' "${HARDENED_COMPOSE_FILE}" >> "${dst}" \
+      || { err "Could not pin COMPOSE_FILE_NAME in ${BACK_ENV_FILE} of the clean tree."; return 1; }
+  fi
 
   rel="${FRONT_ENV_FILE#./}"
   if dfm_inner_path "${rel}"; then

@@ -195,6 +195,10 @@ COMPOSE_PROJECT_NAME="${PROJECT_NAME:?PROJECT_NAME is required}"
 # byte-for-byte as before.
 if [[ "${ROLLBACK_MODE}" != "1" && -z "${DEPLOY_FROM_MAIN_TREE:-}" ]] \
   && [[ "$(printf '%s' "${DEPLOY_FROM_MAIN:-0}" | tr '[:upper:]' '[:lower:]')" =~ ^(1|true|on|yes)$ ]]; then
+  # A hardened request (--harden, DEPLOY_HARDEN) is checked HERE and handed to the tree as COMPOSE_FILE_NAME too: the
+  # deploy-full.sh main records may be older than this one (no lib/compose-file.sh, `--harden` ignored) and would
+  # silently deploy the default compose file. Refuses (exit 1) before any clone on a missing file or a conflict.
+  harden_preflight "${BACK_ENV_FILE}"
   source "${SCRIPT_DIR}/lib/deploy-from-main.sh"
   dfm_run "$@"
 fi

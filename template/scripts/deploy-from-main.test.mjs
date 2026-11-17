@@ -571,3 +571,152 @@ test('main records the OLD deploy-full.sh (vx-public 3e211b6, stash/checkout blo
     assert.deepEqual(tmpEntries(s), []);
   } finally { rmSync(s.base, { recursive: true, force: true }); }
 });
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// DEPLOY_FROM_MAIN=true together with --harden (or COMPOSE_FILE_NAME=scripts/docker-compose-hardened.yml). The deploy that runs in
+// the clean tree is the deploy-full.sh main records: it may be OLDER than the launched one (no lib/compose-file.sh, `--harden` is
+// not an option it knows). A hardened request must reach the compose file that is deployed, or stop the deploy; never the default.
+// ---------------------------------------------------------------------------------------------------------------------------------
+
+const HARDENED = 'scripts/docker-compose-hardened.yml';
+const stage = (text) => text.replaceAll('../back', './back').replaceAll('../front', './front');
+const hardenedSource = stage(readFileSync(path.join(SCRIPTS_DIR, 'docker-compose-hardened.yml'), 'utf8'));
+const defaultSource = stage(readFileSync(path.join(SCRIPTS_DIR, 'docker-compose.yml'), 'utf8'));
+// Variables docker-compose-hardened.yml requires (same values as harden-flag.test.mjs); FRONT_HOSTS stays the scenario's.
+const HARDENED_VARS = [
+  'HARDEN_RUNTIME_UID=61000', 'HARDEN_RUNTIME_GID=61000', 'HARDEN_SUBNET=10.231.73.0/24', 'HARDEN_FRONT_IP=10.231.73.10',
+  'HARDEN_BACK_LB_IP=10.231.73.11', 'HARDEN_BACK_LB_REALIP="set_real_ip_from 198.51.100.7;"', 'REDIS_PORT=4733',
+  `REDIS_PASSWORD=FAKE${'redis'}`,
+];
+
+// deploy-full.sh as main would record it before the --harden flag existed (the parent of vx-public 90c9369).
+const PRE_HARDEN_COMMIT = '90c93691f508749154ba127f2e0da3f7cb1976b4^';
+const oldDeployFull = SKIP ? null : spawnSync('git', ['-C', SCRIPTS_DIR, 'show', `${PRE_HARDEN_COMMIT}:./deploy-full.sh`], { encoding: 'utf8' });
+const oldSkip = SKIP || (oldDeployFull.status !== 0 && 'vx-public 90c9369^ not available (not a full git checkout)');
+const oldTest = (name, fn) => test(name, { skip: oldSkip }, fn);
+const KEEP = { KEEP_BUILD_CONTEXT: '1' };
+
+// The scenario's back env (a fixture, no real secret) becomes a Postgres one with an external database, so that the default
+// compose file (docker-compose.yml) and the hardened one are both valid for it; `composeLine` replaces its COMPOSE_FILE_NAME line
+// ('' removes it). `old`: main records the pre-harden deploy-full.sh.
+function hardenScenario({ composeLine, old = false }) {
+  const s = makeScenario({ fakeChild: false, engine: 'postgres', oldChild: old ? oldDeployFull.stdout : '' });
+  const envFile = path.join(s.wc, 'back/.env');
+  const patched = readFileSync(envFile, 'utf8').replace('COMPOSE_FILE_NAME=scripts/docker-compose-cloud.yml\n', composeLine === '' ? '' : `${composeLine}\n`);
+  writeFileSync(envFile, `${patched}DB_USER=u\nDB_NAME=n\nDB_PASSWORD=p\nDB_HOST=db.example.com\nDB_PORT=5432\n${HARDENED_VARS.join('\n')}\n`);
+  return s;
+}
+
+/** The compose file the deploy staged in its build context (KEEP_BUILD_CONTEXT=1): 'hardened', 'default' or 'other'. */
+function deployedCompose(out) {
+  const m = /Build context staged at (\S+)/.exec(out);
+  if (!m) return `no build context in the output:\n${out}`;
+  const text = readFileSync(path.join(m[1], 'docker-compose.yml'), 'utf8');
+  if (text === hardenedSource) return 'hardened';
+  return text === defaultSource ? 'default' : 'other';
+}
+
+/** run.sh of the scenario's working copy (the template's), prod, stubs only. */
+function runViaRunSh(s, extraArgs, extraEnv = {}) {
+  const r = spawnSync('bash', [path.join(s.wc, 'scripts/run.sh'), 'prod', '--no-update-common', ...extraArgs], {
+    cwd: s.wc, env: { ...s.env, FAKE_RECORD: s.record, ...KEEP, ...extraEnv }, encoding: 'utf8', timeout: 300000,
+  });
+  return { status: r.status, out: (r.stdout + r.stderr).replace(/\x1b\[[0-9;]*m/g, '') };
+}
+
+dfmTest('DEPLOY_FROM_MAIN + --harden (main records the current deploy-full.sh): the tree deploys the hardened compose file', () => {
+  const s = hardenScenario({ composeLine: '' });
+  const r = runDeploy(s, ['--harden', '--target=back'], KEEP);
+  try {
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, /DEPLOY_FROM_MAIN=true: deploying origin\/main/);
+    assert.equal(deployedCompose(r.out), 'hardened', r.out);
+  } finally { rmSync(s.base, { recursive: true, force: true }); }
+});
+
+dfmTest('DEPLOY_FROM_MAIN + COMPOSE_FILE_NAME only (back/.env line, then the environment): the tree deploys the hardened compose file', () => {
+  const viaFile = hardenScenario({ composeLine: `COMPOSE_FILE_NAME=${HARDENED}` });
+  const viaEnv = hardenScenario({ composeLine: '' });
+  try {
+    const a = runDeploy(viaFile, ['--target=back'], KEEP);
+    assert.equal(a.status, 0, a.out);
+    assert.equal(deployedCompose(a.out), 'hardened', a.out);
+    const b = runDeploy(viaEnv, ['--target=back'], { ...KEEP, COMPOSE_FILE_NAME: HARDENED });
+    assert.equal(b.status, 0, b.out);
+    assert.equal(deployedCompose(b.out), 'hardened', b.out);
+  } finally { rmSync(viaFile.base, { recursive: true, force: true }); rmSync(viaEnv.base, { recursive: true, force: true }); }
+});
+
+dfmTest('DEPLOY_FROM_MAIN without --harden and without the variable still deploys the default compose file (unchanged)', () => {
+  const s = hardenScenario({ composeLine: '' });
+  const r = runDeploy(s, ['--target=back'], KEEP);
+  try {
+    assert.equal(r.status, 0, r.out);
+    assert.equal(deployedCompose(r.out), 'default', r.out);
+  } finally { rmSync(s.base, { recursive: true, force: true }); }
+});
+
+dfmTest('DEPLOY_FROM_MAIN + --harden + a conflicting COMPOSE_FILE_NAME: refused, nothing deployed, working copy unchanged', () => {
+  const s = hardenScenario({ composeLine: 'COMPOSE_FILE_NAME=scripts/docker-compose.yml' });
+  const before = snapshot(s.wc, s.env);
+  const r = runDeploy(s, ['--harden', '--target=back']);
+  try {
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /--harden selects scripts\/docker-compose-hardened\.yml but .* COMPOSE_FILE_NAME=scripts\/docker-compose\.yml/);
+    assert.doesNotMatch(r.out, /Build context staged/);
+    assert.deepEqual(tmpEntries(s), [], 'no temporary tree left');
+    assert.deepEqual(diff(before, snapshot(s.wc, s.env)), { gone: [], added: [] });
+  } finally { rmSync(s.base, { recursive: true, force: true }); }
+});
+
+// -- main records an OLDER deploy-full.sh -------------------------------------------------------------------------------------
+
+oldTest('OLD main script + run.sh prod --harden: COMPOSE_FILE_NAME exported next to the flag makes the old deploy-full.sh deploy the hardened file', () => {
+  const s = hardenScenario({ composeLine: '', old: true });
+  const r = runViaRunSh(s, ['--harden', '--target=back']);
+  try {
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, /main records another deploy-full\.sh than the one launched/);
+    assert.equal(deployedCompose(r.out), 'hardened', r.out);
+  } finally { rmSync(s.base, { recursive: true, force: true }); }
+});
+
+oldTest('OLD main script + COMPOSE_FILE_NAME in the environment: the old deploy-full.sh deploys the hardened file (what run.sh --harden relies on)', () => {
+  const s = hardenScenario({ composeLine: '', old: true });
+  const r = runDeploy(s, ['--target=back'], { ...KEEP, COMPOSE_FILE_NAME: HARDENED });
+  try {
+    assert.equal(r.status, 0, r.out);
+    assert.equal(deployedCompose(r.out), 'hardened', r.out);
+  } finally { rmSync(s.base, { recursive: true, force: true }); }
+});
+
+oldTest('OLD main script + deploy-full.sh --harden launched directly: the hardened file, never the default compose file', () => {
+  const s = hardenScenario({ composeLine: '', old: true });
+  const r = runDeploy(s, ['--harden', '--target=back'], KEEP);
+  try {
+    // the old script ignores an option it does not know: only the launched script can carry the request to it
+    assert.equal(r.status, 0, r.out);
+    assert.equal(deployedCompose(r.out), 'hardened', `a hardened request deployed another compose file:\n${r.out}`);
+  } finally { rmSync(s.base, { recursive: true, force: true }); }
+});
+
+oldTest('OLD main script + run.sh --harden + an EMPTY COMPOSE_FILE_NAME= line in back/.env: the hardened file, never the default', () => {
+  const s = hardenScenario({ composeLine: 'COMPOSE_FILE_NAME=', old: true });
+  const r = runViaRunSh(s, ['--harden', '--target=back']);
+  try {
+    // the old script sources that line over the exported variable: the staged env of the tree pins the value
+    assert.equal(r.status, 0, r.out);
+    assert.equal(deployedCompose(r.out), 'hardened', `a hardened request deployed another compose file:\n${r.out}`);
+  } finally { rmSync(s.base, { recursive: true, force: true }); }
+});
+
+oldTest('OLD main script + --harden + a conflicting COMPOSE_FILE_NAME in back/.env: refused before the clone', () => {
+  const s = hardenScenario({ composeLine: 'COMPOSE_FILE_NAME=scripts/docker-compose.yml', old: true });
+  const r = runDeploy(s, ['--harden', '--target=back']);
+  try {
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /--harden selects scripts\/docker-compose-hardened\.yml but .* COMPOSE_FILE_NAME=scripts\/docker-compose\.yml/);
+    assert.doesNotMatch(r.out, /Deploying origin\/main/, 'refused before the fetch and the clone');
+    assert.deepEqual(tmpEntries(s), []);
+  } finally { rmSync(s.base, { recursive: true, force: true }); }
+});
