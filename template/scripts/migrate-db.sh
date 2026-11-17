@@ -42,18 +42,33 @@ set -euo pipefail
 #   DB_ENGINE   - "postgres"/"selfhosted" (default, self-hosted DB) or cloud DB name
 #   COMPOSE_FILE_NAME - override compose file (default: scripts/docker-compose.yml
 #                       for self-hosted, scripts/docker-compose-cloud.yml for cloud)
+#   DEPLOY_HARDEN=1   - same as the --harden option: use scripts/docker-compose-hardened.yml
+#                       (refused when that file is missing or COMPOSE_FILE_NAME names another file)
+#
+# Options:
+#   --harden          Use the hardened compose profile (scripts/docker-compose-hardened.yml);
+#                     equivalent to COMPOSE_FILE_NAME=scripts/docker-compose-hardened.yml
+#   --help            Show this help
 #   BACK_BUILD_DIR    - temporary build dir (default: ./back_build)
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/lib/db-engine.sh"
+source "${SCRIPT_DIR}/lib/compose-file.sh"
 cd "${PROJECT_ROOT}"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || "${1:-}" == "help" ]]; then
-  sed -n '3,/^[^#]/p' "$0" | grep '^#' | sed 's/^# \?//'
+  # the usage block sits between `set -euo pipefail` and SCRIPT_DIR (the former range stopped after the licence header)
+  sed -n '/^set -euo pipefail/,/^SCRIPT_DIR=/p' "$0" | grep '^#' | sed 's/^# \?//'
   exit 0
 fi
+
+for _arg in "$@"; do
+  case "${_arg}" in
+    --harden) DEPLOY_HARDEN=1 ;;
+  esac
+done
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -84,8 +99,7 @@ source "${BACK_ENV_FILE}"
 resolve_db_engine
 require_postgres_engine "migrate-db.sh"
 
-COMPOSE_FILE_PATH="${COMPOSE_FILE_NAME:-${DEFAULT_COMPOSE_FILE}}"
-COMPOSE_FILE_PATH="${COMPOSE_FILE_PATH#./}"
+resolve_compose_file_path "${DEFAULT_COMPOSE_FILE}"
 COMPOSE_FILE_ABS="./${COMPOSE_FILE_PATH}"
 if [[ ! -f "${COMPOSE_FILE_ABS}" ]]; then
   echo "Error: compose file '${COMPOSE_FILE_ABS}' not found."

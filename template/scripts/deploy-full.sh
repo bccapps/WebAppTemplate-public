@@ -29,6 +29,9 @@ set -euo pipefail
 #   ./scripts/deploy-full.sh --rollback [--restore-db] [--target=...]
 #                                            Swap back to the previous version (no build, no submodule update);
 #                                            normally launched through `./scripts/run.sh rollback <preprod|prod>`
+#   ./scripts/deploy-full.sh --harden        Deploy with the hardened compose profile (scripts/docker-compose-hardened.yml);
+#                                            same as COMPOSE_FILE_NAME=scripts/docker-compose-hardened.yml. Refused (exit 1) when that
+#                                            file is missing or COMPOSE_FILE_NAME names another file; never falls back to the default
 #   ./scripts/deploy-full.sh --help          Show this help
 #
 # Registry mode (lib/deploy-images.sh; on when DEPLOY_REGISTRY is set, otherwise everything below is unchanged): the images are
@@ -77,11 +80,13 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Physical template root (scripts/ is a symlink into front/.libs/apptemplate): back|front/Dockerfile.prebuilt live there.
 TEMPLATE_ROOT="$(dirname "$(dirname "$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")")")"
 source "${SCRIPT_DIR}/lib/db-engine.sh"
+source "${SCRIPT_DIR}/lib/compose-file.sh"
 source "${SCRIPT_DIR}/lib/deploy-images.sh"
 cd "${PROJECT_ROOT}"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || "${1:-}" == "help" ]]; then
-  sed -n '3,/^[^#]/p' "$0" | grep '^#' | sed 's/^# \?//'
+  # the usage block sits between `set -euo pipefail` and SCRIPT_DIR (the former range stopped after the licence header)
+  sed -n '/^set -euo pipefail/,/^SCRIPT_DIR=/p' "$0" | grep '^#' | sed 's/^# \?//'
   exit 0
 fi
 
@@ -102,6 +107,7 @@ for arg in "$@"; do
     --no-auto-rollback) DEPLOY_AUTO_ROLLBACK=0 ;;
     --migrate) DV_MIGRATE=1 ;;
     --force-db-backup) DV_FORCE_DB_BACKUP=1 ;;
+    --harden) DEPLOY_HARDEN=1 ;;
     --build|--push|--deploy|--tag=*|--builder=*) di_parse_flag "${arg}" ;;
   esac
 done
@@ -297,8 +303,7 @@ FORCE_REBUILD="${FORCE_REBUILD:-0}"
 NO_CACHE_FLAG=""
 [[ "${FORCE_REBUILD}" == "1" ]] && NO_CACHE_FLAG="--no-cache"
 resolve_db_engine
-COMPOSE_FILE_PATH="${COMPOSE_FILE_NAME:-${DEFAULT_COMPOSE_FILE}}"
-COMPOSE_FILE_PATH="${COMPOSE_FILE_PATH#./}"
+resolve_compose_file_path "${DEFAULT_COMPOSE_FILE}"
 assert_compose_matches_db_engine "${COMPOSE_FILE_PATH}"
 KEEP_BUILD_CONTEXT="${KEEP_BUILD_CONTEXT:-0}"
 

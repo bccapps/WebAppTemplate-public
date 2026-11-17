@@ -38,6 +38,14 @@ set -euo pipefail
 #                                     builder (--push: and push them), or ship an already pushed tag to the hosts without
 #                                     building. --build/--push touch no host and run no migration; --deploy alone skips the
 #                                     library sync (what was built is what is shipped). No phase flag = build + push + deploy.
+#   ./scripts/run.sh preprod|prod|rollback --harden
+#                                     Hardened compose profile (scripts/docker-compose-hardened.yml), in any position
+#                                     among the options (`prod --harden --migrate`, `--harden prod`). Exactly the same as
+#                                     COMPOSE_FILE_NAME=scripts/docker-compose-hardened.yml (back/.env or environment),
+#                                     which keeps working. Refuses to start (exit 1, before the library sync, nothing
+#                                     deployed) when scripts/docker-compose-hardened.yml is missing or when
+#                                     COMPOSE_FILE_NAME already names another compose file; never falls back to the
+#                                     default one. Applies to the migration, the deploy and the rollback.
 #   ./scripts/run.sh rollback <preprod|prod> [--restore-db] [--target=all|back|front]
 #                                     Swap back to the previous version kept by the last deploy (no build, no library
 #                                     sync, no submodule update). --restore-db also restores the SQLite backup taken
@@ -63,6 +71,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/lib/db-engine.sh"
+source "${SCRIPT_DIR}/lib/compose-file.sh"
 cd "${PROJECT_ROOT}"
 
 # ---------- Colours ----------
@@ -586,6 +595,7 @@ run_deploy_migrations() {
 cmd_preprod() {
   split_deploy_args "$@"
   set -- ${DEPLOY_ARGS[@]+"${DEPLOY_ARGS[@]}"}
+  harden_preflight "./back/.env.preprod"
   maybe_update_common
 
   if [[ ! -f "${SCRIPT_DIR}/deploy-full.sh" ]]; then
@@ -621,6 +631,7 @@ cmd_preprod() {
 cmd_prod() {
   split_deploy_args "$@"
   set -- ${DEPLOY_ARGS[@]+"${DEPLOY_ARGS[@]}"}
+  harden_preflight "./back/.env"
   maybe_update_common
 
   if [[ ! -f "${SCRIPT_DIR}/deploy-full.sh" ]]; then
@@ -677,6 +688,8 @@ cmd_rollback() {
     err "deploy-full.sh not found in scripts/"
     exit 1
   fi
+
+  harden_preflight "${back_env}"
 
   info "Rolling back ${env_name} to the previous version (back: ${back_env}, front: ${front_env})..."
   BACK_ENV_FILE="${back_env}" FRONT_ENV_FILE="${front_env}" \
@@ -797,6 +810,10 @@ usage() {
   echo "                           Deploy to prod via deploy-full.sh (back/.env + front/.env)"
   echo "                           --no-update-common (or SKIP_UPDATE_COMMON=1) skips the shared library sync"
   echo "                           Registry mode (DEPLOY_REGISTRY): --build [--push] | --deploy --tag=<tag> (see deploy-full.sh --help)"
+  echo "  --harden                 preprod|prod|rollback option (any position, e.g. \`prod --harden --migrate\`, \`--harden prod\`):"
+  echo "                           use the hardened compose profile scripts/docker-compose-hardened.yml; same as"
+  echo "                           COMPOSE_FILE_NAME=scripts/docker-compose-hardened.yml (still works). Refused when that file is"
+  echo "                           missing or COMPOSE_FILE_NAME names another file; never falls back to the default compose file"
   echo "  rollback <preprod|prod> [--restore-db] [--target=all|back|front]"
   echo "                           Swap back to the previous deployed version (no build, no library sync);"
   echo "                           --restore-db restores the SQLite backup taken before the current version"
@@ -807,10 +824,14 @@ usage() {
 
 # `--trace-deprecation` is a global flag (any position); alone it means `dev`.
 TRACE_DEPRECATION=0
+# `--harden` is a global flag too (any position, like `--trace-deprecation`): only preprod|prod|rollback accept it.
+HARDEN_FLAG=0
 _run_args=()
 for _arg in "$@"; do
   if [[ "${_arg}" == "--trace-deprecation" ]]; then
     TRACE_DEPRECATION=1
+  elif [[ "${_arg}" == "--harden" ]]; then
+    HARDEN_FLAG=1
   else
     _run_args+=("${_arg}")
   fi
@@ -828,6 +849,17 @@ fi
 
 COMMAND="$1"
 shift
+
+if [[ "${HARDEN_FLAG}" == "1" ]]; then
+  case "${COMMAND}" in
+    preprod|prod|rollback) export DEPLOY_HARDEN=1 ;;
+    -h|--help|help) ;;
+    *)
+      err "--harden only applies to preprod, prod and rollback (got: ${COMMAND}); nothing was started."
+      exit 1
+      ;;
+  esac
+fi
 
 case "${COMMAND}" in
   dev)     cmd_dev "$@" ;;

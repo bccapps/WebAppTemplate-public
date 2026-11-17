@@ -8,8 +8,9 @@
 # =============================================================================
 #
 # HARDENED compose profile — for an app that must stay isolated from the machine it runs on (e.g. an app holding
-# credentials of an upstream fleet, deployed next to that fleet's control node). Selected with
-# COMPOSE_FILE_NAME=scripts/docker-compose-hardened.yml (back/.env); same deploy-full.sh flow as docker-compose.yml
+# credentials of an upstream fleet, deployed next to that fleet's control node). Selected with the `--harden` flag of
+# run.sh / deploy-full.sh / migrate-db.sh / restart.sh, or, equivalently, COMPOSE_FILE_NAME=scripts/docker-compose-hardened.yml
+# (back/.env or environment); same deploy-full.sh flow as docker-compose.yml
 # (staging, ../back → ./back rewrite, maintenance flag, back-lb reload, rollbacks). Template README, « Hardened
 # compose profile », says when to use it, which variables it needs and its limits.
 #

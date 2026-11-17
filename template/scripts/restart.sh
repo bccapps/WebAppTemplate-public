@@ -23,6 +23,9 @@ set -euo pipefail
 # Options (preprod / prod only):
 #   --back-only    Restart back containers only (skip front)
 #   --front-only   Restart front containers only (skip back)
+#   --harden       Use the hardened compose profile (scripts/docker-compose-hardened.yml), same as
+#                  COMPOSE_FILE_NAME=scripts/docker-compose-hardened.yml; refused if the file is missing or
+#                  COMPOSE_FILE_NAME names another file
 #
 # Required env vars (from back/.env or back/.env.preprod):
 #   PROJECT_NAME, BACK_HOSTS, REMOTE_USER, REMOTE_SSH_PORT, SSH_KEY_FILE
@@ -31,6 +34,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/lib/db-engine.sh"
+source "${SCRIPT_DIR}/lib/compose-file.sh"
 cd "${PROJECT_ROOT}"
 
 # ---------- Colours ----------
@@ -53,6 +57,7 @@ for arg in "$@"; do
   case "${arg}" in
     --back-only)  BACK_ONLY=1 ;;
     --front-only) FRONT_ONLY=1 ;;
+    --harden)     DEPLOY_HARDEN=1 ;;
   esac
 done
 
@@ -95,7 +100,8 @@ restart_remote() {
 
   # Determine compose file — mirrors deploy-full.sh logic exactly
   resolve_db_engine
-  local compose_file="${COMPOSE_FILE_NAME:-${DEFAULT_COMPOSE_FILE}}"
+  resolve_compose_file_path "${DEFAULT_COMPOSE_FILE}"
+  local compose_file="${COMPOSE_FILE_PATH}"
   [[ ! -f "${compose_file}" ]] && err "Compose file not found: ${compose_file}"
   assert_compose_matches_db_engine "${compose_file}"
 
