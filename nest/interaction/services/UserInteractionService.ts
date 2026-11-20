@@ -47,6 +47,8 @@ export interface ProviderAnswerInput {
   userId: number;
   actionId: string;
   stepUpProof?: string | null;
+  /** The request of the person's session the answer comes from: a `freshProof` answer's proof must come from that session (review R3 S-1). */
+  request?: unknown;
 }
 
 /**
@@ -140,7 +142,7 @@ export class UserInteractionService implements UserInteractionApi, OnModuleInit,
     const ticketId = parseUuid(input?.ticketId);
     if (!Number.isSafeInteger(input.userId) || input.userId <= 0) throw new InteractionError('NOT_FOUND');
     const { actionId, stepUpProof } = parseAnswerBody({ actionId: input.actionId, stepUpProof: input.stepUpProof ?? null });
-    const answered = await this.tickets.answer({ ticketId, userId: input.userId, via: kind, actionId, stepUpProof });
+    const answered = await this.tickets.answer({ ticketId, userId: input.userId, via: kind, actionId, stepUpProof, request: input.request });
     return (await this.tickets.getTicket(answered.id)) as InteractionTicket;
   }
 

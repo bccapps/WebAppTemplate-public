@@ -34,8 +34,8 @@ import type {
   ReopenOptions,
   ReopenResult,
 } from '../types/interactionTypes';
-import { INTERACTION_AUDIT, INTERACTION_DIRECTORY, INTERACTION_REALTIME, INTERACTION_STEP_UP, stepUpPurposeOf } from '../types/ports';
-import type { InteractionAuditSink, InteractionDirectory, InteractionRealtimePort, InteractionStepUpPort } from '../types/ports';
+import { FRESH_PROOF_METHODS, INTERACTION_AUDIT, INTERACTION_DIRECTORY, INTERACTION_REALTIME, INTERACTION_STEP_UP, stepUpPurposeOf } from '../types/ports';
+import type { InteractionAuditSink, InteractionDirectory, InteractionRealtimePort, InteractionStepUpPort, StepUpMethod } from '../types/ports';
 import type { RenderedAction } from '../types/providerTypes';
 import { InteractionConfig } from './InteractionConfig';
 import { InteractionDeliveryService, type DeliveryMeta, type MessageBuilder, type ReservedDelivery } from './InteractionDeliveryService';
@@ -132,6 +132,14 @@ export interface AnswerInput {
   actionId?: string;
   actionIndex?: number;
   stepUpProof?: string | null;
+  /** The request of the answering human session (`inapp`): a `freshProof` answer's proof must come from that same session (review R3 S-1). */
+  request?: unknown;
+}
+
+/** The methods a `freshProof` answer may use that the person has (`FRESH_PROOF_METHODS` ∩ theirs): what the front offers (review R3 S-1). */
+async function freshProofMethodsOf(stepUp: InteractionStepUpPort, userId: number): Promise<StepUpMethod[]> {
+  const theirs = await stepUp.methods(userId).catch((): StepUpMethod[] => []);
+  return theirs.filter((method) => FRESH_PROOF_METHODS.includes(method));
 }
 
 /**
@@ -421,16 +429,18 @@ export class InteractionTicketService {
     if (!bringsFreshProof(this.registry.proofOf(input.via))) throw new InteractionError('CHANNEL_NOT_ALLOWED', { required: (ticket.answerableFrom ?? [INAPP_KIND]).filter((kind) => bringsFreshProof(this.registry.proofOf(kind))) });
     const stepUp = this.stepUp;
     if (!stepUp) throw new InteractionError('STEP_UP_REQUIRED', { methods: [] });
-    if (!input.stepUpProof) throw new InteractionError('STEP_UP_REQUIRED', { methods: await stepUp.methods(input.userId).catch(() => []), purpose });
+    if (!input.stepUpProof) throw new InteractionError('STEP_UP_REQUIRED', { methods: await freshProofMethodsOf(stepUp, input.userId), purpose });
     return { stepUp, purpose, proof: input.stepUpProof };
   }
 
   /** The claimant consumes its proof (bounded); invalid: the claim goes, the ticket stays open, `STEP_UP_REQUIRED`. */
   private async consumeUnderClaim(ticketId: string, input: AnswerInput, carried: { stepUp: InteractionStepUpPort; purpose: string; proof: string }, claim: HeldClaim): Promise<void> {
-    const ok = await withTimeout(carried.stepUp.consume(carried.proof, carried.purpose, input.userId), CONSUME_TIMEOUT_MS).catch(() => false);
+    // Review R3 S-1: a wallet or TOTP proof only, obtained in the session that answers (never an e-mailed code, never another session's proof).
+    const context = { methods: FRESH_PROOF_METHODS, request: input.request };
+    const ok = await withTimeout(carried.stepUp.consume(carried.proof, carried.purpose, input.userId, context), CONSUME_TIMEOUT_MS).catch(() => false);
     if (ok === true) return;
     await this.releaseClaim(ticketId, claim);
-    throw new InteractionError('STEP_UP_REQUIRED', { methods: await carried.stepUp.methods(input.userId).catch(() => []), purpose: carried.purpose });
+    throw new InteractionError('STEP_UP_REQUIRED', { methods: await freshProofMethodsOf(carried.stepUp, input.userId), purpose: carried.purpose });
   }
 
   /**

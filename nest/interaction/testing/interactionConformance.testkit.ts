@@ -43,7 +43,7 @@ import { TelegramChannelProvider } from '../providers/telegram/TelegramChannelPr
 import { TelegramUpdateHandler } from '../providers/telegram/TelegramUpdateHandler';
 import { parseCallback, signCallback } from '../pure/telegramCallback';
 import { guardedRequest, isBlockedAddress, NetGuardError, validateTargetUrl, type AddressGuard } from '../utils/netGuard';
-import { INTERACTION_SECRET_STORE, type InteractionSecretStore, type InteractionStepUpPort, type StepUpMethod } from '../types/ports';
+import { INTERACTION_SECRET_STORE, type InteractionSecretStore, type InteractionStepUpPort, type StepUpConsumeContext, type StepUpMethod } from '../types/ports';
 import type { InteractionQuestion, UserNotice } from '../types/interactionTypes';
 import type { ChannelConfigureResult, ChannelOwner, InteractionChannelProvider, StoredChannel } from '../types/providerTypes';
 import { createInteractionHarness, type Harness, type HarnessDatabase } from './interactionHarness';
@@ -149,12 +149,15 @@ export class TestWebhookProvider implements InteractionChannelProvider {
   }
 }
 
-/** A step-up port: a proof `ok:<purpose>` is accepted once. */
+/**
+ * A step-up port: a proof `ok:<purpose>` is accepted once — and, like the `user` module's (review R3 S-1), only when the answer binds it to the
+ * strong methods (`wallet`, `totp`; never `email_code`) and to the answering request. Offers `email_code` and `totp`: the front must be told `totp` only.
+ */
 @Injectable()
 export class TestStepUp implements InteractionStepUpPort {
   readonly consumed = new Set<string>();
   async methods(): Promise<StepUpMethod[]> {
-    return ['email_code'];
+    return ['email_code', 'totp'];
   }
   async begin(): Promise<Record<string, unknown>> {
     return {};
@@ -162,7 +165,8 @@ export class TestStepUp implements InteractionStepUpPort {
   async complete(): Promise<{ proofId: string }> {
     return { proofId: 'x' };
   }
-  async consume(proofId: string, purpose: string): Promise<boolean> {
+  async consume(proofId: string, purpose: string, _userId?: number, context?: StepUpConsumeContext): Promise<boolean> {
+    if (!context || typeof context.request !== 'object' || context.request === null || context.methods.includes('email_code') || !context.methods.includes('totp')) return false;
     if (proofId !== `ok:${purpose}` || this.consumed.has(proofId)) return false;
     this.consumed.add(proofId);
     return true;
@@ -718,6 +722,8 @@ export function describeInteractionConformance(label: string, options: Conforman
       const agent = http(h);
       const noProof = await agent.post(`/api/v1/interaction/me/tickets/${ticket.id}/answer`).set('Authorization', 'Bearer user-1').send({ actionId: 'approve' });
       expect([noProof.status, noProof.body.code]).toEqual([403, 'STEP_UP_REQUIRED']);
+      // Review R3 S-1: only the strong methods the person has are offered (`email_code` never, for a `freshProof` answer).
+      expect(JSON.stringify(noProof.body)).toMatch(/"methods":\["totp"\]/);
       const badProof = await agent.post(`/api/v1/interaction/me/tickets/${ticket.id}/answer`).set('Authorization', 'Bearer user-1').send({ actionId: 'approve', stepUpProof: 'ok:another-purpose' });
       expect(badProof.status).toBe(403);
       const good = await agent.post(`/api/v1/interaction/me/tickets/${ticket.id}/answer`).set('Authorization', 'Bearer user-1').send({ actionId: 'approve', stepUpProof: `ok:interaction.ticket:${ticket.id}` });

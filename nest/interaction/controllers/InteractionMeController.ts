@@ -184,7 +184,7 @@ export class InteractionMeController {
   async answer(@Req() req: Request, @Param('id') id: string, @Body() body: unknown): Promise<InteractionTicketDto> {
     const owner = ownerOf(req);
     const input = parseAnswerBody(body);
-    const ticket = await this.tickets.answer({ ticketId: parseUuid(id), userId: owner.userId, via: 'inapp', actionId: input.actionId, stepUpProof: input.stepUpProof });
+    const ticket = await this.tickets.answer({ ticketId: parseUuid(id), userId: owner.userId, via: 'inapp', actionId: input.actionId, stepUpProof: input.stepUpProof, request: req });
     return toTicketDto(ticket, owner.userId);
   }
 

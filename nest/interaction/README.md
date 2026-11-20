@@ -214,7 +214,7 @@ Codes d'erreur (§12) : `INVALID_INPUT`, `INVALID_CONFIG { field, reason }`, `VE
   `cancel(source, correlationId)` au nom de `mcp-access`) ; elle protège d'une confusion entre modules, pas d'un module
   malveillant.
 - `ask(recipients ≤ 20, question)` : validation (`INVALID_QUESTION`), gestionnaire du `kind` requis (`UNKNOWN_QUESTION_KIND`),
-  `freshProof` sans port `stepUp` ⇒ `STEP_UP_UNAVAILABLE` ; `(source, correlationId)` existant ⇒ le billet existant ;
+  `freshProof` sans port `stepUp` ⇒ `STEP_UP_UNAVAILABLE` ; **preuve d'une réponse `freshProof` (revue R3 S-1, 2026-11-20)** : `consume(…, { methods: FRESH_PROOF_METHODS, request })` — wallet ou TOTP seulement (`FRESH_PROOF_METHODS`, jamais un code e-mail ni Google), obtenue dans la session humaine qui répond (`AnswerInput.request` : route `inapp`, `answerFromProvider` via `ProviderAnswerInput.request` ; sans requête : refus) ; `STEP_UP_REQUIRED` n'offre que ces méthodes que la personne possède (liste vide possible : le front affiche « liez un wallet ou activez le TOTP ») ; `(source, correlationId)` existant ⇒ le billet existant ;
   destinataires inactifs filtrés (aucun ⇒ `INTERACTION_NO_HUMAN`). Écrit billet, destinataires, notices `inapp`,
   remises `inapp` (`dedupKey = t:<ticketId>`), publie `ticket.opened`, réserve les canaux externes (`queued`) et **rend la
   main** ; l'envoi externe suit en arrière-plan. Un canal `reply` dans `answerableFrom` reçoit une carte à boutons ; les

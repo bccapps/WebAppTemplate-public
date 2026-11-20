@@ -80,9 +80,26 @@ export interface InteractionStepUpPort {
   methods(userId: number): Promise<StepUpMethod[]>;
   begin(userId: number, method: StepUpMethod, purpose: string, request?: unknown): Promise<Record<string, unknown>>;
   complete(userId: number, method: StepUpMethod, purpose: string, response: unknown, request?: unknown): Promise<{ proofId: string }>;
-  /** True once, for an unexpired proof of `userId` issued for exactly `purpose`; false otherwise (never throws for a bad proof). */
-  consume(proofId: string, purpose: string, userId: number): Promise<boolean>;
+  /**
+   * True once, for an unexpired proof of `userId` issued for exactly `purpose`; false otherwise (never throws for a bad proof). With `context`
+   * (review R3 S-1, 2026-11-20): only a proof of one of `context.methods`, obtained in the human session that sends `context.request` — an
+   * implementation that cannot tell that session refuses (fail closed). Without: the historical check (purpose and person only).
+   */
+  consume(proofId: string, purpose: string, userId: number, context?: StepUpConsumeContext): Promise<boolean>;
 }
+
+/** What a `freshProof` answer binds its proof to (review R3 S-1): the methods it accepts and the request of the answering session. */
+export interface StepUpConsumeContext {
+  methods: readonly StepUpMethod[];
+  request: unknown;
+}
+
+/**
+ * The methods a `freshProof` answer accepts (owner decision of 2026-11-20, review R3 S-1): a wallet signature or a TOTP code — never an e-mailed
+ * code nor a Google sign-in, which a stolen session plus the mailbox (or an open Google session) would pass. The rule decided for the MCP companions
+ * on 2026-11-13, now for every approval of a real action (a FleetForge run, a money tool).
+ */
+export const FRESH_PROOF_METHODS: readonly StepUpMethod[] = Object.freeze(['wallet', 'totp'] as const);
 
 /** Default: configuration keys generated on first use (`interaction_vapidPublicKey`, `interaction_vapidPrivateKey`). */
 export interface VapidKeySource {
