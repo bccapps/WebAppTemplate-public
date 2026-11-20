@@ -80,6 +80,14 @@ describe('PUT /configurations (ConfigurationService.updateFromAdmin)', () => {
     expect(valueOf('demo_count')).toBe('7');
   });
 
+  it('stores a boolean in ONE form whatever was typed (` True `, `0`, `1`, `FALSE`): readers compare strictly', async () => {
+    const { config, valueOf } = buildConfigStack([SCHEMA], STORED);
+    for (const [typed, stored] of [[' True ', 'true'], ['0', 'false'], ['1', 'true'], ['FALSE', 'false']]) {
+      await config.updateFromAdmin([{ name: 'demo_on', value: typed, description: '' }]);
+      expect(valueOf('demo_on')).toBe(stored);
+    }
+  });
+
   it('updates a plain key and its description exactly as before and returns the refreshed list', async () => {
     const { config, valueOf } = buildConfigStack([SCHEMA], STORED);
     const result = await config.updateFromAdmin([{ name: 'app_title', value: 'New', description: 'New title' }]);

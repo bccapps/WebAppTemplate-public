@@ -7,6 +7,7 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
+import { toBooleanString } from '../utils/configValueValidation';
 import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -223,6 +224,8 @@ export class ConfigurationService implements OnApplicationBootstrap {
     }
     const issue = field ? validateConfigFieldValue(field, value) : validatePlainConfigValue(value);
     if (issue) throw new FunctionalException(issue.code, `Invalid value for '${dto.name}': ${issue.reason}`);
+    // A boolean is stored in ONE form (`true` / `false`), never as typed (`yes`, ` True `, `1`): readers compare strictly (fail closed).
+    if (field?.type === 'boolean') dto.value = toBooleanString(value);
     return true;
   }
 

@@ -154,3 +154,12 @@ export function validatePlainConfigValue(value: unknown): ConfigValueIssue | nul
     ? { code: 'CFG_VALUE_TOO_LONG', reason: `value exceeds ${CONFIG_VALUE_MAX_LENGTH} characters` }
     : null;
 }
+
+/**
+ * Boolean field value → stored string. Some screens send booleans as strings ("false"), which a plain truthiness test
+ * turned into "true" (a non-empty string is truthy): the string forms are parsed explicitly.
+ */
+export function toBooleanString(value: unknown): 'true' | 'false' {
+  if (typeof value === 'string') return ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase()) ? 'true' : 'false';
+  return value ? 'true' : 'false';
+}

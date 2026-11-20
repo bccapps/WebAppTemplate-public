@@ -13,7 +13,7 @@ import { ModuleConfigSeederService } from './ModuleConfigSeederService';
 import { ConfigurationService } from './ConfigurationService';
 import { CryptService } from './CryptService';
 import { FunctionalException } from '../exceptions/FunctionalException';
-import { validateConfigFieldValue } from '../utils/configValueValidation';
+import { toBooleanString, validateConfigFieldValue } from '../utils/configValueValidation';
 import {
   ModuleConfigSchema,
   ModuleConfigWithValues,
@@ -22,14 +22,8 @@ import {
 
 const CRYPT_NAMESPACE = 'module_config';
 
-/**
- * Boolean field value → stored string. Some screens send booleans as strings ("false"), which a plain truthiness test
- * turned into "true" (a non-empty string is truthy): the string forms are parsed explicitly.
- */
-export function toBooleanString(value: unknown): 'true' | 'false' {
-  if (typeof value === 'string') return ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase()) ? 'true' : 'false';
-  return value ? 'true' : 'false';
-}
+/** Re-exported from its new home (kept: callers import it from here). */
+export { toBooleanString } from '../utils/configValueValidation';
 
 @Injectable()
 export class ModuleConfigService {
