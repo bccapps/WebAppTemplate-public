@@ -7,13 +7,14 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import ConfigurationEntity from '../entities/ConfigurationEntity';
 import { ModuleConfigSchema } from '../types/ModuleConfigSchema';
 import { defaultConfigEntries } from 'src/config/defaultConfig';
 import { insertConfigIfAbsent } from '../utils/insertConfigIfAbsent';
+import { ConfigurationService } from './ConfigurationService';
 
 @Injectable()
 export class ModuleConfigSeederService {
@@ -22,6 +23,8 @@ export class ModuleConfigSeederService {
   constructor(
     @InjectRepository(ConfigurationEntity)
     private readonly configRepo: Repository<ConfigurationEntity>,
+    /** Reloaded after an insert, so a seeded key is visible to `get()` at once (never read as missing). */
+    @Optional() private readonly configuration?: ConfigurationService,
   ) {}
 
   async seedSchema(schema: ModuleConfigSchema): Promise<void> {
@@ -41,6 +44,9 @@ export class ModuleConfigSeederService {
     if (seededCount > 0) {
       this.logger.log(`Seeded ${seededCount} config entries for module "${schema.moduleId}"`);
     }
+    // Reload whenever a key of the schema is still missing from the cache, even with nothing inserted HERE: another
+    // process (worker, replica) or a concurrent seeder may have written it after this cache was loaded.
+    if (rows.some(({ name }) => this.configuration?.get(name) === undefined)) await this.configuration?.refresh();
   }
 
   private serializeValue(value: any, type: string): string {

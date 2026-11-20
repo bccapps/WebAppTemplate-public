@@ -54,6 +54,18 @@ export class ConfigurationService implements OnApplicationBootstrap {
   }
 
   /**
+   * Re-reads the configuration NOW, after rows were written outside this service (the seeders): `get()` only reads the
+   * in-memory map, so a key seeded after the boot load stayed invisible until something reloaded the cache, and every
+   * reader fell back to its default — an incident (2026-11-20: a new `user_registrationMode` row read as missing, the
+   * registration mode fell back to `open` for a day). A reload already in flight may have started before the write: it
+   * is awaited, then a new one runs.
+   */
+  async refresh(): Promise<void> {
+    if (this.reloading) await this.reloading.catch((): void => undefined);
+    await this.reload();
+  }
+
+  /**
    * Reloads the cache from the database. The new map is built aside and swapped in one assignment: emptying
    * `this.config` first and refilling it after the query left a window where `get()` returned nothing, so every
    * reader (module switches included) fell back to its schema default — "all disabled" on any page that

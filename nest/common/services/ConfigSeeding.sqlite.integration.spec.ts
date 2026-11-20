@@ -20,6 +20,9 @@ import ConfigurationEntity from '../entities/ConfigurationEntity';
 import { ModuleConfigSchema } from '../types/ModuleConfigSchema';
 import { ConfigSeederService } from './ConfigSeederService';
 import { ModuleConfigSeederService } from './ModuleConfigSeederService';
+import { ConfigurationService } from './ConfigurationService';
+import { ConfigurationMapper } from '../mappers/ConfigurationMapper';
+import { ModuleConfigRegistry } from './ModuleConfigRegistry';
 
 // The SQLite driver is an optional dependency (projects that choose SQLite add it): skip these specs without it.
 const hasSqliteDriver = ((): boolean => {
@@ -139,5 +142,51 @@ describeWithSqlite('insertConfigIfAbsent on Postgres (SQL only, no connection)',
       .getQueryAndParameters();
     expect(sql).toMatch(/^INSERT INTO "config"/);
     expect(sql).toMatch(/ON CONFLICT DO NOTHING/);
+  });
+});
+
+describeWithSqlite('a seeded key is visible to ConfigurationService.get() at once (incident 2026-11-20)', () => {
+  const service = (): ConfigurationService =>
+    new ConfigurationService(repo, new ConfigurationMapper(), new ModuleConfigRegistry());
+
+  it('the app defaults seeder reloads the cache it inserted into', async () => {
+    const configuration = service();
+    await configuration.onApplicationBootstrap(); // boot load: the table is still empty
+    expect(configuration.get('app_title')).toBeUndefined();
+    await new ConfigSeederService(repo, configuration).onApplicationBootstrap();
+    expect(configuration.get('app_title')).toBe('App');
+  });
+
+  it('the module schema seeder reloads the cache it inserted into', async () => {
+    const configuration = service();
+    await configuration.onApplicationBootstrap();
+    await new ModuleConfigSeederService(repo, configuration).seedSchema(SCHEMA);
+    expect(configuration.get('demo_flag')).toBe('true');
+  });
+
+  it('refresh() runs a new read after a reload that was already in flight', async () => {
+    const configuration = service();
+    const inFlight = configuration.getConfiguration(); // started before the write
+    await repo.insert({ name: 'late_key', value: 'v', description: '' });
+    await Promise.all([inFlight, configuration.refresh()]);
+    expect(configuration.get('late_key')).toBe('v');
+  });
+});
+
+describeWithSqlite('a key another process seeded is reloaded even when this seeder inserts nothing', () => {
+  it('reloads when a schema key is in the database but missing from this cache', async () => {
+    const configuration = new ConfigurationService(repo, new ConfigurationMapper(), new ModuleConfigRegistry());
+    await configuration.onApplicationBootstrap(); // empty table
+    await new ModuleConfigSeederService(repo).seedSchema(SCHEMA); // "another process" wrote the rows
+    await new ModuleConfigSeederService(repo, configuration).seedSchema(SCHEMA); // inserts 0 here
+    expect(configuration.get('demo_flag')).toBe('true');
+  });
+
+  it('the app defaults seeder reloads when another process inserted every default first', async () => {
+    const configuration = new ConfigurationService(repo, new ConfigurationMapper(), new ModuleConfigRegistry());
+    await configuration.onApplicationBootstrap();
+    await new ConfigSeederService(repo).onApplicationBootstrap(); // "another process"
+    await new ConfigSeederService(repo, configuration).onApplicationBootstrap(); // nothing to insert here
+    expect(configuration.get('app_title')).toBe('App');
   });
 });

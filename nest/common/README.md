@@ -6,7 +6,7 @@ Fournit l'infrastructure transversale du backend : configuration applicative, in
 ## Capabilities principales
 | Domaine | Description |
 | --- | --- |
-| Configuration | `ConfigurationController` + `ConfigurationService` exposent/chargent les paramètres depuis `ConfigurationEntity` (TypeORM).
+| Configuration | `ConfigurationController` + `ConfigurationService` exposent/chargent les paramètres depuis `ConfigurationEntity` (TypeORM). `ConfigurationService.get()` lit un cache en mémoire chargé au démarrage ; **`refresh()`** relit la base tout de suite (une relecture déjà en cours, peut-être partie avant l'écriture, est attendue puis refaite). `ConfigSeederService` et `ModuleConfigSeederService` l'appellent après chaque insertion : une clé semée après le chargement du cache n'est plus lue « absente » (incident du 2026-11-20 : un `user_registrationMode` neuf lu absent a ouvert l'inscription de Maestro pendant un jour).
 | Module Config | `ModuleConfigController` + `ModuleConfigService` + `ModuleConfigRegistry` permettent aux modules d'exposer leurs propres variables de configuration avec métadonnées.
 | Localisation | `LocaleController` / `LocaleService` servent les locales distantes (JSON) consommées par le front.
 | Transport chiffré | `CryptController`, `CryptService`, `CryptSessionService` et `TransportCryptInterceptor` gèrent la négociation ECDH et l'AES-256-GCM pour toutes les réponses HTTP comportant `x-crypt-session`.

@@ -7,12 +7,13 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import ConfigurationEntity from '../entities/ConfigurationEntity';
 import { defaultConfigEntries } from 'src/config/defaultConfig';
 import { insertConfigIfAbsent } from '../utils/insertConfigIfAbsent';
+import { ConfigurationService } from './ConfigurationService';
 
 @Injectable()
 export class ConfigSeederService implements OnApplicationBootstrap {
@@ -21,6 +22,8 @@ export class ConfigSeederService implements OnApplicationBootstrap {
   constructor(
     @InjectRepository(ConfigurationEntity)
     private readonly configurationRepository: Repository<ConfigurationEntity>,
+    /** Reloaded after an insert, so a seeded key is visible to `get()` at once (never read as missing). */
+    @Optional() private readonly configuration?: ConfigurationService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -66,6 +69,8 @@ export class ConfigSeederService implements OnApplicationBootstrap {
       );
 
       if (toCreate.length === 0) {
+        // Nothing to insert HERE, but another process may have inserted these rows after this cache was loaded.
+        if (defaultConfigEntries.some(({ name }) => this.configuration?.get(name) === undefined)) await this.configuration?.refresh();
         return;
       }
 
@@ -78,6 +83,9 @@ export class ConfigSeederService implements OnApplicationBootstrap {
       if (inserted > 0) {
         this.logger.log(`Seeded ${inserted} default configuration entr${inserted > 1 ? 'ies' : 'y'}`);
       }
+      // Reload whenever a seeded key is still missing from the cache, even with nothing inserted HERE: another process
+      // (worker, replica) or a concurrent seeder may have written it after this cache was loaded.
+      if (toCreate.some(({ name }) => this.configuration?.get(name) === undefined)) await this.configuration?.refresh();
     } catch (error) {
       this.logger.error(
         'Failed to seed default configuration entries',
