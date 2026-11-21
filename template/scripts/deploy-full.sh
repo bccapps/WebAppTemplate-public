@@ -1091,7 +1091,7 @@ prepare_front_build() {
     || { err "[LOCAL] front/nginx.locations.conf could not be merged into nginx.conf"; exit 1; }
   # A location with its own add_header drops the server block's security headers (nginx inheritance): refuse such a file.
   node "${SCRIPT_DIR}/nginx-security-headers.mjs" "${FRONT_BUILD_DIR}/nginx.conf" \
-    || { err "[LOCAL] nginx.conf (with front/nginx.locations.conf merged): a location above sets its own add_header without the security headers; repeat X-Content-Type-Options, X-Frame-Options, Referrer-Policy and Content-Security-Policy-Report-Only \$vx_csp_report_only in it (template README, « Security headers and add_header inheritance »)"; exit 1; }
+    || { err "[LOCAL] nginx.conf (with front/nginx.locations.conf merged): a block above (location or if) sets its own add_header without the security headers, with an unsafe X-Frame-Options / X-Content-Type-Options value, or without \"always\"; repeat X-Content-Type-Options \"nosniff\" always, X-Frame-Options \"DENY\" always, Referrer-Policy and Content-Security-Policy-Report-Only \$vx_csp_report_only in it (template README, « Security headers and add_header inheritance »)"; exit 1; }
 }
 
 prepare_back_build() {
