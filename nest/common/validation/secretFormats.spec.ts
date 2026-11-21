@@ -37,9 +37,9 @@ describe('secret-formats.json', () => {
   it('lists every app prefix of the plan once, each id once', () => {
     expect(new Set(SECRET_FORMATS.map((f) => f.id)).size).toBe(SECRET_FORMATS.length);
     expect([...SECRET_FORMAT_PREFIXES].sort()).toEqual(
-      ['ac_live_', 'acs_', 'ahe_', 'ahf_', 'ahi_', 'ahr_', 'ctd_', 'ffg_', 'llmpt_', 'mst_', 'pwk_', 'smx_', 'sup_', 'tk_', 'tkp_', 'whsec_'].sort(),
+      ['ac_live_', 'acs_', 'ahe_', 'ahf_', 'ahi_', 'ahr_', 'cm_', 'ctd_', 'ffg_', 'llmpt_', 'mst_', 'pwk_', 'sm_', 'smx_', 'sup_', 'tk_', 'tkp_', 'whsec_'].sort(),
     );
-    expect(SECRET_FORMATS.filter((f) => f.oauth).map((f) => f.prefix).sort()).toEqual(['ac_live_', 'ctd_', 'ffg_', 'mst_', 'pwk_', 'tk_'].sort());
+    expect(SECRET_FORMATS.filter((f) => f.oauth).map((f) => f.prefix).sort()).toEqual(['ac_live_', 'cm_', 'ctd_', 'ffg_', 'mst_', 'pwk_', 'sm_', 'tk_'].sort());
     // AgentHub mints 32 base62 only (ApiKeyService.randomBase62): no legacy wide format in the registry.
     expect(SECRET_FORMATS.find((f) => f.prefix === 'ac_live_')).toMatchObject({ charset: 'base62', length: 32, leftBoundary: true });
   });
