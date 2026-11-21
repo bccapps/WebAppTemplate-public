@@ -135,3 +135,46 @@ test('the command exits 1 and names the problem (value, always, if) and 0 on the
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('review L4: Referrer-Policy refuses unsafe-url and no-referrer-when-downgrade (also in a list), the report-only CSP must not be empty', () => {
+  const block = (replace) => withLocation(`  location /x/ {\n    add_header Cache-Control "no-store" always;\n${four(replace)}  }\n`);
+  const referrer = (value) => block({ 'Referrer-Policy': `    add_header Referrer-Policy "${value}" always;\n` });
+  for (const ok of ['strict-origin-when-cross-origin', 'strict-origin', 'no-referrer', 'same-origin', 'origin, strict-origin-when-cross-origin']) assert.deepEqual(blocksMissingSecurityHeaders(referrer(ok)), [], ok);
+  for (const bad of ['unsafe-url', 'no-referrer-when-downgrade', 'UNSAFE-URL', 'no-referrer, unsafe-url', '', 'strict-origin,']) {
+    assert.deepEqual(blocksMissingSecurityHeaders(referrer(bad)), [{ block: 'location /x/', invalid: [`Referrer-Policy: ${bad}`] }], bad);
+  }
+  const csp = (value) => block({ 'Content-Security-Policy-Report-Only': `    add_header Content-Security-Policy-Report-Only ${value} always;\n` });
+  for (const ok of ['$vx_csp_report_only', '"default-src \'self\'; frame-ancestors \'none\';"']) assert.deepEqual(blocksMissingSecurityHeaders(csp(ok)), [], ok);
+  for (const bad of ['""', '"   "', "''"]) assert.deepEqual(blocksMissingSecurityHeaders(csp(bad)), [{ block: 'location /x/', invalid: ['Content-Security-Policy-Report-Only: ' + (bad === '"   "' ? ' ' : '')] }], bad);
+});
+
+test('review L4: add_header_inherit and an add_header the guard cannot parse are flagged, wherever they are', () => {
+  const location = (inside) => withLocation(`  location /x/ {\n${four()}    ${inside}\n  }\n`);
+  // add_header_inherit in a location that also sends the four headers, in one with none, and at top level.
+  assert.deepEqual(blocksMissingSecurityHeaders(location('add_header_inherit merge;')), [{ block: 'location /x/', inherit: ['add_header_inherit merge'] }]);
+  assert.deepEqual(blocksMissingSecurityHeaders(withLocation('  location /y/ {\n    add_header_inherit on;\n    return 404;\n  }\n')), [{ block: 'location /y/', inherit: ['add_header_inherit on'] }]);
+  assert.deepEqual(blocksMissingSecurityHeaders(`add_header_inherit merge;\n${CONF}`), [{ block: '(top level)', inherit: ['add_header_inherit merge'] }]);
+  // A statement that does not match the add_header grammar (no value, three tokens after the name, a bad flag) is not skipped silently.
+  for (const bad of ['add_header X-Frame-Options;', 'add_header X-Frame-Options DENY always extra;', 'add_header X-Frame-Options DENY sometimes;', 'add_header;']) {
+    const found = blocksMissingSecurityHeaders(location(bad));
+    assert.deepEqual(found, [{ block: 'location /x/', unparsed: [bad.slice(0, -1)] }], bad);
+  }
+  // A well-formed one is parsed, not flagged; the template stays clean.
+  assert.deepEqual(blocksMissingSecurityHeaders(location('add_header Cache-Control "no-store" always;')), []);
+  assert.deepEqual(blocksMissingSecurityHeaders(CONF), []);
+});
+
+test('review L4: the command reports them', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'nginx-headers-'));
+  try {
+    const file = path.join(dir, 'nginx.conf');
+    writeFileSync(file, withLocation(`  location /x/ {\n${four({ 'Referrer-Policy': '    add_header Referrer-Policy "unsafe-url" always;\n' })}    add_header_inherit merge;\n    add_header X-A;\n  }\n`));
+    const run = spawnSync(process.execPath, [SCRIPT, file], { encoding: 'utf8' });
+    assert.equal(run.status, 1);
+    assert.match(run.stderr, /unsafe value Referrer-Policy: unsafe-url/);
+    assert.match(run.stderr, /add_header_inherit is not supported/);
+    assert.match(run.stderr, /unreadable add_header \(add_header X-A\)/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
