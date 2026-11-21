@@ -1079,3 +1079,31 @@ test('hardened compose: refused for an engine without a Postgres container (it d
     assert.equal(indexOfLine(p.logLines(), /compose .* (build|up) /), -1);
   } finally { p.cleanup(); }
 });
+
+// front/nginx.conf security-header guard (template README « Security headers and add_header inheritance »): run on the
+// MERGED nginx.conf right after merge-nginx-locations.mjs; an app location dropping the server headers stops the deploy.
+test('front: the template nginx.conf merged with an app location that drops the security headers stops the deploy', () => {
+  const template = path.dirname(SCRIPTS_DIR);
+  const run = (locations) => {
+    const p = makeProject();
+    p.seedImage(`${FRONT_PROJECT}-front:latest`, 'f1');
+    write(path.join(p.root, 'front/nginx.conf'), readFileSync(path.join(template, 'front', 'nginx.conf'), 'utf8'));
+    write(path.join(p.root, 'front/nginx.locations.conf'), locations);
+    try {
+      const r = p.run(['prod', '--no-update-common', '--target=front']);
+      return { status: r.status, out: strip(r.out), built: indexOfLine(p.logLines(), /^docker .*build/) >= 0 };
+    } finally { p.cleanup(); }
+  };
+  const bad = run('  location /x/ {\n    root /usr/share/nginx/html;\n    add_header Cache-Control "no-store" always;\n  }\n');
+  assert.notEqual(bad.status, 0, bad.out);
+  assert.match(bad.out, /location \/x\/: missing X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Content-Security-Policy-Report-Only/);
+  assert.match(bad.out, /sets its own add_header without the security headers/);
+  assert.equal(bad.built, false, 'nothing built');
+  const good = run(
+    '  location /x/ {\n    add_header X-Content-Type-Options "nosniff" always;\n    add_header X-Frame-Options "DENY" always;\n'
+      + '    add_header Referrer-Policy "no-referrer" always;\n    add_header Content-Security-Policy-Report-Only $vx_csp_report_only always;\n'
+      + '    add_header Cache-Control "no-store" always;\n  }\n',
+  );
+  assert.equal(good.status, 0, good.out);
+  assert.equal(good.built, true, 'front built');
+});

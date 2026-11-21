@@ -1089,6 +1089,9 @@ prepare_front_build() {
   # App-specific nginx locations (optional front/nginx.locations.conf) at the `# @app-locations` marker of nginx.conf.
   node "${SCRIPT_DIR}/merge-nginx-locations.mjs" "${FRONT_BUILD_DIR}/nginx.conf" "${FRONT_BUILD_DIR}/nginx.locations.conf" \
     || { err "[LOCAL] front/nginx.locations.conf could not be merged into nginx.conf"; exit 1; }
+  # A location with its own add_header drops the server block's security headers (nginx inheritance): refuse such a file.
+  node "${SCRIPT_DIR}/nginx-security-headers.mjs" "${FRONT_BUILD_DIR}/nginx.conf" \
+    || { err "[LOCAL] nginx.conf (with front/nginx.locations.conf merged): a location above sets its own add_header without the security headers; repeat X-Content-Type-Options, X-Frame-Options, Referrer-Policy and Content-Security-Policy-Report-Only \$vx_csp_report_only in it (template README, « Security headers and add_header inheritance »)"; exit 1; }
 }
 
 prepare_back_build() {
