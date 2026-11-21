@@ -89,6 +89,38 @@ entropy = 3.5
 keywords = ["ffg_at_", "ffg_rt_", "ffg_cs_"]
 
 [[rules]]
+id = "vx-companymanager-mcp-key"
+description = "CompanyManager mcp-access credential (key or OAuth token: invoices, contacts, drafts of a person or a company) — CompanyManager back/src/modules/mcp/access/mcpScopes.ts (CM_MCP_KEY_PREFIX); vx-private nest/mcp-access/helpers/secrets.ts"
+regex = '''(?:^|[^A-Za-z0-9_]|\\[nrt])(cm_[A-Za-z0-9_-]{43})(?:[^A-Za-z0-9_-]|$)'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["cm_"]
+
+[[rules]]
+id = "vx-companymanager-mcp-key-oauth"
+description = "CompanyManager: mcp-access OAuth access token (at_), refresh token (rt_) and client secret (cs_, also the secret of a companion or a confidential DCR client), after the app key prefix — vx-private nest/mcp-access/oauth/tokenFormats.ts (generateOAuthSecret)"
+regex = '''(?:^|[^A-Za-z0-9_]|\\[nrt])(cm_(?:at_|rt_|cs_)[A-Za-z0-9_-]{43})(?:[^A-Za-z0-9_-]|$)'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["cm_at_", "cm_rt_", "cm_cs_"]
+
+[[rules]]
+id = "vx-social-manager-mcp-key"
+description = "social-manager mcp-access credential (key or OAuth token) — social-manager back/src/modules/mcp/access/mcpScopes.ts (SM_MCP_KEY_PREFIX); vx-private nest/mcp-access/helpers/secrets.ts"
+regex = '''(?:^|[^A-Za-z0-9_]|\\[nrt])(sm_[A-Za-z0-9_-]{43})(?:[^A-Za-z0-9_-]|$)'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["sm_"]
+
+[[rules]]
+id = "vx-social-manager-mcp-key-oauth"
+description = "social-manager: mcp-access OAuth access token (at_), refresh token (rt_) and client secret (cs_, also the secret of a companion or a confidential DCR client), after the app key prefix — vx-private nest/mcp-access/oauth/tokenFormats.ts (generateOAuthSecret)"
+regex = '''(?:^|[^A-Za-z0-9_]|\\[nrt])(sm_(?:at_|rt_|cs_)[A-Za-z0-9_-]{43})(?:[^A-Za-z0-9_-]|$)'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["sm_at_", "sm_rt_", "sm_cs_"]
+
+[[rules]]
 id = "vx-papangworkspace-mcp-key"
 description = "PapangWorkspace mcp-access credential (prefix reserved, no MCP code yet) — ChainTradingDataAPI docs/plans/2026-11-09-mcp-access/01-lots.md (prefixes decided 2026-11-09); vx-private nest/mcp-access/helpers/secrets.ts"
 regex = '''(pwk_[A-Za-z0-9_-]{43})(?:[^A-Za-z0-9_-]|$)'''
@@ -195,7 +227,7 @@ keywords = ["smx_"]
 [[allowlists]]
 description = "Deliberately fake VX secrets: FAKE or EXAMPLE right after the prefix (and the OAuth marker), by value, never by path"
 regexTarget = "secret"
-regexes = ['''^(?:ac_live_|whsec_|llmpt_|ctd_|tkp_|mst_|ffg_|pwk_|acs_|ahe_|ahf_|ahi_|ahr_|sup_|smx_|tk_)(?:at_|rt_|cs_)?(?:FAKE|EXAMPLE)''']
+regexes = ['''^(?:ac_live_|whsec_|llmpt_|ctd_|tkp_|mst_|ffg_|pwk_|acs_|ahe_|ahf_|ahi_|ahr_|sup_|smx_|tk_|cm_|sm_)(?:at_|rt_|cs_)?(?:FAKE|EXAMPLE)''']
 
 # ---- .gitleaks.local.toml (project rules, verbatim) ----
 # vx-public's own gitleaks additions, appended to the generated .gitleaks.toml (node template/scripts/gitleaks-config.mjs .).
