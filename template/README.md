@@ -180,6 +180,8 @@ Every project builds from these files: `back/Dockerfile`, `back/.dockerignore`, 
 
 `front/nginx.conf` is shared (linked from the template). An app that needs its own `location` blocks (a streaming gateway, large request bodies, long timeouts) writes them in a real file `front/nginx.locations.conf`: `deploy-full.sh` splices it at the `# @app-locations` marker, before the generic `/api/` block (`scripts/merge-nginx-locations.mjs`). Never replace the shared `nginx.conf` for that.
 
+**Security headers and `add_header` inheritance**: the server block sends `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and the report-only CSP (its value written once, `map … $vx_csp_report_only` at the top of `nginx.conf`). nginx drops ALL of them in a location that sets any `add_header` of its own, so every such location (the SPA `location /` and its PWA/asset sub-locations, the OAuth consent and error pages `/oauth/consent` and `/oauth/error`: enforced `frame-ancestors 'none'`, `Cross-Origin-Opener-Policy: same-origin`, `Cache-Control: no-store`) repeats the four lines first; an app location in `front/nginx.locations.conf` that adds a header must do the same (`add_header Content-Security-Policy-Report-Only $vx_csp_report_only always;`). Check: `node scripts/nginx-security-headers.mjs <nginx.conf>` (on a merged file too; spec `scripts/nginx-security-headers.test.mjs`). Not an `include` snippet: the prebuilt image ships `nginx.conf` alone.
+
 ## Common dependency baseline (front)
 
 `front/package.base.json` is the single source for any dependency more than
