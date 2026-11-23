@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 # vx-voice-engine, hub mode — image of the `voice-engine` compose service (profile `voice`, template scripts/docker-compose.yml).
-# Does NOT compile anything: it downloads the linux-amd64 payload of a published release of the private repository
+# Does NOT compile anything: it downloads the linux-amd64 payload of a published release (tag `v<version>`, else `<version>`) of the private repository
 # VOICE_ENGINE_REPO (default svax974/vx-voice-engine) with the BuildKit secret `gh_token` (a git credential deploy-full.sh asks for the build only), then installs it on
 # debian:bookworm-slim, non-root, with no model inside (models are downloaded into the /models volume at first use).
 # Copy of the `fetch` and `runtime` stages of vx-voice-engine/engine/Dockerfile: keep them in step when that file changes.
@@ -10,10 +10,15 @@ ARG VOICE_ENGINE_VERSION
 ARG VOICE_ENGINE_REPO=svax974/vx-voice-engine
 RUN --mount=type=secret,id=gh_token set -eu; \
     test -n "${VOICE_ENGINE_VERSION}" || { echo "VOICE_ENGINE_VERSION is required"; exit 1; }; \
+    echo "${VOICE_ENGINE_VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$' || { echo "VOICE_ENGINE_VERSION is not a release version (x.y.z, without the leading v)"; exit 1; }; \
     TOKEN="$(cat /run/secrets/gh_token)"; \
     ASSET="vx-voice-engine-${VOICE_ENGINE_VERSION}-linux-amd64.tar.gz"; \
-    ID="$(curl -fsSL -H "Authorization: Bearer ${TOKEN}" "https://api.github.com/repos/${VOICE_ENGINE_REPO}/releases/tags/v${VOICE_ENGINE_VERSION}" | jq -r ".assets[] | select(.name==\"${ASSET}\") | .id")"; \
-    test -n "$ID"; \
+    ID=""; \
+    for TAG in "v${VOICE_ENGINE_VERSION}" "${VOICE_ENGINE_VERSION}"; do \
+      ID="$(curl -fsSL -H "Authorization: Bearer ${TOKEN}" "https://api.github.com/repos/${VOICE_ENGINE_REPO}/releases/tags/${TAG}" | jq -r ".assets[] | select(.name==\"${ASSET}\") | .id")" || ID=""; \
+      case "${ID}" in ""|*[!0-9]*) ID="" ;; *) break ;; esac; \
+    done; \
+    test -n "${ID}" || { echo "no asset ${ASSET} in the release v${VOICE_ENGINE_VERSION} or ${VOICE_ENGINE_VERSION} of ${VOICE_ENGINE_REPO}"; exit 1; }; \
     curl -fsSL -H "Authorization: Bearer ${TOKEN}" -H "Accept: application/octet-stream" -o /tmp/engine.tgz "https://api.github.com/repos/${VOICE_ENGINE_REPO}/releases/assets/${ID}"; \
     mkdir -p /out && tar -xzf /tmp/engine.tgz -C /out && rm /tmp/engine.tgz
 

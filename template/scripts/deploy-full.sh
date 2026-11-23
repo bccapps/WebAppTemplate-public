@@ -234,30 +234,79 @@ fi
 #     leading `v`, validated as semver-like (MAJOR.MINOR.PATCH[-prerelease]) and exported as VOICE_ENGINE_VERSION (compose reads
 #     it for the image tag and the build argument). The resolved version is printed in the deploy output. Fail closed: no
 #     credential, API error, no published release or an unexpected tag stops the deploy before anything is built.
-#   - any other value (e.g. 0.1.0, the tag without the leading v) pins the deploy to that release, exactly as before.
+#   - any other value pins the deploy to that release: it must be the tag without the leading v and semver-like (e.g. 0.1.0).
+#     The resolution only happens when a back host is deployed (DEPLOY_TARGET != front, deploy phase on): in registry mode,
+#     `--deploy --tag=<t>` without `--build` REFUSES an unpinned version (nothing says which engine went with that tag: pin it).
+#     The version that was deployed is recorded as voiceEngineVersion in the host's .deploy/current.json and as VOICE_ENGINE_VERSION
+#     in the uploaded .env. The image is also tagged `:latest`, the previous one `:previous` (restored by an automatic or manual
+#     rollback, like the back image). The release download tries the tags `v<version>` and `<version>` (scripts/voice-engine/Dockerfile).
 # The credential is asked from git (`git credential fill` for https://github.com/<repo>) — on a deploy launched by an administrator from Agent Hub its runner answers
 # with the hub's technical read token, from a terminal this machine's own helper does (osxkeychain, gh…), as for `git push`. Never
 # read from an environment variable: asked right before the image build and given to that one command only (BuildKit secret
 # gh_token), never exported, never written to back/.env (which reaches the containers) nor to an image layer.
 VOICE_ENGINE_REPO="${VOICE_ENGINE_REPO:-svax974/vx-voice-engine}"
+# The credential never reaches an xtrace (`bash -x`, set -x): the functions that handle it switch tracing off (nest-safe, restored on
+# the way out), and so does the build step below around the line that holds the value.
+VOICE_XTRACE_DEPTH=0
+VOICE_XTRACE_WAS_ON=0
+voice_xtrace_off() {
+  if [[ "${VOICE_XTRACE_DEPTH}" -eq 0 ]]; then
+    VOICE_XTRACE_WAS_ON=0
+    case "$-" in *x*) VOICE_XTRACE_WAS_ON=1 ;; esac
+  fi
+  { set +x; } 2>/dev/null
+  VOICE_XTRACE_DEPTH=$((VOICE_XTRACE_DEPTH + 1))
+}
+voice_xtrace_restore() {
+  VOICE_XTRACE_DEPTH=$((VOICE_XTRACE_DEPTH - 1))
+  if [[ "${VOICE_XTRACE_DEPTH}" -le 0 ]]; then
+    VOICE_XTRACE_DEPTH=0
+    if [[ "${VOICE_XTRACE_WAS_ON}" -eq 1 ]]; then set -x; fi
+  fi
+  return 0
+}
 # Prints the password git's credential helpers give for the release repository (empty: none). Never prompts.
 voice_engine_release_token() {
+  voice_xtrace_off
   printf 'protocol=https\nhost=github.com\npath=%s.git\n\n' "${VOICE_ENGINE_REPO}" \
     | GIT_TERMINAL_PROMPT=0 GIT_ASKPASS= SSH_ASKPASS= git -c credential.useHttpPath=true credential fill 2>/dev/null \
     | sed -n 's/^password=//p' | head -n 1
+  voice_xtrace_restore
 }
+# Succeeds when git has a credential for the release repository; the value is dropped at once, never printed.
+voice_engine_has_credential() {
+  local value rc
+  voice_xtrace_off
+  value="$(voice_engine_release_token || true)"
+  [[ -n "${value}" ]] && rc=0 || rc=1
+  unset value
+  voice_xtrace_restore
+  return "${rc}"
+}
+# A release version as the deploy accepts it (pinned or resolved): semver-like, MAJOR.MINOR.PATCH[-prerelease], no leading v, no build
+# metadata (not a valid image tag), 64 characters at most. Also what the voice-engine Dockerfile accepts.
+VOICE_ENGINE_SEMVER_RE='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$'
+voice_engine_valid_version() { [[ ${#1} -le 64 && "$1" =~ ${VOICE_ENGINE_SEMVER_RE} ]]; }
 # Resolves the latest published release of VOICE_ENGINE_REPO and prints its version (tag without the leading v). Fails (returns 1,
 # message on stderr, nothing on stdout) when it cannot be resolved. `/releases/latest` already excludes drafts and prereleases;
 # draft/prerelease are checked again on the answer (they must be explicitly false). The credential is asked from git like for the
 # build and reaches curl ONLY as a curl config read from stdin (`--config -`): never in argv (ps), never in the environment, never
-# in a log; its value is escaped for the config syntax, and the answer is parsed by python3 reading stdin, not by the shell.
+# in a log or a trace; its value is escaped for the config syntax, and the answer is parsed by python3 reading stdin, not by the
+# shell. curl runs under `env -u SSLKEYLOGFILE` so that a TLS key log cannot be written for this request.
 voice_engine_resolve_latest() {
+  local rc=0
+  voice_xtrace_off
+  _voice_engine_resolve_latest || rc=$?
+  voice_xtrace_restore
+  return "${rc}"
+}
+_voice_engine_resolve_latest() {
   local token escaped resp code body tag
   token="$(voice_engine_release_token || true)"
   if [[ -z "${token}" ]]; then voice_engine_no_credential; return 1; fi
   escaped="${token//\\/\\\\}"; escaped="${escaped//\"/\\\"}"
   resp="$(printf 'header = "Authorization: Bearer %s"\n' "${escaped}" \
-    | curl -q --config - --silent --show-error --proto '=https' --max-time 30 \
+    | env -u SSLKEYLOGFILE curl -q --config - --silent --show-error --proto '=https' --max-time 30 \
         --header 'Accept: application/vnd.github+json' --header 'X-GitHub-Api-Version: 2022-11-28' \
         --write-out '\n%{http_code}' "https://api.github.com/repos/${VOICE_ENGINE_REPO}/releases/latest" 2>/dev/null || true)"
   unset token escaped
@@ -282,7 +331,7 @@ if not isinstance(t, str):
     sys.exit(1)
 print(t)' 2>/dev/null || true)"
   tag="${tag#v}"
-  if [[ ${#tag} -gt 64 || ! "${tag}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+  if ! voice_engine_valid_version "${tag}"; then
     err "VOICE_ENGINE_VERSION=latest: the latest release of ${VOICE_ENGINE_REPO} is not usable (no tag, draft/prerelease, or a tag that is not semver-like like 1.2.3 or v1.2.3)."
     return 1
   fi
@@ -292,6 +341,8 @@ voice_engine_no_credential() {
   err "VOICE_ENGINE=on needs a git credential for github.com/${VOICE_ENGINE_REPO}: the hub's technical read token (deploy launched by an administrator from Agent Hub) or this machine's git credential helper."
 }
 VOICE_ENGINE_ENABLED=0
+VOICE_ENGINE_UNPINNED=0       # 1 = unset/empty/latest: resolved to the latest release once the deploy phases are known
+VOICE_ENGINE_VERSION_KNOWN=0  # 1 = VOICE_ENGINE_VERSION holds the version this deploy ships (pinned, or resolved)
 VOICE_PROFILE_ARGS=()
 case "$(printf '%s' "${VOICE_ENGINE:-off}" | tr '[:upper:]' '[:lower:]')" in
   on|true|1) VOICE_ENGINE_ENABLED=1 ;;
@@ -305,15 +356,16 @@ if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 && "${ROLLBACK_MODE}" != "1" ]]; then
   [[ -n "${VOICE_ENGINE_TOKEN:-}" ]] || { err "VOICE_ENGINE=on needs VOICE_ENGINE_TOKEN (secret shared by the back and the engine)."; exit 1; }
   [[ "${VOICE_ENGINE_REPO}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { err "VOICE_ENGINE_REPO='${VOICE_ENGINE_REPO}' is not owner/name."; exit 1; }
   # Fail early, before anything is built: the value itself is dropped at once and asked again for the build.
-  [[ -n "$(voice_engine_release_token || true)" ]] || { voice_engine_no_credential; exit 1; }
-  # Unset, empty or `latest`: the engine follows the latest published release of VOICE_ENGINE_REPO; any other value is a pin.
+  voice_engine_has_credential || { voice_engine_no_credential; exit 1; }
+  # Unset, empty or `latest`: the engine follows the latest published release of VOICE_ENGINE_REPO (resolved below, once the deploy
+  # phases are known); any other value is a pin and must be a version.
   if [[ -z "${VOICE_ENGINE_VERSION:-}" || "$(printf '%s' "${VOICE_ENGINE_VERSION}" | tr '[:upper:]' '[:lower:]')" == "latest" ]]; then
-    voice_resolved_version="$(voice_engine_resolve_latest)" || exit 1
-    export VOICE_ENGINE_VERSION="${voice_resolved_version}"
-    info "voice-engine: VOICE_ENGINE_VERSION not pinned — resolved the latest release of ${VOICE_ENGINE_REPO}: ${VOICE_ENGINE_VERSION} (pin it with VOICE_ENGINE_VERSION=<x.y.z> in back/.env)"
-    unset voice_resolved_version
+    VOICE_ENGINE_UNPINNED=1
+  elif voice_engine_valid_version "${VOICE_ENGINE_VERSION}"; then
+    VOICE_ENGINE_VERSION_KNOWN=1
   else
-    info "voice-engine: VOICE_ENGINE_VERSION pinned to ${VOICE_ENGINE_VERSION} (release of ${VOICE_ENGINE_REPO})"
+    err "VOICE_ENGINE_VERSION='${VOICE_ENGINE_VERSION}' is not valid: expected a release version without the leading v (e.g. 0.1.0, 1.2.3-rc.1), or latest/unset to follow the latest release."
+    exit 1
   fi
 fi
 if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 ]]; then
@@ -383,6 +435,22 @@ if [[ "${ROLLBACK_MODE}" != "1" ]]; then
   echo "==> [LOCAL] Deploy revision: ${DEPLOY_REVISION}"
   if [[ "${DI_ACTIVE}" -eq 1 ]]; then
     echo "==> [LOCAL] Registry mode: image tag ${DI_TAG} (build=${DI_BUILD} push=${DI_PUSH} deploy=${DI_DEPLOY}, builder=${DEPLOY_BUILDER:-remote})"
+  fi
+  # Voice engine version: resolved only when a back host is about to be deployed (not a front-only run, not an image-only phase).
+  # `--deploy --tag=<t>` without `--build` ships an image built earlier: nothing says which engine release went with that tag, and
+  # resolving "latest" now would silently pair it with whatever is newest today, so an unpinned version is refused there.
+  if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 && "${VOICE_ENGINE_UNPINNED}" -eq 1 && "${DEPLOY_TARGET}" != "front" && "${DI_DEPLOY}" -eq 1 ]]; then
+    if [[ "${DI_ACTIVE}" -eq 1 && "${DI_BUILD}" -eq 0 ]]; then
+      err "VOICE_ENGINE=on with an unpinned VOICE_ENGINE_VERSION (unset or latest) cannot be deployed with --deploy --tag but without --build: pin VOICE_ENGINE_VERSION=<x.y.z> (the engine release that goes with that tag)."
+      exit 1
+    fi
+    voice_resolved_version="$(voice_engine_resolve_latest)" || exit 1
+    export VOICE_ENGINE_VERSION="${voice_resolved_version}"
+    VOICE_ENGINE_VERSION_KNOWN=1
+    info "voice-engine: VOICE_ENGINE_VERSION not pinned — resolved the latest release of ${VOICE_ENGINE_REPO}: ${VOICE_ENGINE_VERSION} (pin it with VOICE_ENGINE_VERSION=<x.y.z> in back/.env)"
+    unset voice_resolved_version
+  elif [[ "${VOICE_ENGINE_ENABLED}" -eq 1 && "${VOICE_ENGINE_VERSION_KNOWN}" -eq 1 ]]; then
+    info "voice-engine: VOICE_ENGINE_VERSION pinned to ${VOICE_ENGINE_VERSION} (release of ${VOICE_ENGINE_REPO})"
   fi
 fi
 
@@ -1434,6 +1502,11 @@ if [[ "${DEPLOY_TARGET}" != "front" ]]; then
   fi
   # What is uploaded as the remote .env (and swapped by rollbacks): the staged env, before the per-host patches.
   cp "${BUILD_CONTEXT_DIR}/back/.env" "${BUILD_CONTEXT_DIR}/.env.remote"
+  # The engine release this deploy ships (resolved or pinned) goes to the host's .env, so a `latest` is never left unrecorded there
+  # (rollbacks swap that file with .env.previous; .deploy/current.json records it too: voiceEngineVersion).
+  if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 && "${VOICE_ENGINE_VERSION_KNOWN}" -eq 1 ]]; then
+    dv_env_set "${BUILD_CONTEXT_DIR}/.env.remote" "VOICE_ENGINE_VERSION" "${VOICE_ENGINE_VERSION}"
+  fi
 fi
 if [[ "${DEPLOY_TARGET}" != "back" ]]; then
   sync_file_into_context "${FRONT_ENV_FILE}" "${BUILD_CONTEXT_DIR}/front/.env"
@@ -1811,14 +1884,19 @@ deploy_back_host() {
   fi
 
   # Voice engine image (VOICE_ENGINE=on): downloads the private release with the BuildKit secret gh_token, which compose reads from
-  # VOICE_ENGINE_RELEASE_TOKEN — set for this one command only, from git's credential helpers, never exported. Built while the
-  # current version still serves; a failure stops the deploy before the switch.
+  # VOICE_ENGINE_RELEASE_TOKEN — set for this one command only, from git's credential helpers, never exported (nor traced: xtrace is
+  # off from the line that asks for it to the end of the command). Built while the current version still serves; a failure stops the
+  # deploy before the switch. The running engine image is kept as `:previous` first and the new one is also tagged `:latest`
+  # (rollbacks restore it, see dv_rollback_voice); `latest` goes back to the running image when the deploy stops before the switch.
   if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 ]]; then
     echo "==> [BACK:${target_host}] Building voice-engine image (vx-voice-engine ${VOICE_ENGINE_VERSION})"
     t0="$(dt_now)"
     local voice_release_token
+    dv_tag_previous_voice
+    voice_xtrace_off
     voice_release_token="$(voice_engine_release_token || true)"
     if [[ -z "${voice_release_token}" ]]; then
+      voice_xtrace_restore
       voice_engine_no_credential
       dv_restore_latest_tag "$(dv_back_image)"
       exit 1
@@ -1830,11 +1908,14 @@ deploy_back_host() {
       "${VOICE_PROFILE_ARGS[@]}" \
       build --pull voice-engine; then
       unset voice_release_token
+      voice_xtrace_restore
       err "[BACK:${target_host}] voice-engine image build failed — deploy stopped before the switch, the current version keeps running"
       dv_restore_latest_tag "$(dv_back_image)"
       exit 1
     fi
     unset voice_release_token
+    voice_xtrace_restore
+    dv_tag_voice_latest || warn "[BACK:${target_host}] Could not tag the voice-engine image as latest (a rollback of the engine would not find it)"
     dt_record "back ${target_host}: voice-engine image build" "${t0}"
   fi
 
@@ -1844,6 +1925,7 @@ deploy_back_host() {
   if ! dv_backup_db_before_switch "${DEPLOY_REVISION}"; then
     err "[BACK:${target_host}] Database backup failed — deploy stopped before the switch, the current version keeps running"
     dv_restore_latest_tag "$(dv_back_image)"
+    dv_restore_voice_latest_tag
     exit 1
   fi
   db_backup="${DV_DB_BACKUP}"
@@ -1938,7 +2020,10 @@ deploy_back_host() {
     err "[BACK:${target_host}] Check 'docker --context ${context_name} compose --project-name ${project_name} logs back' once the deploy is over."
   fi
 
-  reconcile_voice_engine "${context_name}" "${docker_ssh_command}" "${project_name}" "${target_host}"
+  # Only when the new back serves: a failed deploy is rolled back right below, and must not leave a new engine started.
+  if [[ "${serving}" -eq 1 ]]; then
+    reconcile_voice_engine "${context_name}" "${docker_ssh_command}" "${project_name}" "${target_host}"
+  fi
 
   # Restore original back/.env so subsequent host deployments (non-colocated) get the public values.
   # The root .env was never touched, so nothing to restore there.

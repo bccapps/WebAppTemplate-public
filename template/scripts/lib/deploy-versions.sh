@@ -39,6 +39,7 @@ DV_IDX=-1                      # index of the current host in the DV_SW_* regist
 # Registry of the hosts switched in this run (parallel arrays, bash 3.2 has no associative arrays).
 DV_SW_REC=()                   # role|host|ssh_target|ssh_port|key|context|project|remote_dir
 DV_SW_TAGGED=()                # 1 = a `latest` image existed and was tagged `previous`
+DV_SW_VTAGGED=()               # 1 = same for the voice-engine image (VOICE_ENGINE=on)
 DV_SW_BACKUP=()                # database backup reference ("" = none)
 DV_SW_SERVED=()                # 1 = the new version was healthy and served traffic
 DV_SW_STATE=()                 # 1 = .deploy/current.json was written in this run
@@ -165,6 +166,40 @@ dv_restore_latest_tag() {
     || warn "[$(dv_tag)] Could not re-tag ${image}:previous as latest — check the tags before the next deploy"
 }
 
+# Voice-engine image (VOICE_ENGINE=on; compose image `<project>_voice_engine:<version>`). Same scheme as the back image: the deploy tags
+# the new build `latest` too (dv_tag_voice_latest), keeps the one that was `latest` as `previous` (dv_tag_previous_voice, BEFORE the build
+# moves `latest`), and a rollback puts `previous` back (dv_rollback_voice). Sets DV_VTAGGED (1/0), kept in DV_SW_VTAGGED per host.
+dv_voice_image() { printf '%s_voice_engine' "${PROJECT_NAME}"; }
+
+dv_tag_previous_voice() {
+  local image
+  image="$(dv_voice_image)"
+  DV_VTAGGED=0
+  if dv_image_exists "${image}:latest"; then
+    echo "==> [$(dv_tag)] Tagging the current voice-engine image as previous"
+    dv_docker tag "${image}:latest" "${image}:previous" && DV_VTAGGED=1
+  else
+    echo "==> [$(dv_tag)] No current voice-engine image (${image}:latest) — no previous engine to keep"
+  fi
+}
+
+# Tags the freshly built `<image>:<VOICE_ENGINE_VERSION>` as `<image>:latest`.
+dv_tag_voice_latest() {
+  local image
+  image="$(dv_voice_image)"
+  dv_docker tag "${image}:${VOICE_ENGINE_VERSION}" "${image}:latest"
+}
+
+# Undo of dv_tag_voice_latest when the deploy stops BEFORE the switch (a failed pre-switch backup): `latest` goes back to the engine image
+# that was running. No-op when none was kept.
+dv_restore_voice_latest_tag() {
+  local image
+  [[ "${DV_VTAGGED:-0}" == "1" ]] || return 0
+  image="$(dv_voice_image)"
+  dv_docker tag "${image}:previous" "${image}:latest" \
+    || warn "[$(dv_tag)] Could not re-tag ${image}:previous as latest — check the voice-engine tags before the next deploy"
+}
+
 # Remote `.env` -> `.env.previous` (before the upload overwrites it). Best effort.
 dv_save_env_previous() {
   dv_ssh "if [ -f '${DV_REMOTE_DIR}/.env' ]; then cp -p '${DV_REMOTE_DIR}/.env' '${DV_REMOTE_DIR}/.env.previous'; fi" \
@@ -178,6 +213,8 @@ dv_register_switched() {
   DV_IDX=${#DV_SW_REC[@]}
   DV_SW_REC[DV_IDX]="${DV_ROLE}|${DV_HOST}|${DV_SSH_TARGET}|${DV_SSH_PORT}|${DV_KEY}|${DV_CONTEXT}|${DV_PROJECT}|${DV_REMOTE_DIR}"
   DV_SW_TAGGED[DV_IDX]="${DV_TAGGED:-0}"
+  DV_SW_VTAGGED[DV_IDX]="${DV_VTAGGED:-0}"
+  DV_VTAGGED=0
   DV_SW_BACKUP[DV_IDX]=""
   DV_SW_SERVED[DV_IDX]=0
   DV_SW_STATE[DV_IDX]=0
@@ -539,14 +576,18 @@ dv_environment_name() {
   esac
 }
 
-# current.json -> previous.json, then writes the new current.json {revision, environment, date, dbBackup[, imageTag, imageDigest]}.
+# current.json -> previous.json, then writes the new current.json {revision, environment, date, dbBackup[, imageTag, imageDigest][, voiceEngineVersion]}.
 # imageTag / imageDigest (registry mode, lib/deploy-images.sh): what this host pulled, to tell from the host which image runs.
 dv_write_state() {
-  local revision="$1" backup="$2" json image_json=""
+  local revision="$1" backup="$2" json image_json="" voice_json=""
   if [[ "${DI_ACTIVE:-0}" == "1" ]]; then
     image_json=",\"imageTag\":\"$(dv_json_escape "${DI_TAG:-}")\",\"imageDigest\":\"$(dv_json_escape "${DI_LAST_DIGEST:-}")\""
   fi
-  json="{\"revision\":\"$(dv_json_escape "${revision}")\",\"environment\":\"$(dv_json_escape "$(dv_environment_name)")\",\"date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"dbBackup\":\"$(dv_json_escape "${backup}")\"${image_json}}"
+  # voiceEngineVersion: the engine release this deploy shipped (VOICE_ENGINE=on; the resolved version when it was `latest`/unset).
+  if [[ "${VOICE_ENGINE_ENABLED:-0}" -eq 1 && "${VOICE_ENGINE_VERSION_KNOWN:-0}" -eq 1 && "${DEPLOY_TARGET:-all}" != "front" ]]; then
+    voice_json=",\"voiceEngineVersion\":\"$(dv_json_escape "${VOICE_ENGINE_VERSION}")\""
+  fi
+  json="{\"revision\":\"$(dv_json_escape "${revision}")\",\"environment\":\"$(dv_json_escape "$(dv_environment_name)")\",\"date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"dbBackup\":\"$(dv_json_escape "${backup}")\"${image_json}${voice_json}}"
   dv_ssh "mkdir -p '${DV_REMOTE_DIR}/.deploy' && cd '${DV_REMOTE_DIR}/.deploy' && { [ ! -f current.json ] || mv -f current.json previous.json; } && cat > current.json" <<<"${json}" \
     || { warn "[BACK:${DV_HOST}] Could not write ${DV_REMOTE_DIR}/.deploy/current.json"; return 1; }
 }
@@ -607,10 +648,33 @@ dv_stage_env_from_remote() {
   fi
 }
 
+# Rolls the voice-engine image back with the back (VOICE_ENGINE=on in the env, and a `previous` engine image on the host): same retag as
+# the back image (auto: previous -> latest; manual: swap), then the engine is recreated from `<image>:latest` (compose reads the tag from
+# VOICE_ENGINE_VERSION, which is `latest` for this one command). auto needs $2 = 1 (this run kept the previous engine: otherwise
+# `previous` is an older deploy's and is left alone). Best effort, like the engine's start: voice is optional, a failure only warns.
+dv_rollback_voice() {
+  local mode="$1" tagged="${2:-}" image
+  [[ "${VOICE_ENGINE_ENABLED:-0}" -eq 1 ]] || return 0
+  if [[ "${mode}" == "auto" && "${tagged}" != "1" ]]; then return 0; fi
+  image="$(dv_voice_image)"
+  if ! dv_image_exists "${image}:previous"; then
+    echo "==> [BACK:${DV_HOST}] No ${image}:previous image — the voice-engine is left as it is"
+    return 0
+  fi
+  echo "==> [BACK:${DV_HOST}] Rolling the voice-engine back to its previous image"
+  if dv_retag_images "${mode}" "${image}" \
+    && VOICE_ENGINE_VERSION=latest dv_compose --profile voice up -d --no-build --no-deps voice-engine; then
+    echo "==> [BACK:${DV_HOST}] voice-engine rolled back"
+  else
+    warn "[BACK:${DV_HOST}] voice-engine could not be rolled back — check 'docker compose logs voice-engine' and the ${image} tags"
+  fi
+}
+
 # Brings the previous back version up on the current host. mode: auto|manual. $2 = SQLite backup to restore ("" = none).
+# $3 = DV_SW_VTAGGED of the host (auto): whether this run kept a previous voice-engine image, see dv_rollback_voice.
 # Every step is checked explicitly (this runs inside `if`, where errexit is off).
 dv_rollback_back() {
-  local mode="$1" restore_ref="${2:-}" image
+  local mode="$1" restore_ref="${2:-}" voice_tagged="${3:-}" image
   image="$(dv_back_image)"
   echo "==> [BACK:${DV_HOST}] Rolling back to previous version"
   if ! dv_image_exists "${image}:previous"; then
@@ -640,6 +704,7 @@ dv_rollback_back() {
   # Reload BEFORE lifting maintenance: nginx resolves `back` at (re)load, the first requests must reach the new container.
   dv_compose exec -T back-lb nginx -s reload >/dev/null 2>&1 || true
   disable_back_maintenance "${DV_CONTEXT}" "${DV_DOCKER_SSH}" "${DV_HOST}"
+  dv_rollback_voice "${mode}" "${voice_tagged}"
   echo "==> [BACK:${DV_HOST}] Rolled back to previous version"
 }
 
@@ -749,7 +814,7 @@ dv_abort_with_rollback() {
       restore=""
       if [[ "${IS_SQLITE_DB:-0}" -eq 1 && "${DV_SW_SERVED[i]}" != "1" ]]; then restore="${DV_SW_BACKUP[i]}"; fi
       if [[ "${DV_SW_STATE[i]}" == "1" ]]; then dv_revert_state; fi
-      dv_rollback_back auto "${restore}" || failed=1
+      dv_rollback_back auto "${restore}" "${DV_SW_VTAGGED[i]:-0}" || failed=1
     else
       dv_rollback_front auto || failed=1
     fi
