@@ -227,9 +227,15 @@ fi
 # on = the `voice-engine` compose service (profile `voice`, see docker-compose.yml) is built from a private GitHub release of
 # vx-voice-engine and started next to the back, on the same host and compose network. off = no change at all: the profile is
 # never enabled, nothing is built or uploaded, and a container left by a previous `on` deploy is removed (its volumes are kept).
-# Needs VOICE_ENGINE_VERSION (release tag without the leading v), VOICE_ENGINE_TOKEN (secret shared with the back) and a git
-# credential able to read the releases of VOICE_ENGINE_REPO (owner/name, default svax974/vx-voice-engine): asked from git
-# (`git credential fill` for https://github.com/<repo>) — on a deploy launched by an administrator from Agent Hub its runner answers
+# Needs VOICE_ENGINE_TOKEN (secret shared with the back) and a git credential able to read the releases of VOICE_ENGINE_REPO
+# (owner/name, default svax974/vx-voice-engine), and optionally VOICE_ENGINE_VERSION (release tag without the leading v):
+#   - unset, empty or `latest` (case-insensitive): the latest published, non-draft, non-prerelease release of VOICE_ENGINE_REPO is
+#     resolved through the GitHub API (`GET /repos/<repo>/releases/latest`) with that same credential, its tag is stripped of a
+#     leading `v`, validated as semver-like (MAJOR.MINOR.PATCH[-prerelease]) and exported as VOICE_ENGINE_VERSION (compose reads
+#     it for the image tag and the build argument). The resolved version is printed in the deploy output. Fail closed: no
+#     credential, API error, no published release or an unexpected tag stops the deploy before anything is built.
+#   - any other value (e.g. 0.1.0, the tag without the leading v) pins the deploy to that release, exactly as before.
+# The credential is asked from git (`git credential fill` for https://github.com/<repo>) — on a deploy launched by an administrator from Agent Hub its runner answers
 # with the hub's technical read token, from a terminal this machine's own helper does (osxkeychain, gh…), as for `git push`. Never
 # read from an environment variable: asked right before the image build and given to that one command only (BuildKit secret
 # gh_token), never exported, never written to back/.env (which reaches the containers) nor to an image layer.
@@ -239,6 +245,48 @@ voice_engine_release_token() {
   printf 'protocol=https\nhost=github.com\npath=%s.git\n\n' "${VOICE_ENGINE_REPO}" \
     | GIT_TERMINAL_PROMPT=0 GIT_ASKPASS= SSH_ASKPASS= git -c credential.useHttpPath=true credential fill 2>/dev/null \
     | sed -n 's/^password=//p' | head -n 1
+}
+# Resolves the latest published release of VOICE_ENGINE_REPO and prints its version (tag without the leading v). Fails (returns 1,
+# message on stderr, nothing on stdout) when it cannot be resolved. `/releases/latest` already excludes drafts and prereleases;
+# draft/prerelease are checked again on the answer (they must be explicitly false). The credential is asked from git like for the
+# build and reaches curl ONLY as a curl config read from stdin (`--config -`): never in argv (ps), never in the environment, never
+# in a log; its value is escaped for the config syntax, and the answer is parsed by python3 reading stdin, not by the shell.
+voice_engine_resolve_latest() {
+  local token escaped resp code body tag
+  token="$(voice_engine_release_token || true)"
+  if [[ -z "${token}" ]]; then voice_engine_no_credential; return 1; fi
+  escaped="${token//\\/\\\\}"; escaped="${escaped//\"/\\\"}"
+  resp="$(printf 'header = "Authorization: Bearer %s"\n' "${escaped}" \
+    | curl -q --config - --silent --show-error --proto '=https' --max-time 30 \
+        --header 'Accept: application/vnd.github+json' --header 'X-GitHub-Api-Version: 2022-11-28' \
+        --write-out '\n%{http_code}' "https://api.github.com/repos/${VOICE_ENGINE_REPO}/releases/latest" 2>/dev/null || true)"
+  unset token escaped
+  code="${resp##*$'\n'}"
+  body="${resp%$'\n'*}"
+  case "${code}" in
+    200) ;;
+    401|403) err "VOICE_ENGINE_VERSION=latest: GitHub refused the credential for ${VOICE_ENGINE_REPO} (HTTP ${code}) — it must be able to read the releases of that repository."; return 1 ;;
+    404) err "VOICE_ENGINE_VERSION=latest: ${VOICE_ENGINE_REPO} has no published (non-draft, non-prerelease) release, or the credential cannot see it (HTTP 404)."; return 1 ;;
+    *) err "VOICE_ENGINE_VERSION=latest: could not query the latest release of ${VOICE_ENGINE_REPO} (HTTP '${code:-none}', GitHub unreachable?)."; return 1 ;;
+  esac
+  tag="$(printf '%s' "${body}" | python3 -I -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+if not isinstance(d, dict) or d.get("draft") is not False or d.get("prerelease") is not False:
+    sys.exit(1)
+t = d.get("tag_name")
+if not isinstance(t, str):
+    sys.exit(1)
+print(t)' 2>/dev/null || true)"
+  tag="${tag#v}"
+  if [[ ${#tag} -gt 64 || ! "${tag}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+    err "VOICE_ENGINE_VERSION=latest: the latest release of ${VOICE_ENGINE_REPO} is not usable (no tag, draft/prerelease, or a tag that is not semver-like like 1.2.3 or v1.2.3)."
+    return 1
+  fi
+  printf '%s' "${tag}"
 }
 voice_engine_no_credential() {
   err "VOICE_ENGINE=on needs a git credential for github.com/${VOICE_ENGINE_REPO}: the hub's technical read token (deploy launched by an administrator from Agent Hub) or this machine's git credential helper."
@@ -254,11 +302,19 @@ case "$(printf '%s' "${VOICE_ENGINE:-off}" | tr '[:upper:]' '[:lower:]')" in
     ;;
 esac
 if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 && "${ROLLBACK_MODE}" != "1" ]]; then
-  [[ -n "${VOICE_ENGINE_VERSION:-}" ]] || { err "VOICE_ENGINE=on needs VOICE_ENGINE_VERSION (a release of vx-voice-engine, e.g. 0.1.0)."; exit 1; }
   [[ -n "${VOICE_ENGINE_TOKEN:-}" ]] || { err "VOICE_ENGINE=on needs VOICE_ENGINE_TOKEN (secret shared by the back and the engine)."; exit 1; }
   [[ "${VOICE_ENGINE_REPO}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { err "VOICE_ENGINE_REPO='${VOICE_ENGINE_REPO}' is not owner/name."; exit 1; }
   # Fail early, before anything is built: the value itself is dropped at once and asked again for the build.
   [[ -n "$(voice_engine_release_token || true)" ]] || { voice_engine_no_credential; exit 1; }
+  # Unset, empty or `latest`: the engine follows the latest published release of VOICE_ENGINE_REPO; any other value is a pin.
+  if [[ -z "${VOICE_ENGINE_VERSION:-}" || "$(printf '%s' "${VOICE_ENGINE_VERSION}" | tr '[:upper:]' '[:lower:]')" == "latest" ]]; then
+    voice_resolved_version="$(voice_engine_resolve_latest)" || exit 1
+    export VOICE_ENGINE_VERSION="${voice_resolved_version}"
+    info "voice-engine: VOICE_ENGINE_VERSION not pinned — resolved the latest release of ${VOICE_ENGINE_REPO}: ${VOICE_ENGINE_VERSION} (pin it with VOICE_ENGINE_VERSION=<x.y.z> in back/.env)"
+    unset voice_resolved_version
+  else
+    info "voice-engine: VOICE_ENGINE_VERSION pinned to ${VOICE_ENGINE_VERSION} (release of ${VOICE_ENGINE_REPO})"
+  fi
 fi
 if [[ "${VOICE_ENGINE_ENABLED}" -eq 1 ]]; then
   VOICE_PROFILE_ARGS=(--profile voice)
