@@ -317,6 +317,9 @@ back/data/
 logs/
 .validation-cache/
 
+# Deploy backups (deploy-full.sh writes the database dump to ./backups/deploy-<env>/; tracked, it makes the deployed revision "-dirty")
+/backups
+
 # Shared modules (materialized as symlinks by link-shared.mjs)
 modules_shared
 
