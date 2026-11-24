@@ -7,12 +7,12 @@
  * Licensed under the MIT License. See LICENSE in the project root.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, Stack, Switch, Typography } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import { I18nLabel } from "./label/I18nLabel";
 import { i18n } from "../../core/i18n/I18n";
-import { setCookieConsent } from "../../utils/cookieConsent";
+import { getCookieConsent, setCookieConsent } from "../../utils/cookieConsent";
 
 const switchSx = {
   "& .MuiSwitch-switchBase.Mui-checked": { color: "var(--accent-strong)" },
@@ -30,10 +30,16 @@ export type CookieConsentSettingsModalProps = {
  * (exempt from consent by law), other categories default off and are only ever turned on by an
  * explicit save here. Not the default first-visit experience (that stays a lightweight banner).
  * Closing (X button, Escape, backdrop click) records no consent decision — it just hands control
- * back to the banner, which keeps reappearing until an explicit choice is made.
+ * back to the banner, which stays until an explicit choice is made.
  */
 export const CookieConsentSettingsModal = ({ open, onClose, onSaved }: CookieConsentSettingsModalProps) => {
   const [audienceMeasurement, setAudienceMeasurement] = useState(false);
+
+  // Reflect the choice already on record each time the dialog opens (« Manage my cookies »
+  // must show what is currently active so it can be withdrawn); no record yet = off.
+  useEffect(() => {
+    if (open) setAudienceMeasurement(getCookieConsent()?.audienceMeasurement === true);
+  }, [open]);
 
   const handleSave = () => {
     setCookieConsent({ necessary: true, audienceMeasurement });

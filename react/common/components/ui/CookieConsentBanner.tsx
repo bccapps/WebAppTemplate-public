@@ -9,10 +9,8 @@
 
 import { useEffect, useState } from "react";
 import { Link as RouterLink, useInRouterContext } from "react-router-dom";
-import { Box, Button, IconButton, Link, Paper, Stack, Typography } from "@mui/material";
-import CloseIcon from "@mui/icons-material/Close";
+import { Box, Button, Link, Paper, Stack, Typography } from "@mui/material";
 import { I18nLabel } from "./label/I18nLabel";
-import { i18n } from "../../core/i18n/I18n";
 import { CookieConsentSettingsModal } from "./CookieConsentSettingsModal";
 import { COOKIE_CONSENT_CHANGED_EVENT, getCookieConsent, setCookieConsent } from "../../utils/cookieConsent";
 
@@ -24,6 +22,10 @@ const containedButtonSx = { backgroundColor: "var(--accent-strong)", color: "var
  * overlay (CNIL doesn't require blocking access to a public site for the initial choice, only
  * equal prominence between accept/reject); "Personnaliser" opens the granular, save-to-close
  * CookieConsentSettingsModal instead.
+ *
+ * NOT dismissible: there is deliberately no close button. The banner stays until the visitor
+ * records an explicit choice (accept all, reject all, or save from the customize modal) — a
+ * dismissal without a choice would leave no proof of consent and silently count as neither.
  */
 export type CookieConsentBannerProps = {
   /** Route of the app's cookie policy: adds a « Learn more » link after the text. Omitted = no link. */
@@ -54,10 +56,6 @@ export const CookieConsentBanner = ({ policyHref }: CookieConsentBannerProps = {
     setDismissed(true);
   };
 
-  // No choice recorded: the banner just hides for this render and comes back on the next
-  // page load/visit, since getCookieConsent() still returns null.
-  const closeWithoutChoice = () => setDismissed(true);
-
   return (
     <>
       <Paper
@@ -69,17 +67,8 @@ export const CookieConsentBanner = ({ policyHref }: CookieConsentBannerProps = {
           bottom: 0,
           zIndex: (theme) => theme.zIndex.snackbar,
           p: 2,
-          pr: 5,
         }}
       >
-        <IconButton
-          aria-label={i18n.get("common.cookieConsent.close")}
-          onClick={closeWithoutChoice}
-          sx={{ position: "absolute", top: 4, right: 4, color: "var(--accent-strong)" }}
-          size="small"
-        >
-          <CloseIcon fontSize="small" />
-        </IconButton>
         <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={2}
