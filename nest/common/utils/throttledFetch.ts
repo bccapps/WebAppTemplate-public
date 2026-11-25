@@ -55,6 +55,9 @@ export interface ThrottledFetchResult<T> {
 
 const buckets = new Map<string, number>();
 const logger = new Logger('throttledFetch');
+/** Last time a refusal (401/403) of a source was logged, per `sourceId:status`: a bad key must be visible, not repeated on every call. */
+const refusalLoggedAt = new Map<string, number>();
+const REFUSAL_LOG_INTERVAL_MS = 10 * 60_000;
 
 const fetchTransport = (init: RequestInit = {}): ThrottledFetchTransport => async (url, signal) => {
   const response = await fetch(url, { ...init, signal, headers: { Accept: 'application/json', ...(init.headers as Record<string, string> | undefined) } });
@@ -62,6 +65,14 @@ const fetchTransport = (init: RequestInit = {}): ThrottledFetchTransport => asyn
   try { body = await response.json() as unknown; } catch { body = null; }
   return { status: response.status, body, retryAfter: response.headers?.get('retry-after') ?? null };
 };
+
+function logRefusal(sourceId: string, status: number): void {
+  const key = `${sourceId}:${status}`;
+  const now = Date.now();
+  if (now - (refusalLoggedAt.get(key) ?? -Infinity) < REFUSAL_LOG_INTERVAL_MS) return;
+  refusalLoggedAt.set(key, now);
+  logger.warn(`${sourceId} HTTP ${status}: request refused (key invalid or expired, or plan without access to this call)`);
+}
 
 function parseRetryAfterMs(value: string | null | undefined): number | null {
   if (!value) return null;
@@ -111,7 +122,11 @@ export async function throttledFetchJson<T>(
       }
       lastStatus = result.status;
       if (result.status === 429 || result.status >= 500) {
-        if (attempt >= opts.maxRetries) break; // last allowed attempt already spent — no point backing off further
+        if (attempt >= opts.maxRetries) {
+          // Last allowed attempt already spent — no point backing off further. Say so: the retries logged above are otherwise the only trace.
+          logger.warn(`${sourceId} HTTP ${result.status}, giving up after ${attempt + 1} attempt(s)`);
+          break;
+        }
         const retryAfterMs = parseRetryAfterMs(result.retryAfter);
         const backoff = computeBackoffMs(attempt, maxBackoffMs, retryAfterMs);
         logger.warn(`${sourceId} HTTP ${result.status}, retry in ${Math.round(backoff)}ms (attempt ${attempt + 1})`);
@@ -119,7 +134,11 @@ export async function throttledFetchJson<T>(
         attempt += 1;
         continue;
       }
-      if (result.status < 200 || result.status >= 300) return { data: null, stale: true, status: result.status, rateLimited: false };
+      if (result.status < 200 || result.status >= 300) {
+        // 401/403: the key is wrong, expired or its plan does not cover the call — never silent (status and source only, never the URL: it may carry the key).
+        if (result.status === 401 || result.status === 403) logRefusal(sourceId, result.status);
+        return { data: null, stale: true, status: result.status, rateLimited: false };
+      }
       return { data: result.body as T, stale: false, status: result.status, rateLimited: false };
     } catch (error) {
       lastStatus = 0;
@@ -136,4 +155,5 @@ export async function throttledFetchJson<T>(
 /** Test-only: clears every source's throttle bucket. */
 export function resetThrottleBuckets(): void {
   buckets.clear();
+  refusalLoggedAt.clear();
 }
