@@ -29,7 +29,7 @@ transporte que le résumé fourni par l'app, caviardé (`maskKnownSecrets`) et t
 | `interactionEntities.ts` | Les 14 entités (`INTERACTION_ENTITIES`). |
 | `types/` | `interactionTypes.ts` (vocabulaire, notice, question, billet, issue, rapport), `providerTypes.ts` (point d'extension), `ports.ts` (ports et jetons d'injection). |
 | `errors/` | `InteractionError(code, details)`, table des statuts HTTP ; `InteractionHttpException` + `InteractionErrorInterceptor` (corps `{ code, message, details? }`, `Retry-After`). |
-| `services/UserInteractionService.ts` | Ce que l'app utilise : `notify`, `notifyMany`, `notifyAdmins`, `ask`, `cancel`, `reopen`, `getTicket`, `onAnswer(kind, handler, { source })`, `answerFromProvider`, `reachableKinds`, `forgetUser`. Le billet rendu par `ask` / `getTicket` (`InteractionTicket`, côté serveur seulement, jamais un DTO) nomme la question qu'il pose (`kind`, `source`, `correlationId`) : un canal `reply` de l'app y applique ses propres règles avant `answerFromProvider` (C2, AgentHub). |
+| `services/UserInteractionService.ts` | Ce que l'app utilise : `notify`, `notifyMany`, `notifyAdmins`, `ask`, `cancel`, `reopen`, `getTicket`, `onAnswer(kind, handler, { source })`, `answerFromProvider`, `reachableKinds`, `forgetTickets`, `forgetUser`. Le billet rendu par `ask` / `getTicket` (`InteractionTicket`, côté serveur seulement, jamais un DTO) nomme la question qu'il pose (`kind`, `source`, `correlationId`) : un canal `reply` de l'app y applique ses propres règles avant `answerFromProvider` (C2, AgentHub). |
 | `services/InteractionDeliveryService.ts` | Algorithme de livraison (§7) : validation, inactif, `inapp`, plan, réservation, plafonds, envoi concurrent sous délai, rapport. `ping()` (envoi de test). |
 | `services/InteractionTicketService.ts` | Cycle de vie d'une question (§8) : création, réponse (UPDATE conditionnel), expiration, annulation, remise de l'issue (relances persistées), fermeture des autres surfaces. |
 | `services/InteractionChannelService.ts` | Canaux de l'utilisateur (configuration par le fournisseur, interrupteur, ordre, suppression, test) et vue / interrupteur administrateur. |
@@ -206,6 +206,14 @@ Codes d'erreur (§12) : `INVALID_INPUT`, `INVALID_CONFIG { field, reason }`, `VE
   applying, recipients }]` (500 au plus) : l'app réconcilie ses billets ouverts avec son état ; `revokeRecipient(source, correlationId, userId,
   reason)` retire un destinataire (ligne, notices, cartes fermées, `ticket.closed` ; billet annulé quand plus personne) : le billet lui devient
   inconnu (`NOT_FOUND`).
+- `forgetTickets(source, correlationIds)` (2026-11-25) → `{ forgotten, open }` : l'app a supprimé ce dont parlaient ces questions ; leurs
+  billets **clos** (répondus, expirés, annulés) disparaissent pour de bon, avec tout ce qui les nomme : la ligne du billet (le texte de la
+  question, `summary`), ses destinataires, ses cartes, les notices de la boîte de réception et les lignes de livraison. Un billet **ouvert**
+  n'est jamais oublié (compté dans `open`) : `cancel` d'abord (fermeture des surfaces, remise de l'issue au gestionnaire), puis rappeler. Un
+  billet clos dont l'issue est encore en cours de remise est oublié quand même (la remise ne trouve plus rien : l'app n'en a plus besoin) ;
+  un billet rouvert entre-temps (`reopen`) est épargné (suppression conditionnelle). Les cartes déjà affichées sur un canal externe y restent
+  telles quelles. Idempotent (ids inconnus ignorés) ; par lots de 200 (limite de paramètres de SQLite) ; `INVALID_INPUT` pour une source mal
+  formée (une erreur de programmation, jamais ignorée en silence). Facultative dans le contrat `UserInteractionApi` (comme `reopen`).
 - `onAnswer(kind, handler, { source })` : un gestionnaire par `kind` ; `source` lie le `kind` à UNE source : un `ask` de ce
   `kind` venu d'une autre source est refusé (`INVALID_QUESTION { field: 'source' }`), un billet stocké d'une autre source
   n'est jamais remis au gestionnaire (sa remise passe `failed` aussitôt). Le gestionnaire vérifie quand même `a.source` et
@@ -376,7 +384,11 @@ bornes reprend le défaut. Libellés : `locales/interaction.<lang>.json` (`inter
   `UserStepUpService` du lot S), `vapidKeys` (`VapidKeySource`). `directory` (`InteractionDirectory`) est obligatoire.
 - **Participant d'effacement de compte** (`InteractionAccountErasure`, `@AccountErasureParticipant()` de
   `common/types/ExtensionPoints.ts`) : trouvé par `user` (découverte Nest, jamais un import), il oublie le compte fermé
-  (`forgetUser`). Aucune option.
+  (`forgetUser`). Aucune option. Depuis le 2026-11-25, la même classe est aussi **participant de suppression totale**
+  (`@AccountPurgeParticipant()`, clé `interaction`) avec des règles de colonnes seulement (`INTERACTION_PURGE_COLUMN_RULES`) :
+  `interaction_link_code.user_id` et `interaction_telegram_link.user_id` (nullables, mais les lignes du compte) sont
+  **supprimées** au lieu d'être vidées par le filet de sécurité de `user` ; toute app qui lie `interaction` et `user` les reçoit
+  (spécification : `services/InteractionAccountErasure.spec.ts`).
 - **Services exportés** : `UserInteractionService`, `TelegramInboundRegistry`, `InteractionHooks`
   (`registerRenderHook((ctx) => RenderedMessage)`), `InteractionTicketCardStore`, `INTERACTION_SECRET_STORE`.
 - `routes: { user: false, admin: false }` : l'app sert ses propres façades (AgentHub, C2).
@@ -424,6 +436,9 @@ côté front). SQLite exige `better-sqlite3` (sinon ignoré) ; Postgres exige `I
 **jetable** (un schéma par test, supprimé à la fin ; sinon ignoré). Une app peut rejouer la suite avec
 `describeInteractionConformance(label, { database })`.
 
+- `testing/interactionForget.testkit.ts` (`forget.sqlite.spec.ts`, et `conformance.postgres.spec.ts` pour Postgres, 2026-11-25) :
+  `forgetTickets` — billet clos oublié avec destinataires, cartes, notices et livraisons, billet ouvert et autre source épargnés,
+  idempotence, oubli pendant la remise de l'issue, source mal formée refusée.
 - `testing/interactionHardening.testkit.ts` (`hardening.sqlite.spec.ts`, et `conformance.postgres.spec.ts` pour Postgres) :
   capacité `proof` (liste des canaux, question `freshProof` répondue par un canal `in_app` de l'app avec preuve, jamais
   par un canal `link`), preuve consommée par le seul gagnant (course de deux preuves valides, preuve invalide qui libère

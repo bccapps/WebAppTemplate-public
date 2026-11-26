@@ -103,6 +103,11 @@ export class InteractionInboxService {
     await this.notices.delete({ userId, ticketId });
   }
 
+  /** Forgotten tickets (`forgetTickets`): every notice of them goes, whoever received it (the question's texts with them). */
+  async forgetTickets(ticketIds: readonly string[]): Promise<void> {
+    if (ticketIds.length > 0) await this.notices.delete({ ticketId: In([...ticketIds]) });
+  }
+
   async purge(before: Date): Promise<void> {
     await this.notices.delete({ createdAt: LessThan(before) });
   }

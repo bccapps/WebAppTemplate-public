@@ -236,6 +236,12 @@ export interface ReopenResult {
   ticket: InteractionTicket | null;
 }
 
+/** `forgetTickets`: closed tickets deleted for good, and the open ones left (to `cancel` first). */
+export interface ForgetTicketsResult {
+  forgotten: number;
+  open: number;
+}
+
 /** What apps (and the `McpInteractionPort` adapter) see: `UserInteractionService` implements it. */
 export interface UserInteractionApi {
   notify(userId: number, notice: UserNotice): Promise<DeliveryReport>;
@@ -250,5 +256,7 @@ export interface UserInteractionApi {
   reachableKinds(userId: number, category: InteractionCategory): Promise<ChannelKind[]>;
   openTickets(source: string, options?: { correlationId?: string; limit?: number }): Promise<OpenTicketRef[]>;
   revokeRecipient(source: string, correlationId: string, userId: number, reason: string): Promise<boolean>;
+  /** Optional in the contract (an app's own fake may omit it); `UserInteractionService` implements it. */
+  forgetTickets?(source: string, correlationIds: readonly string[]): Promise<ForgetTicketsResult>;
   forgetUser(userId: number): Promise<void>;
 }

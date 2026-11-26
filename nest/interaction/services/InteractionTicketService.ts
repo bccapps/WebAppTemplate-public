@@ -29,6 +29,7 @@ import type {
   InteractionAnswerOptions,
   InteractionQuestion,
   InteractionTicket,
+  ForgetTicketsResult,
   OpenTicketRef,
   PendingAnswer,
   ReopenOptions,
@@ -840,6 +841,37 @@ export class InteractionTicketService {
     }
     await this.recipients.delete({ userId });
     await this.cards.forgetUser(userId);
+  }
+
+  /**
+   * Forgets CLOSED tickets of a source for good, by correlation id (the app deleted what they were about): the ticket rows — their question
+   * texts (`summary`) — with their recipients, cards, inbox notices and delivery rows. An OPEN ticket is never forgotten (counted in
+   * `open`: `cancel` it first, which closes its surfaces and hands its outcome over, then call again); a closed ticket whose outcome is
+   * still being handed over is forgotten all the same (the hand-over then finds nothing: the app no longer needs it). Cards already shown
+   * on an external channel stay there as they were. Unknown ids are ignored: idempotent. Throws `INVALID_INPUT` on a malformed source.
+   */
+  async forgetTickets(source: string, correlationIds: readonly string[]): Promise<ForgetTicketsResult> {
+    if (typeof source !== 'string' || !SOURCE_PATTERN.test(source) || !Array.isArray(correlationIds)) throw new InteractionError('INVALID_INPUT');
+    const wanted = [...new Set(correlationIds.filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 128))];
+    const result: ForgetTicketsResult = { forgotten: 0, open: 0 };
+    for (let start = 0; start < wanted.length; start += SWEEP_BATCH) {
+      const rows = await this.tickets.find({ where: { source, correlationId: In(wanted.slice(start, start + SWEEP_BATCH)) }, select: { id: true, status: true } });
+      result.open += rows.filter((row) => row.status === 'open').length;
+      const closed = rows.filter((row) => row.status !== 'open').map((row) => row.id);
+      if (closed.length === 0) continue;
+      // Conditional: a ticket reopened meanwhile (`reopen`: cancelled → open) is not deleted, nor are its recipients and notices below.
+      await this.tickets.delete({ id: In(closed), status: Not('open') });
+      const kept = new Set((await this.tickets.find({ where: { id: In(closed) }, select: { id: true } })).map((row) => row.id));
+      const gone = closed.filter((id) => !kept.has(id));
+      result.open += kept.size;
+      result.forgotten += gone.length;
+      await this.inbox.forgetTickets(gone);
+      await this.delivery.forgetTickets(gone);
+      await this.cards.deleteForTickets(gone);
+      if (gone.length > 0) await this.recipients.delete({ ticketId: In(gone) });
+    }
+    if (result.forgotten > 0) this.logger.log(`forgot ${result.forgotten} closed ticket(s) of source ${source}${result.open > 0 ? ` (${result.open} still open)` : ''}`);
+    return result;
   }
 
   /** Closed tickets older than the retention go, with their recipients and cards. */

@@ -240,6 +240,11 @@ export class InteractionDeliveryService {
     await this.deliveries.delete({ userId });
   }
 
+  /** Forgotten tickets (`forgetTickets`): their delivery rows go (ids, kinds and codes only, but they would name a ticket that no longer exists). */
+  async forgetTickets(ticketIds: readonly string[]): Promise<void> {
+    if (ticketIds.length > 0) await this.deliveries.delete({ ticketId: In([...ticketIds]) });
+  }
+
   async purge(before: Date): Promise<void> {
     await this.deliveries.delete({ createdAt: LessThan(before) });
   }

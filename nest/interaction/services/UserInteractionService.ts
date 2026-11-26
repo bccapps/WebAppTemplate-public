@@ -18,6 +18,7 @@ import { normalizeRecipients } from '../pure/validation';
 import type {
   ChannelKind,
   DeliveryReport,
+  ForgetTicketsResult,
   InteractionAnswerHandler,
   InteractionAnswerOptions,
   InteractionCategory,
@@ -188,6 +189,14 @@ export class UserInteractionService implements UserInteractionApi, OnModuleInit,
     const ready = (await this.channels.planChannels(userId)).filter((c) => c.ready && c.enabled && !c.adminDisabled && enabled.includes(c.kind)).map((c) => c.kind);
     const routed = route === null ? ready : ready.filter((kind) => route.includes(kind));
     return [INAPP_KIND, ...(routed.length === 0 && category !== 'info' ? ready : routed)];
+  }
+
+  /**
+   * The app deleted what some of its questions were about: their CLOSED tickets are forgotten for good (question texts, recipients, cards,
+   * notices, deliveries). An open one is left and counted in `open`: `cancel` it first, then call again. Idempotent.
+   */
+  forgetTickets(source: string, correlationIds: readonly string[]): Promise<ForgetTicketsResult> {
+    return this.tickets.forgetTickets(source, correlationIds);
   }
 
   /** Account deletion (04 §16.2): channels, secrets, subscriptions, links, preferences, notices; its lone tickets cancelled. */

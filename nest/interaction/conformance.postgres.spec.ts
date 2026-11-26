@@ -20,6 +20,7 @@ import { describeInteractionHardening } from './testing/interactionHardening.tes
 import { describeInteractionGate } from './testing/interactionGate.testkit';
 import { describeInteractionReview } from './testing/interactionReview.testkit';
 import { describeInteractionReopenAndCap } from './testing/interactionReopenCap.testkit';
+import { describeInteractionForget } from './testing/interactionForget.testkit';
 
 const url = process.env.INTERACTION_TEST_PG_URL;
 const schemas: string[] = [];
@@ -52,6 +53,8 @@ if (url) {
   describeInteractionConcurrency('Postgres', { database });
   // Lot 5.15: reopening a cancelled ticket, critical notices and the hourly caps.
   describeInteractionReopenAndCap('Postgres', { database });
+  // 2026-11-25: closed tickets forgotten by correlation id (an app deleted what they were about).
+  describeInteractionForget('Postgres', { database });
 } else {
   describe.skip('interaction conformance — Postgres (INTERACTION_TEST_PG_URL not set)', () => {
     it('skipped', () => undefined);
