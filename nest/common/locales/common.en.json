@@ -80,7 +80,7 @@
   "common.form.user.marketingoptin": "I agree to receive marketing updates",
   "common.form.user.customerType": "Customer type",
   "common.form.user.customerType.individual": "Individual",
-  "common.form.user.customerType.business": "Business",
+  "common.form.user.customerType.business": "Professional / Business",
   "common.form.user.vatNumber": "VAT number",
   "common.form.user.vatNumber.hint": "For EU B2B customers",
   "common.config.groups.brand": "Brand",
