@@ -3,6 +3,8 @@
   "common.richtext.editor.alignLeft": "Align left",
   "common.richtext.editor.alignRight": "Align right",
   "common.richtext.editor.blockType": "Style",
+  "common.richtext.editor.fontFamily": "Font",
+  "common.richtext.editor.fontDefault": "Default",
   "common.richtext.editor.bold": "Bold",
   "common.richtext.editor.heading1": "Heading 1",
   "common.richtext.editor.heading2": "Heading 2",

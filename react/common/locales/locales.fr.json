@@ -3,6 +3,8 @@
   "common.richtext.editor.alignLeft": "Aligner à gauche",
   "common.richtext.editor.alignRight": "Aligner à droite",
   "common.richtext.editor.blockType": "Style",
+  "common.richtext.editor.fontFamily": "Police",
+  "common.richtext.editor.fontDefault": "Par défaut",
   "common.richtext.editor.bold": "Gras",
   "common.richtext.editor.heading1": "Titre 1",
   "common.richtext.editor.heading2": "Titre 2",

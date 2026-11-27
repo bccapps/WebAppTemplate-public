@@ -10,7 +10,7 @@
 import '../../../styles/tokens.css';
 import React, { useEffect, useReducer, useState } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
-import { mergeAttributes, type DOMOutputSpecArray } from '@tiptap/core';
+import { Extension, mergeAttributes, type DOMOutputSpecArray } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import TextAlign from '@tiptap/extension-text-align';
@@ -76,7 +76,17 @@ interface RichTextEditorProps {
    */
   backgroundColor?: string | null;
   onBackgroundColorChange?: (hex: string) => void;
+  /**
+   * Families offered by the toolbar's font selector. Defaults to the app's two families (Inter, IBM Plex Mono);
+   * pass the theme's own list for an app that ships others.
+   */
+  fonts?: { label: string; value: string }[];
 }
+
+const DEFAULT_FONTS = [
+  { label: 'Inter', value: "'Inter', system-ui, sans-serif" },
+  { label: 'IBM Plex Mono', value: "'IBM Plex Mono', monospace" },
+];
 
 const toolbarSx = {
   border: '1px solid',
@@ -185,6 +195,29 @@ const editorSx = (minHeight: number, isZoneEditor: boolean, zoneBackground?: str
   '& video': { maxWidth: '100%' }
 });
 
+/**
+ * `fontFamily` on the existing `textStyle` mark (the app only has two families, see `RichTextEditorProps.fonts`).
+ * Declared here instead of pulling `@tiptap/extension-font-family` for a single attribute.
+ */
+const FontFamily = Extension.create({
+  name: 'fontFamily',
+  addGlobalAttributes() {
+    return [
+      {
+        types: ['textStyle'],
+        attributes: {
+          fontFamily: {
+            default: null,
+            parseHTML: (element: HTMLElement) => element.style.fontFamily || null,
+            renderHTML: (attributes: { fontFamily?: string | null }) =>
+              attributes.fontFamily ? { style: `font-family: ${attributes.fontFamily}` } : {},
+          },
+        },
+      },
+    ];
+  },
+});
+
 export const RichTextEditor: React.FC<RichTextEditorProps> = ({
   value,
   onChange,
@@ -192,7 +225,8 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
   minHeight = 260,
   imagesInline = false,
   backgroundColor,
-  onBackgroundColorChange
+  onBackgroundColorChange,
+  fonts = DEFAULT_FONTS
 }) => {
   const editor = useEditor({
     // allowBase64: without it @tiptap/extension-image parses `img[src]:not([src^="data:"])`,
@@ -212,6 +246,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       TextStyle,
       Color,
+      FontFamily,
     ],
     content: value || '',
     onUpdate: ({ editor: instance }) => onChange(instance.getHTML())
@@ -266,6 +301,17 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
 
   const isAlignActive = (value: 'left' | 'center' | 'right'): boolean => {
     return editor?.isActive({ textAlign: value }) ?? false;
+  };
+
+  /** Font of the current selection (`''` = the document's own family). */
+  const currentFont = (editor?.getAttributes('textStyle').fontFamily as string | undefined) ?? '';
+  const setFont = (family: string) => {
+    if (!editor) return;
+    if (!family) {
+      editor.chain().focus().setMark('textStyle', { fontFamily: null }).removeEmptyTextStyle().run();
+      return;
+    }
+    editor.chain().focus().setMark('textStyle', { fontFamily: family }).run();
   };
 
   // Linking an image goes through its own node attribute (see LinkableImage
@@ -522,6 +568,27 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
           </IconButton>
         </Tooltip>
         <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+        <Tooltip title={<I18nLabel id="common.richtext.editor.fontFamily" />}>
+          <Select
+            size="small"
+            variant="standard"
+            disableUnderline
+            displayEmpty
+            value={currentFont}
+            onChange={(e: SelectChangeEvent) => setFont(e.target.value)}
+            aria-label={i18n.get('common.richtext.editor.fontFamily')}
+            sx={{ minWidth: 132, fontSize: '0.85rem' }}
+          >
+            <MenuItem value="">
+              <I18nLabel id="common.richtext.editor.fontDefault" />
+            </MenuItem>
+            {fonts.map((font) => (
+              <MenuItem key={font.value} value={font.value} sx={{ fontFamily: font.value }}>
+                {font.label}
+              </MenuItem>
+            ))}
+          </Select>
+        </Tooltip>
         <Select
           size="small"
           variant="standard"
