@@ -45,7 +45,7 @@
   "common.placeholder.empty": "—",
   "common.auth.connecting": "Connexion en cours",
   "common.auth.connect": "Se connecter",
-  "common.auth.login": "Se connecter / S'enregistrer",
+  "common.auth.login": "Se connecter / S'inscrire",
   "common.auth.register": "S'enregistrer",
   "common.auth.disconnect": "Déconnexion",
   "common.auth.disconnect.title": "Déconnecté",

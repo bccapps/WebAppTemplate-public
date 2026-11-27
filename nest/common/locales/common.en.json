@@ -45,7 +45,7 @@
   "common.placeholder.empty": "—",
   "common.auth.connecting": "Connecting",
   "common.auth.connect": "Connect",
-  "common.auth.login": "Log in",
+  "common.auth.login": "Log in / Sign up",
   "common.auth.register": "Sign up",
   "common.auth.disconnect": "Disconnect",
   "common.auth.disconnect.title": "Disconnected",
