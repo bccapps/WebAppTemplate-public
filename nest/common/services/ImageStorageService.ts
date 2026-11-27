@@ -24,6 +24,7 @@ const IMAGE_MIME_EXTENSIONS: Record<string, string> = {
   'image/png': '.png',
   'image/jpeg': '.jpg',
   'image/webp': '.webp',
+  'image/svg+xml': '.svg',
 };
 
 type StorageProvider = 'local' | 'r2';
@@ -140,6 +141,7 @@ export class ImageStorageService {
     if (file.size > IMAGE_MAX_BYTES) {
       throw new FunctionalException('IMG', 'Image trop volumineuse (5 Mo maximum)');
     }
+    if (file.mimetype === 'image/svg+xml') assertSafeSvg(file.buffer);
     const filename = `${baseName}${ext}`;
 
     if (this.getProvider() === 'r2') {
@@ -191,7 +193,8 @@ export class ImageStorageService {
       .catch(() => false);
     if (!exists) return null;
     const ext = path.extname(absPath).toLowerCase();
-    const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    const mimeType =
+      Object.entries(IMAGE_MIME_EXTENSIONS).find(([, suffix]) => suffix === ext)?.[0] ?? 'image/jpeg';
     return { absolutePath: absPath, mimeType };
   }
 
@@ -235,5 +238,17 @@ export class ImageStorageService {
       }
     }
     if (failures.length) throw failures[0];
+  }
+}
+
+/**
+ * An SVG is markup, not pixels: refuse one that could execute code once opened (script, event handler, javascript:
+ * URL, foreignObject). The upload is admin-only, but the stored file is served publicly, so a crafted SVG must not
+ * be a stored-XSS vector for whoever opens its URL.
+ */
+function assertSafeSvg(buffer: Buffer): void {
+  const text = buffer.toString('utf8').toLowerCase();
+  if (/<script|<foreignobject|\son[a-z]+\s*=|javascript:/.test(text)) {
+    throw new FunctionalException('IMG', "SVG refusé : script, gestionnaire d'événement ou lien javascript:");
   }
 }

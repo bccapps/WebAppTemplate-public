@@ -75,6 +75,29 @@ describe('ImageStorageService', () => {
       expect(service.publicUrl('user-inline', 'abc-123.png')).toBeNull();
     });
 
+    it('accepts an SVG and serves it back as image/svg+xml', async () => {
+      const service = buildService({});
+      const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>');
+      const filename = await service.write('user-inline', 'svg-1', buildFile({ mimetype: 'image/svg+xml', buffer: svg }));
+
+      expect(filename).toBe('svg-1.svg');
+      expect((await service.read('user-inline', filename))?.mimeType).toBe('image/svg+xml');
+    });
+
+    it('refuses an SVG that could run code once opened', async () => {
+      const service = buildService({});
+      for (const markup of [
+        '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>',
+        '<svg xmlns="http://www.w3.org/2000/svg"><a href="javascript:alert(1)"><rect/></a></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg"><foreignObject/></svg>',
+      ]) {
+        await expect(
+          service.write('user-inline', 'evil', buildFile({ mimetype: 'image/svg+xml', buffer: Buffer.from(markup) })),
+        ).rejects.toThrow(/SVG refusé/);
+      }
+    });
+
     it('read() resolves a file written to disk', async () => {
       const service = buildService({});
       const filename = await service.write('user-inline', 'def-456', buildFile({ mimetype: 'image/webp' }));
@@ -207,6 +230,7 @@ describe('ImageStorageService', () => {
         'user-avatar/7.png',
         'user-avatar/7.jpg',
         'user-avatar/7.webp',
+        'user-avatar/7.svg',
       ]);
     });
 
@@ -217,7 +241,7 @@ describe('ImageStorageService', () => {
       });
 
       await expect(service.removeAllFormats('user-avatar', '8')).rejects.toThrow('network down');
-      expect(DeleteObjectCommand).toHaveBeenCalledTimes(3);
+      expect(DeleteObjectCommand).toHaveBeenCalledTimes(4);
     });
   });
 });
