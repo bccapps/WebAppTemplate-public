@@ -46,7 +46,7 @@
   "common.auth.connecting": "Connexion en cours",
   "common.auth.connect": "Se connecter",
   "common.auth.login": "Se connecter / S'inscrire",
-  "common.auth.register": "S'enregistrer",
+  "common.auth.register": "S'inscrire",
   "common.auth.disconnect": "Déconnexion",
   "common.auth.disconnect.title": "Déconnecté",
   "common.auth.disconnect.message": "Vous avez été déconnecté.",
